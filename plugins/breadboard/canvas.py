@@ -511,12 +511,15 @@ class BreadboardCanvas(wx.Panel):
                         xy = self.layout.hole_xy(pin1_hole)
                         if xy:
                             self._drag_offset = (px - xy[0], py - xy[1])
+                self.SetFocus()   # grab focus so Delete key reaches the canvas
                 self.Refresh()
                 self.CaptureMouse()
             else:
                 wire = self._wire_at(px, py)
                 self._selected_wire = wire
                 self._selected_ref = None
+                if wire:
+                    self.SetFocus()
                 self.Refresh()
 
     def _on_left_up(self, evt: wx.MouseEvent) -> None:
@@ -910,18 +913,18 @@ class BreadboardCanvas(wx.Panel):
                         if bands:
                             bx = mid1_x
                             bw = body_w
-                            # Positions: three signal bands left-of-centre,
-                            # tolerance band near right end with a small gap.
+                            # Three signal bands left-of-centre; tolerance
+                            # band near the right with a small gap.
                             positions = [
                                 bx + 3,
-                                bx + 7,
-                                bx + 11,
-                                bx + bw - 6,   # tolerance, separated
+                                bx + 9,
+                                bx + 15,
+                                bx + bw - 8,   # tolerance, separated
                             ]
-                            dc.SetPen(wx.Pen(wx.NullColour, 0))
+                            dc.SetPen(wx.TRANSPARENT_PEN)
                             for pos, color in zip(positions, bands):
                                 dc.SetBrush(wx.Brush(color))
-                                dc.DrawRectangle(pos, p1[1] - 5, 3, 10)
+                                dc.DrawRectangle(pos, p1[1] - 5, 5, 10)
 
                     # Cathode stripe for diodes (silver band near pin 2)
                     elif placed.type_id in ('D', 'D_Zener'):

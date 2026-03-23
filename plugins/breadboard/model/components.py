@@ -93,9 +93,9 @@ RESISTOR = ComponentDef(
     type_id='R',
     display_name='Resistor',
     ref_prefix='R',
-    pin_offsets={1: PinOffset(0), 2: PinOffset(4)},
+    pin_offsets={1: PinOffset(0), 2: PinOffset(5)},
     pin_names={1: '1', 2: '2'},
-    color='#c8a050',
+    color='#e8e4cc',   # ceramic cream — good contrast for colour bands
 )
 
 CAPACITOR = ComponentDef(
