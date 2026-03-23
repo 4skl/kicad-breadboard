@@ -86,7 +86,7 @@ class BreadboardWindow(wx.Frame):
         hotkey_label = wx.StaticText(tray_panel, label=(
             'W  Wire\n'
             'D  Delete\n'
-            'R  Rotate DIP 180°\n'
+            'R  Rotate DIP / TO-92 180°\n'
             'Esc  Select\n'
             'Del  Delete selected\n'
             'R-click  Rotate / Assign net'

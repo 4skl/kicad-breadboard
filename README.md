@@ -100,7 +100,7 @@ python -m plugins.breadboard.standalone path/to/circuit.net
 |---|---|
 | W | Wire mode |
 | D | Delete mode |
-| R | Rotate DIP IC 180° (during placement or when selected) |
+| R | Rotate DIP IC or TO-92 / POT 180° (during placement or when selected) |
 | Esc | Back to Select / Move mode |
 | Del | Delete selected component or wire |
 | Right-click on DIP | Rotate 180° |

@@ -482,8 +482,8 @@ class BreadboardCanvas(wx.Panel):
             self._selected_wire = None
             self.Refresh()
         elif key in (ord('R'), ord('r')):
-            # Rotate DIP 180° during placement, or rotate selected placed DIP
-            if self._ghost is not None and self._ghost.comp_def.is_dip:
+            # Rotate DIP / 3-pin 180° during placement, or rotate selected component
+            if self._ghost is not None and self._ghost.comp_def.pin_count != 2:
                 self._ghost.flipped = not self._ghost.flipped
                 self.Refresh()
             elif self._selected_ref is not None:
@@ -593,12 +593,12 @@ class BreadboardCanvas(wx.Panel):
         if term is not None:
             self._assign_terminal(term)
             return
-        # Right-click on a placed DIP → flip it
+        # Right-click on a placed DIP or 3-pin component → flip it
         ref = self._comp_at(px, py)
         if ref:
             placed = self.board.get_placement(ref)
             comp_def = ALL_DEFS.get(placed.type_id) if placed else None
-            if comp_def and comp_def.is_dip:
+            if comp_def and (comp_def.is_dip or comp_def.pin_count == 3):
                 self._flip_component(ref)
                 return
         # Otherwise cancel the current operation
@@ -644,23 +644,27 @@ class BreadboardCanvas(wx.Panel):
                 self.Refresh()
 
     def _flip_component(self, ref: str) -> None:
-        """Horizontally mirror a placed DIP IC, keeping its body in the same position."""
+        """Rotate a placed DIP or 3-pin component 180°, keeping its body in the same position."""
         placed = self.board.get_placement(ref)
         if not placed:
             return
         comp_def = ALL_DEFS.get(placed.type_id)
-        if not comp_def or not comp_def.is_dip:
+        if not comp_def:
             return
         pin1 = placed.pin_holes.get(1)
         if not isinstance(pin1, TieHole):
             return
-        n = comp_def.footprint_cols() - 1
         new_flipped = not placed.flipped
-        # Shift anchor so the body stays visually in the same place
-        new_anchor_col = pin1.col + (n if new_flipped else -n)
+        if comp_def.is_dip:
+            n = comp_def.footprint_cols() - 1
+            new_anchor = TieHole(pin1.col + (n if new_flipped else -n), 'e')
+        elif comp_def.pin_count == 3:
+            n = 2   # span = pin_count - 1
+            new_anchor = TieHole(pin1.col + (n if new_flipped else -n), pin1.row)
+        else:
+            return
         try:
-            placed.pin_holes = comp_def.place(TieHole(new_anchor_col, 'e'),
-                                              flipped=new_flipped)
+            placed.pin_holes = comp_def.place(new_anchor, flipped=new_flipped)
             placed.flipped = new_flipped
         except (AssertionError, IndexError, KeyError):
             pass
