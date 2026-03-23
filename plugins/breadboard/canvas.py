@@ -719,6 +719,18 @@ class BreadboardCanvas(wx.Panel):
     # Painting
     # ------------------------------------------------------------------
 
+    def render_to_bitmap(self) -> 'wx.Bitmap':
+        """Render the full board to an off-screen bitmap (for export)."""
+        w = self.layout.total_width()
+        h = self.layout.total_height
+        bmp = wx.Bitmap(w, h)
+        mdc = wx.MemoryDC(bmp)
+        mdc.SetBackground(wx.Brush('#f0f0f0'))
+        mdc.Clear()
+        self._draw_board(mdc)
+        mdc.SelectObject(wx.NullBitmap)
+        return bmp
+
     def _on_paint(self, _evt) -> None:
         dc = wx.AutoBufferedPaintDC(self)
         dc.SetBackground(wx.Brush('#f0f0f0'))

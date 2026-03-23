@@ -33,6 +33,7 @@ ID_SELECT = wx.NewIdRef()
 ID_WIRE   = wx.NewIdRef()
 ID_DELETE = wx.NewIdRef()
 ID_UPDATE   = wx.NewIdRef()
+ID_EXPORT   = wx.NewIdRef()
 ID_VALIDATE = wx.NewIdRef()
 ID_CLEAR_WARNINGS = wx.NewIdRef()
 ID_CLEAR  = wx.NewIdRef()
@@ -128,6 +129,9 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Delete a component or wire',
                    kind=wx.ITEM_RADIO)
         tb.AddSeparator()
+        tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
+                   shortHelp='Save the breadboard as a PNG image')
+        tb.AddSeparator()
         tb.AddTool(ID_VALIDATE, 'Validate',   wx.NullBitmap,
                    shortHelp='Check if your circuit matches the schematic')
         tb.AddTool(ID_CLEAR_WARNINGS, 'Clear warnings', wx.NullBitmap,
@@ -140,6 +144,7 @@ class BreadboardWindow(wx.Frame):
     def _bind_events(self) -> None:
         self.Bind(wx.EVT_TOOL, self._on_open,     id=ID_OPEN)
         self.Bind(wx.EVT_TOOL, self._on_update,   id=ID_UPDATE)
+        self.Bind(wx.EVT_TOOL, self._on_export,   id=ID_EXPORT)
         self.Bind(wx.EVT_TOOL, self._on_select,   id=ID_SELECT)
         self.Bind(wx.EVT_TOOL, self._on_wire,     id=ID_WIRE)
         self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
@@ -258,6 +263,29 @@ class BreadboardWindow(wx.Frame):
                 self.SetStatusText(
                     f'Netlist updated. Removed orphaned placement(s): '
                     f'{", ".join(removed)}.', 0)
+
+    def _on_export(self, _evt) -> None:
+        default = 'breadboard.png'
+        if self._project_path:
+            from pathlib import Path as _Path
+            default = str(_Path(self._project_path) / 'breadboard.png')
+        with wx.FileDialog(
+            self,
+            message='Save breadboard image',
+            defaultFile=default,
+            wildcard='PNG image (*.png)|*.png',
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+
+        bmp = self.canvas.render_to_bitmap()
+        if not bmp.SaveFile(path, wx.BITMAP_TYPE_PNG):
+            wx.MessageBox(f'Failed to save image to:\n{path}',
+                          'Export image', wx.OK | wx.ICON_ERROR)
+            return
+        self.SetStatusText(f'Image saved to {path}', 0)
 
     def _on_validate(self, _evt) -> None:
         if self.netlist is None:
