@@ -61,6 +61,7 @@ RAIL_GAP = 8        # gap between rail area and tie-strip area
 CENTER_GAP = 28     # gap between top and bottom tie-strip banks
 MARGIN = 20         # outer margin
 RAIL_BREAK_PX = 22  # extra pixel gap between the two rail halves
+RAIL_GROUP_GAP = 27 # extra gap inserted between each group of 5 rail holes
 
 # Binding posts (circular)
 TERM_R = 18         # radius of binding-post circle
@@ -139,8 +140,16 @@ class CanvasLayout:
         return self.board_left + (col - 1) * PITCH
 
     def rail_x(self, index: int) -> int:
-        """x pixel of rail hole index (1-based), accounting for the mid-board break."""
-        x = self.board_left + (index - 1) * PITCH
+        """x pixel of rail hole index (1-based), with group-of-5 and mid-board gaps.
+
+        Groups of 5 holes have RAIL_GROUP_GAP between them so that the rails
+        span the same visual width as the 63-column tie strip.  The mid-board
+        split (at RAIL_SPLIT) uses RAIL_BREAK_PX instead of RAIL_GROUP_GAP.
+        """
+        n_gaps = (index - 1) // 5
+        if index > RAIL_SPLIT:
+            n_gaps -= 1   # split boundary is accounted for by RAIL_BREAK_PX below
+        x = self.board_left + (index - 1) * PITCH + n_gaps * RAIL_GROUP_GAP
         if index > RAIL_SPLIT:
             x += RAIL_BREAK_PX
         return x
@@ -242,6 +251,9 @@ class BreadboardCanvas(wx.Panel):
         # Called with ref after a component is successfully placed
         self.on_placed: Optional[callable] = None
 
+        # Draw offset for centering the board in the canvas (updated on each paint)
+        self._draw_offset: Tuple[int, int] = (0, 0)
+
         self.SetMinSize((self.layout.total_width(), self.layout.total_height))
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
 
@@ -302,18 +314,36 @@ class BreadboardCanvas(wx.Panel):
         self.Refresh()
 
     def set_validation_result(self, result) -> None:
-        """Store validation issues and compute icon positions from hole centroids."""
+        """Store validation issues; position icons at the relevant component."""
         all_holes: Set[Hole] = set()
         self._validation_icons.clear()
+        hole_set = set()
         for issue in result.issues:
-            if issue.holes:
+            if not issue.holes:
+                continue
+            hole_set = set(issue.holes)
+            icon_xy = None
+            # Prefer a placed-component pin hole so the icon sits on the board
+            for placed in self.board.placements.values():
+                for hole in placed.pin_holes.values():
+                    if hole in hole_set:
+                        xy = self.layout.hole_xy(hole)
+                        if xy:
+                            icon_xy = xy
+                            break
+                if icon_xy:
+                    break
+            if icon_xy is None:
+                # Fallback: centroid of all renderable holes
                 xys = [self.layout.hole_xy(h) for h in issue.holes
                        if self.layout.hole_xy(h) is not None]
                 if xys:
-                    cx = sum(x for x, y in xys) // len(xys)
-                    cy = sum(y for x, y in xys) // len(xys)
-                    self._validation_icons.append((cx, cy, issue.kind))
-                all_holes.update(issue.holes)
+                    icon_xy = (sum(x for x, y in xys) // len(xys),
+                               sum(y for x, y in xys) // len(xys))
+            if icon_xy:
+                # Offset upward so the badge doesn't cover the hole dot
+                self._validation_icons.append((icon_xy[0], icon_xy[1] - 14, issue.kind))
+            all_holes.update(issue.holes)
         self._highlighted_holes = all_holes
         self._highlight_kind = result.issues[0].kind if result.issues else None
         self.Refresh()
@@ -322,6 +352,11 @@ class BreadboardCanvas(wx.Panel):
         c = WIRE_COLORS[self._wire_color_idx % len(WIRE_COLORS)]
         self._wire_color_idx += 1
         return c
+
+    def _board_pos(self, px: int, py: int) -> Tuple[int, int]:
+        """Convert a window-pixel mouse position to board-pixel coordinates."""
+        ox, oy = self._draw_offset
+        return px - ox, py - oy
 
     # ------------------------------------------------------------------
     # Mouse event handlers
@@ -350,7 +385,7 @@ class BreadboardCanvas(wx.Panel):
             evt.Skip()
 
     def _on_left_down(self, evt: wx.MouseEvent) -> None:
-        px, py = evt.GetPosition()
+        px, py = self._board_pos(*evt.GetPosition())
 
         # Placement mode: ghost is active — click to place, anywhere to cancel wire
         if self._ghost is not None:
@@ -399,7 +434,7 @@ class BreadboardCanvas(wx.Panel):
         if self.HasCapture():
             self.ReleaseMouse()
         if self._drag_comp:
-            px, py = evt.GetPosition()
+            px, py = self._board_pos(*evt.GetPosition())
             px -= self._drag_offset[0]
             py -= self._drag_offset[1]
             new_anchor = self.layout.nearest_hole(px, py)
@@ -417,7 +452,7 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
 
     def _on_motion(self, evt: wx.MouseEvent) -> None:
-        px, py = evt.GetPosition()
+        px, py = self._board_pos(*evt.GetPosition())
         self._ghost_pos = (px, py)
         if self._ghost:
             anchor = self.layout.nearest_hole(px, py)
@@ -425,7 +460,7 @@ class BreadboardCanvas(wx.Panel):
         self.Refresh()
 
     def _on_right_down(self, evt: wx.MouseEvent) -> None:
-        px, py = evt.GetPosition()
+        px, py = self._board_pos(*evt.GetPosition())
         # Right-click on a terminal opens the net assignment dialog
         term = self._terminal_at(px, py)
         if term is not None:
@@ -522,6 +557,12 @@ class BreadboardCanvas(wx.Panel):
         dc = wx.AutoBufferedPaintDC(self)
         dc.SetBackground(wx.Brush('#f0f0f0'))
         dc.Clear()
+        # Centre the board in whatever space is available
+        cw, ch = self.GetClientSize()
+        ox = max(0, (cw - self.layout.total_width()) // 2)
+        oy = max(0, (ch - self.layout.total_height) // 2)
+        self._draw_offset = (ox, oy)
+        dc.SetDeviceOrigin(ox, oy)
         self._draw_board(dc)
 
     def _draw_board(self, dc: wx.DC) -> None:
@@ -565,28 +606,22 @@ class BreadboardCanvas(wx.Panel):
         for rail, ry in lay._rail_y.items():
             color = rail_colors[rail]
 
-            # Draw two coloured stripe halves with a visible gap between them
-            for half_start, half_end in ((1, RAIL_SPLIT), (RAIL_SPLIT + 1, RAIL_LEN)):
-                x_left  = lay.rail_x(half_start) - PITCH // 2
-                x_right = lay.rail_x(half_end)   + PITCH // 2
+            # Draw one stripe per group of 5 holes — the gaps between groups
+            # are naturally visible as breaks in the stripe.
+            for group in range(10):
+                first = group * 5 + 1
+                last  = group * 5 + 5
+                x_left  = lay.rail_x(first) - PITCH // 2
+                x_right = lay.rail_x(last)  + PITCH // 2
                 stripe = wx.Rect(x_left, ry - strip_h // 2, x_right - x_left, strip_h)
                 dc.SetBrush(wx.Brush(color))
                 dc.SetPen(wx.Pen(color, 0))
                 dc.DrawRoundedRectangle(stripe, 3)
 
-            # Holes and group separators
+            # Holes
             for idx in range(1, RAIL_LEN + 1):
                 rx = lay.rail_x(idx)
-                h = RailHole(rail, idx)
-
-                # Subtle group-of-5 separator (small notch on the stripe)
-                pos_in_group = (idx - 1) % 5
-                if pos_in_group == 0 and idx > 1 and idx != RAIL_SPLIT + 1:
-                    dc.SetPen(wx.Pen('#ffffff', 1))
-                    dc.DrawLine(rx - PITCH // 2, ry - strip_h // 2,
-                                rx - PITCH // 2, ry + strip_h // 2)
-
-                self._draw_hole_dot(dc, rx, ry, h)
+                self._draw_hole_dot(dc, rx, ry, RailHole(rail, idx))
 
             # + / − symbol at both ends
             symbol = '+' if 'plus' in rail else '−'

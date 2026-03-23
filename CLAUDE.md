@@ -42,7 +42,7 @@ plugins/breadboard/
     │                    Breadboard, PlacedComponent, Wire
     ├── components.py    ComponentDef for every supported part; PinOffset resolution;
     │                    guess_type_id() heuristic from KiCad symbol/ref/value
-    ├── netlist.py       KiCad XML netlist parser (.net files from Eeschema)
+    ├── netlist.py       KiCad S-expression netlist parser (.net files from Eeschema)
     └── validator.py     validate() → ValidationResult with OPEN_NET / SHORT / UNPLACED
 ```
 
@@ -85,14 +85,30 @@ DIP ICs always straddle the center gap: top-side pins in row `e`, bottom-side in
 
 ### Interaction modes
 
-| Mode   | Left-click behaviour                                    |
-|---|---|
-| Select | Click to select a placed component; drag to reposition  |
-| Wire   | First click = wire start hole; second click = end hole  |
-| Delete | Click on a placed component or wire to remove it        |
+| Mode   | Hotkey | Left-click behaviour                                    |
+|---|---|---|
+| Select | Esc    | Click to select a placed component; drag to reposition  |
+| Wire   | W      | First click = wire start hole; second click = end hole  |
+| Delete | D      | Click on a placed component or wire to remove it        |
+
+Hotkeys are bound on the frame via `EVT_CHAR_HOOK`; `_set_mode()` in `window.py` keeps the toolbar radio buttons in sync.
+
+Selected wire or component can be deleted with the keyboard Delete key.
 
 ### Validation logic (`model/validator.py`)
 
-- **UNPLACED**: component in netlist has no placement on the board.
+- **UNPLACED**: component in netlist has no placement on the board (only for components where `guess_type_id` returns non-None; virtual/simulation components are skipped).
 - **OPEN_NET**: pins in the same schematic net are in different connected components.
 - **SHORT**: pins from different schematic nets share the same connected component.
+
+Validation icons (⚡ for SHORT, ? for OPEN_NET) are drawn at the pin of the first relevant placed component, offset upward so they don't obscure the hole dot.
+
+### Canvas layout
+
+The breadboard is centred in the window using `dc.SetDeviceOrigin(ox, oy)`.  Mouse coordinates are converted via `_board_pos()` before any hit-testing.
+
+Power rails use `RAIL_GROUP_GAP = 27 px` between groups of 5 holes so that 50 rail holes span the same visual width as the 63-column tie strip.  The mid-board break uses `RAIL_BREAK_PX = 22 px` and is not double-counted as a group gap.
+
+### Virtual components and binding posts
+
+Components for which `guess_type_id()` returns `None` (e.g., simulation voltage sources) are excluded from the component tray.  They can still be connected to the circuit by right-clicking a binding post (`GND`, `V1`, `V2`) and assigning it to a schematic net.  The validator treats a terminal as a hole on its assigned net.

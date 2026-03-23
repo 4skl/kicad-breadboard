@@ -91,7 +91,7 @@ class BreadboardWindow(wx.Frame):
         self.GetStatusBar().SetFieldsCount(2)
         self.GetStatusBar().SetStatusWidths([-3, -1])
         self.SetStatusText('Load a netlist, then click a component in the tray to place it.', 0)
-        self.SetStatusText('Mode: Select', 1)
+        self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
 
     def _build_toolbar(self) -> None:
         tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_TEXT | wx.TB_NOICONS)
@@ -123,22 +123,44 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
         self.Bind(wx.EVT_TOOL, self._on_validate, id=ID_VALIDATE)
         self.Bind(wx.EVT_TOOL, self._on_clear,    id=ID_CLEAR)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
     # ------------------------------------------------------------------
     # Toolbar handlers
     # ------------------------------------------------------------------
 
+    def _set_mode(self, mode: str) -> None:
+        """Switch canvas mode and keep toolbar radio state in sync."""
+        self.canvas.set_mode(mode)
+        if mode == MODE_SELECT:
+            self.toolbar.ToggleTool(ID_SELECT, True)
+            self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
+        elif mode == MODE_WIRE:
+            self.toolbar.ToggleTool(ID_WIRE, True)
+            self.SetStatusText('Mode: Draw Wire — click start, click end  [Esc] cancel', 1)
+        elif mode == MODE_DELETE:
+            self.toolbar.ToggleTool(ID_DELETE, True)
+            self.SetStatusText('Mode: Delete — click component or wire  [Esc] cancel', 1)
+
     def _on_select(self, _evt) -> None:
-        self.canvas.set_mode(MODE_SELECT)
-        self.SetStatusText('Mode: Select / Move', 1)
+        self._set_mode(MODE_SELECT)
 
     def _on_wire(self, _evt) -> None:
-        self.canvas.set_mode(MODE_WIRE)
-        self.SetStatusText('Mode: Draw Wire  (click start hole, click end hole)', 1)
+        self._set_mode(MODE_WIRE)
 
     def _on_delete(self, _evt) -> None:
-        self.canvas.set_mode(MODE_DELETE)
-        self.SetStatusText('Mode: Delete  (click component or wire)', 1)
+        self._set_mode(MODE_DELETE)
+
+    def _on_char_hook(self, evt: wx.KeyEvent) -> None:
+        key = evt.GetKeyCode()
+        if key in (ord('W'), ord('w')):
+            self._set_mode(MODE_WIRE)
+        elif key in (ord('D'), ord('d')):
+            self._set_mode(MODE_DELETE)
+        elif key == wx.WXK_ESCAPE:
+            self._set_mode(MODE_SELECT)
+        else:
+            evt.Skip()
 
     def _on_open(self, _evt) -> None:
         with wx.FileDialog(

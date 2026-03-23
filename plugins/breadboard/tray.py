@@ -59,7 +59,9 @@ class ComponentTray(wx.ScrolledWindow):
 
         for ref, comp in sorted(netlist.components.items()):
             type_id = guess_type_id(ref, comp.value, comp.symbol)
-            comp_def = ALL_DEFS.get(type_id) if type_id else None
+            if type_id is None:
+                continue   # virtual/simulation component — only usable via binding posts
+            comp_def = ALL_DEFS.get(type_id)
             card = _TrayCard(self, ref=ref, comp=comp, comp_def=comp_def,
                              board=self.board)
             self._cards.append(card)

@@ -333,5 +333,20 @@ def guess_type_id(ref: str, value: str, symbol: str) -> Optional[str]:
         return 'L'
     if prefix in ('RV', 'POT'):
         return 'POT'
+    if prefix == 'U':
+        # Quad op-amps (14-DIP)
+        for key in ('LM324', 'LM348', 'TL074', 'LM4136'):
+            if key in v or key in s:
+                return 'TL084'
+        # Dual op-amps (8-DIP)
+        for key in ('LM358', 'NE5532', 'TL072', 'MC1458', '4558'):
+            if key in v or key in s:
+                return 'RC4558'
+        # Single op-amps and generic op-amp symbols (8-DIP)
+        for key in ('TL071', 'LM741', 'UA741', 'LM747', 'AD711'):
+            if key in v or key in s:
+                return 'TL081'
+        if 'OPAMP' in s or 'OP_AMP' in s or 'AMPLIFIER' in s:
+            return 'TL081'
 
     return None
