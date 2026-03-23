@@ -1,3 +1,4 @@
+
 """
 Component type definitions: pin counts, hole offsets, and physical layout.
 
@@ -217,21 +218,6 @@ def _dip14_offsets() -> Dict[int, PinOffset]:
     top = {i + 1: PinOffset(i, cross_gap=False) for i in range(7)}        # pins 1-7
     bot = {i + 8: PinOffset(6 - i, cross_gap=True) for i in range(7)}     # pins 8-14
     return {**top, **bot}
-
-# TL081 — single op-amp, 8-DIP
-# Pinout: 1=N1, 2=IN-, 3=IN+, 4=V-, 5=N2, 6=OUT, 7=V+, 8=N3
-OPAMP = ComponentDef(
-    type_id='OPAMP',
-    display_name='OPAMP',
-    ref_prefix='U',
-    pin_offsets=_dip8_offsets(),
-    pin_names={
-        1: 'N1', 2: 'IN-', 3: 'IN+', 4: 'V-',
-        5: 'N2', 6: 'OUT', 7: 'V+', 8: 'N3',
-    },
-    color='#303080',
-    is_dip=True,
-)
 
 # TL081 — single op-amp, 8-DIP
 # Pinout: 1=N1, 2=IN-, 3=IN+, 4=V-, 5=N2, 6=OUT, 7=V+, 8=N3
