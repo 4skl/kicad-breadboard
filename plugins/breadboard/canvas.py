@@ -89,6 +89,85 @@ MODE_DELETE = 'delete'
 
 
 # ---------------------------------------------------------------------------
+# Resistor colour-band helpers
+# ---------------------------------------------------------------------------
+
+_BAND_COLORS = [
+    '#111111',  # 0  Black
+    '#8B3A0F',  # 1  Brown
+    '#CC2200',  # 2  Red
+    '#FF7700',  # 3  Orange
+    '#CCAA00',  # 4  Yellow
+    '#226600',  # 5  Green
+    '#2244AA',  # 6  Blue
+    '#882288',  # 7  Violet
+    '#777777',  # 8  Grey
+    '#F8F8F8',  # 9  White
+]
+_GOLD   = '#D4AA00'
+_SILVER = '#C8C8C8'
+
+
+def _parse_ohms(value_str: str) -> Optional[float]:
+    """Parse a KiCad resistance value string to ohms, or None if unparseable."""
+    import re
+    s = value_str.strip()
+    # Strip trailing Ω / ohm / R (unit indicator)
+    s = re.sub(r'[ΩΩ]$', '', s).strip()
+    s = re.sub(r'(?i)ohm$', '', s).strip()
+
+    # "4k7" / "4K7" style (multiplier in middle, e.g. 4.7 kΩ)
+    m = re.match(r'^(\d+(?:\.\d+)?)[kK](\d*)$', s)
+    if m:
+        major = float(m.group(1))
+        minor = float('0.' + m.group(2)) if m.group(2) else 0
+        return (major + minor) * 1e3
+
+    m = re.match(r'^(\d+(?:\.\d+)?)[mM](\d*)$', s)
+    if m:
+        major = float(m.group(1))
+        minor = float('0.' + m.group(2)) if m.group(2) else 0
+        return (major + minor) * 1e6
+
+    # "4R7" decimal-separator style (4.7 Ω)
+    m = re.match(r'^(\d+)[Rr](\d+)$', s)
+    if m:
+        return float(m.group(1)) + float(m.group(2)) / (10 ** len(m.group(2)))
+
+    # Plain numeric with optional trailing multiplier letter
+    for suffix, mult in (('K', 1e3), ('k', 1e3), ('M', 1e6), ('G', 1e9)):
+        if s.endswith(suffix):
+            try:
+                return float(s[:-1]) * mult
+            except ValueError:
+                pass
+
+    # Trailing R is just the ohm unit
+    s = re.sub(r'[Rr]$', '', s)
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _resistor_bands(ohms: float) -> Optional[Tuple[str, str, str, str]]:
+    """Return (band1, band2, band3_multiplier, band4_tolerance) as hex colours."""
+    if ohms <= 0:
+        return None
+    exp = int(math.floor(math.log10(ohms)))
+    d1  = int(ohms / 10 ** exp)
+    d2  = int(round(ohms / 10 ** (exp - 1))) % 10
+    d1  = max(0, min(9, d1))
+    d2  = max(0, min(9, d2))
+    mult = exp - 1
+
+    if mult < -2 or mult > 9:
+        return None
+    c3 = _SILVER if mult == -2 else (_GOLD if mult == -1 else _BAND_COLORS[mult])
+    return _BAND_COLORS[d1], _BAND_COLORS[d2], c3, _GOLD   # gold = ±5 %
+
+
+# ---------------------------------------------------------------------------
 # Layout helper
 # ---------------------------------------------------------------------------
 
@@ -822,8 +901,30 @@ class BreadboardCanvas(wx.Panel):
                     body_w = mid2_x - mid1_x
                     body_rect = wx.Rect(mid1_x, p1[1] - 5, body_w, 10)
                     dc.DrawRoundedRectangle(body_rect, 4)
+
+                    if placed.type_id == 'R' and self.netlist:
+                        # Colour bands decoded from the component value
+                        comp = self.netlist.components.get(ref)
+                        ohms = _parse_ohms(comp.value) if comp else None
+                        bands = _resistor_bands(ohms) if ohms is not None else None
+                        if bands:
+                            bx = mid1_x
+                            bw = body_w
+                            # Positions: three signal bands left-of-centre,
+                            # tolerance band near right end with a small gap.
+                            positions = [
+                                bx + 3,
+                                bx + 7,
+                                bx + 11,
+                                bx + bw - 6,   # tolerance, separated
+                            ]
+                            dc.SetPen(wx.Pen(wx.NullColour, 0))
+                            for pos, color in zip(positions, bands):
+                                dc.SetBrush(wx.Brush(color))
+                                dc.DrawRectangle(pos, p1[1] - 5, 3, 10)
+
                     # Cathode stripe for diodes (silver band near pin 2)
-                    if placed.type_id in ('D', 'D_Zener'):
+                    elif placed.type_id in ('D', 'D_Zener'):
                         dc.SetBrush(wx.Brush('#cccccc'))
                         dc.SetPen(wx.Pen('#cccccc', 1))
                         dc.DrawRectangle(mid2_x - 4, p1[1] - 5, 4, 10)

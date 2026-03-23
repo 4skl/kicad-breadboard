@@ -93,7 +93,7 @@ RESISTOR = ComponentDef(
     type_id='R',
     display_name='Resistor',
     ref_prefix='R',
-    pin_offsets={1: PinOffset(0), 2: PinOffset(5)},
+    pin_offsets={1: PinOffset(0), 2: PinOffset(4)},
     pin_names={1: '1', 2: '2'},
     color='#c8a050',
 )

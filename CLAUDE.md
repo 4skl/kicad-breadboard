@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A KiCad 9 Action Plugin that lets students build their schematic on a virtual 830-point breadboard.  The student draws a schematic in Eeschema, exports a netlist, then drags components from a tray onto the breadboard, draws jumper wires, and validates the result against the netlist.
+A KiCad 9 Action Plugin that lets students build their schematic on a virtual 830-point breadboard.  The student draws a schematic in Eeschema, exports a netlist, then places components from a tray onto the breadboard, draws jumper wires, and validates the result against the netlist.
 
 Target audience: introductory analog electronics course at the University of Antwerp.
 
@@ -36,10 +36,10 @@ plugins/breadboard/
 ├── standalone.py        wx.App entry point for development outside KiCad
 ├── window.py            Main wx.Frame: toolbar, splitter, status bar
 ├── canvas.py            wx.Panel: renders breadboard, handles mouse interaction
-├── tray.py              wx.ScrolledWindow: component cards, drag source
+├── tray.py              wx.ScrolledWindow: component cards
 └── model/
     ├── breadboard.py    Core data model: TieHole/RailHole/Terminal, UnionFind,
-    │                    Breadboard, PlacedComponent, Wire
+    │                    Breadboard, PlacedComponent (incl. flipped), Wire
     ├── components.py    ComponentDef for every supported part; PinOffset resolution;
     │                    guess_type_id() heuristic from KiCad symbol/ref/value
     ├── netlist.py       KiCad S-expression netlist parser (.net files from Eeschema)
@@ -50,65 +50,66 @@ plugins/breadboard/
 
 1. `netlist.py` parses the `.net` file → `Netlist` (components + nets).
 2. `components.py` maps each component to a `ComponentDef` via `guess_type_id()`.
-3. The student drags cards from `ComponentTray` onto `BreadboardCanvas`.
-   - Drop calls `ComponentDef.place(anchor)` → `{pin_num: TieHole}`.
+3. The student clicks a card in `ComponentTray` → `canvas.begin_place()` → ghost preview → click hole to place.
+   - `ComponentDef.place(anchor, flipped)` → `{pin_num: TieHole}`.
    - `Breadboard.place(PlacedComponent)` stores the result.
 4. The student draws wires; `Breadboard.add_wire(h1, h2)` stores them.
-5. `validate()` calls `Breadboard.build_connectivity()` (union-find over tie strips +
-   rails + wires) and checks every schematic net for connectivity and shorts.
+5. `validate()` calls `Breadboard.build_connectivity()` (union-find over tie strips + rails + wires) and checks every schematic net for connectivity and shorts.
 
 ### Breadboard model
 
-- **Tie strips**: 63 columns × rows a–e (top bank) and f–j (bottom bank).
-  All holes in the same (column, bank) are pre-connected.
-- **Power rails**: `top_plus`, `top_minus`, `bot_plus`, `bot_minus` — 50 holes each.
-- **Terminals**: `GND`, `V1`, `V2` — lab power supply connection points on the left side.
-  Students connect them to rails with wires.
+- **Tie strips**: 63 columns × rows a–e (top bank) and f–j (bottom bank).  All holes in the same (column, bank) are pre-connected.
+- **Power rails**: `top_plus`, `top_minus`, `bot_plus`, `bot_minus` — 50 holes each, split at hole 25.  `RAIL_GROUP_GAP=22px` between groups of 5; `RAIL_BREAK_PX=58px` at the mid-board split.
+- **Terminals**: `GND`, `V1`, `V2` — binding posts on the left.  Right-click to assign to a schematic net.  The validator treats an assigned terminal as a hole on that net.
 - Connectivity is a union-find rebuilt from scratch on each validation call.
 
 ### Supported components
 
-| type_id      | Part                    | Package   | Pins |
+| type_id      | Part                     | Package    | Pins |
 |---|---|---|---|
-| R            | Resistor                | axial     | 2    |
-| C / C_POL    | Capacitor / electrolytic| radial    | 2    |
-| L            | Inductor                | axial     | 2    |
-| POT          | Potentiometer           | 3-pin     | 3    |
-| NPN / PNP    | BJT transistor          | TO-92     | 3 (C-B-E) |
-| JFET_N/P     | JFET                    | TO-92     | 3 (S-G-D) |
-| BS170        | MOSFET                  | TO-92     | 3 (S-G-D) |
-| TL081        | Single op-amp           | 8-DIP     | 8    |
-| RC4558       | Dual op-amp             | 8-DIP     | 8    |
-| TL084        | Quad op-amp             | 14-DIP    | 14   |
+| R            | Resistor (colour bands)  | axial      | 2    |
+| C / C_POL    | Capacitor / electrolytic | radial     | 2    |
+| L            | Inductor                 | axial      | 2    |
+| D            | Diode (1N4001 style)     | axial      | 2 (A-K) |
+| D_Zener      | Zener diode              | axial      | 2 (A-K) |
+| LED          | LED 5 mm                 | round      | 2 (A-K) |
+| POT          | Potentiometer            | 3-pin      | 3    |
+| NPN / PNP    | BJT transistor           | TO-92      | 3 (C-B-E) |
+| JFET_N/P     | JFET                     | TO-92      | 3 (S-G-D) |
+| BS170        | MOSFET                   | TO-92      | 3 (S-G-D) |
+| TL081        | Single op-amp            | 8-DIP      | 8    |
+| RC4558       | Dual op-amp              | 8-DIP      | 8    |
+| TL084        | Quad op-amp              | 14-DIP     | 14   |
 
-DIP ICs always straddle the center gap: top-side pins in row `e`, bottom-side in row `f`.
+Virtual/simulation components (no `guess_type_id` match) are hidden from the tray and only accessible via binding post assignment.
+
+### DIP IC convention
+
+DIP ICs straddle the center gap.  **Pins 1–N/2 go into row `f` (lower bank); pins N/2+1–N go into row `e` (upper bank).**  Pin 1 is therefore at the lower-left of the IC body — matching the physical lab convention.
+
+`PlacedComponent.flipped = True` rotates the IC 180°: `PinOffset.resolve()` negates `col_delta` AND inverts `cross_gap`, moving top-side pins to bottom and vice versa.  The anchor shifts by `footprint_cols - 1` so the body stays in the same visual position.
+
+DIP drawing includes grey leg tabs at each pin and a white pin-1 dot on the body side where pin 1 lives.
 
 ### Interaction modes
 
-| Mode   | Hotkey | Left-click behaviour                                    |
+| Mode   | Hotkey | Left-click behaviour |
 |---|---|---|
-| Select | Esc    | Click to select a placed component; drag to reposition  |
-| Wire   | W      | First click = wire start hole; second click = end hole  |
-| Delete | D      | Click on a placed component or wire to remove it        |
+| Select | Esc    | Click to select; drag to reposition |
+| Wire   | W      | First click = start hole; second click = end hole |
+| Delete | D      | Click component or wire to remove |
 
-Hotkeys are bound on the frame via `EVT_CHAR_HOOK`; `_set_mode()` in `window.py` keeps the toolbar radio buttons in sync.
-
-Selected wire or component can be deleted with the keyboard Delete key.
-
-### Validation logic (`model/validator.py`)
-
-- **UNPLACED**: component in netlist has no placement on the board (only for components where `guess_type_id` returns non-None; virtual/simulation components are skipped).
-- **OPEN_NET**: pins in the same schematic net are in different connected components.
-- **SHORT**: pins from different schematic nets share the same connected component.
-
-Validation icons (⚡ for SHORT, ? for OPEN_NET) are drawn at the pin of the first relevant placed component, offset upward so they don't obscure the hole dot.
+Additional keys: `R` rotates a DIP 180° (during placement or when selected); `Del` deletes the selected item.  Right-click on a placed DIP also rotates it.  Hotkeys bound via `EVT_CHAR_HOOK` on the frame; `_set_mode()` keeps the toolbar radio buttons in sync.
 
 ### Canvas layout
 
-The breadboard is centred in the window using `dc.SetDeviceOrigin(ox, oy)`.  Mouse coordinates are converted via `_board_pos()` before any hit-testing.
+- Board is centred with `dc.SetDeviceOrigin(ox, oy)`; mouse coords converted via `_board_pos()`.
+- `_parse_ohms()` + `_resistor_bands()` in `canvas.py` decode the KiCad value string (e.g. `4k7`, `10k`, `470R`) into 4-band colour tuples drawn on the resistor pill body.
 
-Power rails use `RAIL_GROUP_GAP = 27 px` between groups of 5 holes so that 50 rail holes span the same visual width as the 63-column tie strip.  The mid-board break uses `RAIL_BREAK_PX = 22 px` and is not double-counted as a group gap.
+### Validation
 
-### Virtual components and binding posts
+- **UNPLACED**: placeable component has no placement.
+- **OPEN_NET**: net holes span more than one connected component.
+- **SHORT**: two different nets share a connected component root.
 
-Components for which `guess_type_id()` returns `None` (e.g., simulation voltage sources) are excluded from the component tray.  They can still be connected to the circuit by right-clicking a binding post (`GND`, `V1`, `V2`) and assigning it to a schematic net.  The validator treats a terminal as a hole on its assigned net.
+Icons (⚡ SHORT, ? OPEN_NET) are placed at the first relevant placed-component pin, offset upward.
