@@ -60,8 +60,8 @@ RAIL_H = 18         # height of each power rail colour strip
 RAIL_GAP = 8        # gap between rail area and tie-strip area
 CENTER_GAP = 28     # gap between top and bottom tie-strip banks
 MARGIN = 20         # outer margin
-RAIL_BREAK_PX = 22  # extra pixel gap between the two rail halves
-RAIL_GROUP_GAP = 27 # extra gap inserted between each group of 5 rail holes
+RAIL_BREAK_PX = 58  # extra pixel gap at the mid-board split (wider than group gaps)
+RAIL_GROUP_GAP = 22 # extra gap inserted between each group of 5 rail holes
 
 # Binding posts (circular)
 TERM_R = 18         # radius of binding-post circle
@@ -69,7 +69,7 @@ TERM_CX = TERM_R + 8   # x-centre of all binding posts (from canvas left edge)
 TERM_COLORS = {
     'GND': ('#3a3a3a', '#707070'),   # (body colour, highlight ring colour)
     'V1':  ('#bb2020', '#ee7070'),
-    'V2':  ('#1a3aaa', '#6688ee'),
+    'V2':  ('#1a7a30', '#55bb66'),
 }
 
 WIRE_COLORS = [
@@ -217,6 +217,7 @@ class DragGhost:
     comp_def: ComponentDef
     ref: str
     anchor: Optional[TieHole] = None   # snapped hole for pin 1
+    flipped: bool = False              # DIP only: horizontally mirrored
 
 
 # ---------------------------------------------------------------------------
@@ -290,11 +291,13 @@ class BreadboardCanvas(wx.Panel):
             return False
         comp_def = self._ghost.comp_def
         ref = self._ghost.ref
+        flipped = self._ghost.flipped
         try:
-            pin_holes = comp_def.place(anchor)
+            pin_holes = comp_def.place(anchor, flipped=flipped)
         except (AssertionError, IndexError, KeyError):
             return False
-        placed = PlacedComponent(ref=ref, type_id=comp_def.type_id, pin_holes=pin_holes)
+        placed = PlacedComponent(ref=ref, type_id=comp_def.type_id,
+                                 pin_holes=pin_holes, flipped=flipped)
         self.board.place(placed)
         self._ghost = None
         if self.on_placed:
@@ -370,6 +373,13 @@ class BreadboardCanvas(wx.Panel):
             self._drag_comp = None
             self._selected_wire = None
             self.Refresh()
+        elif key in (ord('F'), ord('f')):
+            # Flip DIP ghost during placement, or flip selected placed DIP
+            if self._ghost is not None and self._ghost.comp_def.is_dip:
+                self._ghost.flipped = not self._ghost.flipped
+                self.Refresh()
+            elif self._selected_ref is not None:
+                self._flip_component(self._selected_ref)
         elif key in (wx.WXK_DELETE, wx.WXK_BACK):
             if self._selected_wire is not None:
                 self.board.remove_wire(self._selected_wire)
@@ -444,7 +454,7 @@ class BreadboardCanvas(wx.Panel):
                     comp_def = ALL_DEFS.get(p.type_id)
                     if comp_def:
                         try:
-                            new_pins = comp_def.place(new_anchor)
+                            new_pins = comp_def.place(new_anchor, flipped=p.flipped)
                             p.pin_holes = new_pins
                         except (AssertionError, IndexError, KeyError):
                             pass
@@ -461,11 +471,19 @@ class BreadboardCanvas(wx.Panel):
 
     def _on_right_down(self, evt: wx.MouseEvent) -> None:
         px, py = self._board_pos(*evt.GetPosition())
-        # Right-click on a terminal opens the net assignment dialog
+        # Right-click on a terminal → net assignment
         term = self._terminal_at(px, py)
         if term is not None:
             self._assign_terminal(term)
             return
+        # Right-click on a placed DIP → flip it
+        ref = self._comp_at(px, py)
+        if ref:
+            placed = self.board.get_placement(ref)
+            comp_def = ALL_DEFS.get(placed.type_id) if placed else None
+            if comp_def and comp_def.is_dip:
+                self._flip_component(ref)
+                return
         # Otherwise cancel the current operation
         self._wire_start = None
         self._ghost = None
@@ -506,6 +524,29 @@ class BreadboardCanvas(wx.Panel):
                     net_names[sel - 1] if sel > 0 else '',
                 )
                 self.Refresh()
+
+    def _flip_component(self, ref: str) -> None:
+        """Horizontally mirror a placed DIP IC, keeping its body in the same position."""
+        placed = self.board.get_placement(ref)
+        if not placed:
+            return
+        comp_def = ALL_DEFS.get(placed.type_id)
+        if not comp_def or not comp_def.is_dip:
+            return
+        pin1 = placed.pin_holes.get(1)
+        if not isinstance(pin1, TieHole):
+            return
+        n = comp_def.footprint_cols() - 1
+        new_flipped = not placed.flipped
+        # Shift anchor so the body stays visually in the same place
+        new_anchor_col = pin1.col + (n if new_flipped else -n)
+        try:
+            placed.pin_holes = comp_def.place(TieHole(new_anchor_col, 'e'),
+                                              flipped=new_flipped)
+            placed.flipped = new_flipped
+        except (AssertionError, IndexError, KeyError):
+            pass
+        self.Refresh()
 
     # ------------------------------------------------------------------
     # Hit testing helpers
@@ -719,13 +760,34 @@ class BreadboardCanvas(wx.Panel):
         dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
 
         if comp_def.is_dip:
-            # IC body as rectangle spanning the gap
             body_rect = wx.Rect(x_min - 4, y_min - 2, x_max - x_min + 8, y_max - y_min + 4)
+
+            # Legs: small grey tabs extending above/below the body at each pin
+            dc.SetBrush(wx.Brush('#888888'))
+            dc.SetPen(wx.Pen('#555555', 1))
+            for hole in placed.pin_holes.values():
+                xy = lay.hole_xy(hole)
+                if xy is None:
+                    continue
+                hx, hy = xy
+                if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
+                    dc.DrawRectangle(hx - 1, body_rect.GetTop() - 6, 3, 7)
+                elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
+                    dc.DrawRectangle(hx - 1, body_rect.GetBottom() - 1, 3, 7)
+
+            # IC body (drawn over the inner part of the legs)
+            dc.SetBrush(wx.Brush(body_color))
+            dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
             dc.DrawRoundedRectangle(body_rect, 3)
-            # Notch on left side
-            dc.SetBrush(wx.Brush('#ffffff'))
-            dc.SetPen(wx.Pen(border_color, 1))
-            dc.DrawCircle(x_min, (y_min + y_max) // 2, 4)
+
+            # Pin-1 dot: small circle on body surface above pin 1's column
+            pin1_hole = placed.pin_holes.get(1)
+            if pin1_hole:
+                pin1_xy = lay.hole_xy(pin1_hole)
+                if pin1_xy:
+                    dc.SetBrush(wx.Brush('#ffffff'))
+                    dc.SetPen(wx.Pen('#aaaaaa', 1))
+                    dc.DrawCircle(pin1_xy[0], body_rect.GetY() + 6, 3)
         elif comp_def.pin_count == 2:
             # Axial body: pill shape between the two pin holes
             p1 = lay.hole_xy(placed.pin_holes[1])
@@ -825,20 +887,44 @@ class BreadboardCanvas(wx.Panel):
         lay = self.layout
         comp_def = ghost.comp_def
         try:
-            pin_holes = comp_def.place(ghost.anchor)
+            pin_holes = comp_def.place(ghost.anchor, flipped=ghost.flipped)
         except (AssertionError, IndexError, KeyError):
             return
 
-        dc.SetBrush(wx.Brush(wx.Colour(comp_def.color + '88')))
-        dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
         holes_xy = [lay.hole_xy(h) for h in pin_holes.values()]
         holes_xy = [xy for xy in holes_xy if xy is not None]
-        if holes_xy:
-            xs = [xy[0] for xy in holes_xy]
-            ys = [xy[1] for xy in holes_xy]
-            body_rect = wx.Rect(min(xs) - 4, min(ys) - 6,
-                                max(xs) - min(xs) + 8, max(ys) - min(ys) + 12)
-            dc.DrawRoundedRectangle(body_rect, 4)
+        if not holes_xy:
+            return
+        xs = [xy[0] for xy in holes_xy]
+        ys = [xy[1] for xy in holes_xy]
+        body_rect = wx.Rect(min(xs) - 4, min(ys) - 6,
+                            max(xs) - min(xs) + 8, max(ys) - min(ys) + 12)
+
+        if comp_def.is_dip:
+            # Ghost legs
+            dc.SetBrush(wx.Brush('#88888866'))
+            dc.SetPen(wx.Pen('#88888866', 1))
+            for pin, hole in pin_holes.items():
+                xy = lay.hole_xy(hole)
+                if xy is None:
+                    continue
+                hx, hy = xy
+                if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
+                    dc.DrawRectangle(hx - 1, body_rect.GetTop() - 6, 3, 7)
+                elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
+                    dc.DrawRectangle(hx - 1, body_rect.GetBottom() - 1, 3, 7)
+
+        dc.SetBrush(wx.Brush(wx.Colour(comp_def.color + '88')))
+        dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
+        dc.DrawRoundedRectangle(body_rect, 4)
+
+        if comp_def.is_dip:
+            # Pin-1 ghost dot
+            p1_xy = lay.hole_xy(pin_holes.get(1))
+            if p1_xy:
+                dc.SetBrush(wx.Brush('#ffffff88'))
+                dc.SetPen(wx.Pen('#aaaaaa88', 1))
+                dc.DrawCircle(p1_xy[0], body_rect.GetY() + 6, 3)
 
     def _draw_wire_start_indicator(self, dc: wx.DC) -> None:
         xy = self.layout.hole_xy(self._wire_start)

@@ -39,8 +39,8 @@ class PinOffset:
     cross_gap: bool = False
     row_delta: int = 0
 
-    def resolve(self, anchor: TieHole) -> TieHole:
-        col = anchor.col + self.col_delta
+    def resolve(self, anchor: TieHole, flipped: bool = False) -> TieHole:
+        col = anchor.col + (-self.col_delta if flipped else self.col_delta)
         if self.cross_gap:
             row = 'f'   # DIP bottom side always in row f (closest to gap)
         else:
@@ -65,15 +65,16 @@ class ComponentDef:
     def pin_count(self) -> int:
         return len(self.pin_offsets)
 
-    def place(self, anchor: TieHole) -> Dict[int, Hole]:
+    def place(self, anchor: TieHole, flipped: bool = False) -> Dict[int, Hole]:
         """
         Resolve all pin holes given an anchor hole.
         For DIP ICs the anchor row is forced to 'e'.
+        When flipped=True the component is mirrored horizontally (col_deltas negated).
         Returns {pin_number: TieHole}.
         """
         if self.is_dip:
             anchor = TieHole(anchor.col, 'e')
-        return {pin: offset.resolve(anchor) for pin, offset in self.pin_offsets.items()}
+        return {pin: offset.resolve(anchor, flipped) for pin, offset in self.pin_offsets.items()}
 
     def footprint_cols(self) -> int:
         """Number of breadboard columns the component occupies."""

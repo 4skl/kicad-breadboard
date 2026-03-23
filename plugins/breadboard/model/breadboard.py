@@ -114,6 +114,7 @@ class PlacedComponent:
     ref: str
     type_id: str                         # matches ComponentDef.type_id
     pin_holes: Dict[int, Hole]          # pin_number → hole
+    flipped: bool = False               # DIP ICs only: horizontally mirrored
 
 
 @dataclass

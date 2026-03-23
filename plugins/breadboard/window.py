@@ -78,6 +78,20 @@ class BreadboardWindow(wx.Frame):
         self.tray = ComponentTray(tray_panel, self.board, self.netlist)
         tray_sizer.Add(label, 0, wx.ALL, 6)
         tray_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        hotkey_label = wx.StaticText(tray_panel, label=(
+            'W  Wire\n'
+            'D  Delete\n'
+            'F  Flip DIP\n'
+            'Esc  Select\n'
+            'Del  Delete selected\n'
+            'R-click  Flip / Assign net'
+        ))
+        hotkey_label.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
+                                     wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        hotkey_label.SetForegroundColour('#777777')
+        tray_sizer.Add(hotkey_label, 0, wx.ALL, 6)
+
         tray_panel.SetSizer(tray_sizer)
 
         splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-140)
