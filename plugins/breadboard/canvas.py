@@ -373,8 +373,8 @@ class BreadboardCanvas(wx.Panel):
             self._drag_comp = None
             self._selected_wire = None
             self.Refresh()
-        elif key in (ord('F'), ord('f')):
-            # Flip DIP ghost during placement, or flip selected placed DIP
+        elif key in (ord('R'), ord('r')):
+            # Rotate DIP 180° during placement, or rotate selected placed DIP
             if self._ghost is not None and self._ghost.comp_def.is_dip:
                 self._ghost.flipped = not self._ghost.flipped
                 self.Refresh()
@@ -780,14 +780,18 @@ class BreadboardCanvas(wx.Panel):
             dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
             dc.DrawRoundedRectangle(body_rect, 3)
 
-            # Pin-1 dot: small circle on body surface above pin 1's column
+            # Pin-1 dot: small circle on body surface, on the same side as pin 1
             pin1_hole = placed.pin_holes.get(1)
             if pin1_hole:
                 pin1_xy = lay.hole_xy(pin1_hole)
                 if pin1_xy:
                     dc.SetBrush(wx.Brush('#ffffff'))
                     dc.SetPen(wx.Pen('#aaaaaa', 1))
-                    dc.DrawCircle(pin1_xy[0], body_rect.GetY() + 6, 3)
+                    if isinstance(pin1_hole, TieHole) and pin1_hole.row in TOP_ROWS:
+                        dot_y = body_rect.GetY() + 6
+                    else:
+                        dot_y = body_rect.GetBottom() - 6
+                    dc.DrawCircle(pin1_xy[0], dot_y, 3)
         elif comp_def.pin_count == 2:
             # Axial body: pill shape between the two pin holes
             p1 = lay.hole_xy(placed.pin_holes[1])
@@ -919,12 +923,16 @@ class BreadboardCanvas(wx.Panel):
         dc.DrawRoundedRectangle(body_rect, 4)
 
         if comp_def.is_dip:
-            # Pin-1 ghost dot
-            p1_xy = lay.hole_xy(pin_holes.get(1))
+            p1_hole = pin_holes.get(1)
+            p1_xy = lay.hole_xy(p1_hole) if p1_hole else None
             if p1_xy:
                 dc.SetBrush(wx.Brush('#ffffff88'))
                 dc.SetPen(wx.Pen('#aaaaaa88', 1))
-                dc.DrawCircle(p1_xy[0], body_rect.GetY() + 6, 3)
+                if isinstance(p1_hole, TieHole) and p1_hole.row in TOP_ROWS:
+                    dot_y = body_rect.GetY() + 6
+                else:
+                    dot_y = body_rect.GetBottom() - 6
+                dc.DrawCircle(p1_xy[0], dot_y, 3)
 
     def _draw_wire_start_indicator(self, dc: wx.DC) -> None:
         xy = self.layout.hole_xy(self._wire_start)

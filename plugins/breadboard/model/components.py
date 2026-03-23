@@ -41,7 +41,9 @@ class PinOffset:
 
     def resolve(self, anchor: TieHole, flipped: bool = False) -> TieHole:
         col = anchor.col + (-self.col_delta if flipped else self.col_delta)
-        if self.cross_gap:
+        # 180° rotation also swaps top↔bottom rows (cross_gap inverted)
+        cross = (not self.cross_gap) if flipped else self.cross_gap
+        if cross:
             row = 'f'   # DIP bottom side always in row f (closest to gap)
         else:
             bank = TOP_ROWS if anchor.row in TOP_ROWS else BOT_ROWS

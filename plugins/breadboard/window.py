@@ -82,10 +82,10 @@ class BreadboardWindow(wx.Frame):
         hotkey_label = wx.StaticText(tray_panel, label=(
             'W  Wire\n'
             'D  Delete\n'
-            'F  Flip DIP\n'
+            'R  Rotate DIP 180°\n'
             'Esc  Select\n'
             'Del  Delete selected\n'
-            'R-click  Flip / Assign net'
+            'R-click  Rotate / Assign net'
         ))
         hotkey_label.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
