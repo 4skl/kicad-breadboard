@@ -215,3 +215,23 @@ def find_netlist(project_path: str | Path) -> Optional[Path]:
         p = p.parent
     nets = list(p.glob('*.net'))
     return nets[0] if nets else None
+
+
+def find_schematic(project_path: str | Path) -> Optional[Path]:
+    """
+    Given a KiCad project directory or any file inside it, return the path
+    to the top-level .kicad_sch file (same stem as .kicad_pro if present).
+    """
+    p = Path(project_path)
+    if p.suffix == '.kicad_sch' and p.is_file():
+        return p
+    if p.is_file():
+        p = p.parent
+    # Prefer the schematic whose stem matches the .kicad_pro project file
+    pros = list(p.glob('*.kicad_pro'))
+    if pros:
+        candidate = p / f'{pros[0].stem}.kicad_sch'
+        if candidate.is_file():
+            return candidate
+    schs = list(p.glob('*.kicad_sch'))
+    return schs[0] if schs else None

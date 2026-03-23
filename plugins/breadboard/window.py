@@ -23,7 +23,7 @@ from .canvas import BreadboardCanvas, MODE_SELECT, MODE_WIRE, MODE_DELETE
 from .tray import ComponentTray
 from .model import (
     Breadboard, Netlist,
-    parse_netlist, find_netlist,
+    parse_netlist, find_netlist, find_schematic,
     validate, IssueKind,
     ALL_DEFS, guess_type_id,
 )
@@ -32,6 +32,7 @@ from .model import (
 ID_SELECT = wx.NewIdRef()
 ID_WIRE   = wx.NewIdRef()
 ID_DELETE = wx.NewIdRef()
+ID_UPDATE   = wx.NewIdRef()
 ID_VALIDATE = wx.NewIdRef()
 ID_CLEAR_WARNINGS = wx.NewIdRef()
 ID_CLEAR  = wx.NewIdRef()
@@ -50,6 +51,7 @@ class BreadboardWindow(wx.Frame):
 
         self.board = Breadboard()
         self.netlist: Optional[Netlist] = None
+        self._project_path: Optional[str] = project_path
 
         self._build_ui()
         self._bind_events()
@@ -113,6 +115,8 @@ class BreadboardWindow(wx.Frame):
 
         tb.AddTool(ID_OPEN,   'Open netlist', wx.NullBitmap,
                    shortHelp='Load KiCad netlist (.net)')
+        tb.AddTool(ID_UPDATE, 'Update from schematic', wx.NullBitmap,
+                   shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
         tb.AddSeparator()
         tb.AddTool(ID_SELECT, 'Select / Move', wx.NullBitmap,
                    shortHelp='Select and move placed components',
@@ -135,6 +139,7 @@ class BreadboardWindow(wx.Frame):
 
     def _bind_events(self) -> None:
         self.Bind(wx.EVT_TOOL, self._on_open,     id=ID_OPEN)
+        self.Bind(wx.EVT_TOOL, self._on_update,   id=ID_UPDATE)
         self.Bind(wx.EVT_TOOL, self._on_select,   id=ID_SELECT)
         self.Bind(wx.EVT_TOOL, self._on_wire,     id=ID_WIRE)
         self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
@@ -188,7 +193,71 @@ class BreadboardWindow(wx.Frame):
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
         ) as dlg:
             if dlg.ShowModal() == wx.ID_OK:
-                self._load_netlist(dlg.GetPath())
+                path = dlg.GetPath()
+                self._project_path = str(Path(path).parent)
+                self._load_netlist(path)
+
+    def _on_update(self, _evt) -> None:
+        """Re-export the netlist from the .kicad_sch via kicad-cli and reload."""
+        import subprocess
+
+        if not self._project_path:
+            wx.MessageBox(
+                'No project loaded yet.\n'
+                'Use "Open netlist" first, or launch the plugin from KiCad.',
+                'Update from schematic', wx.OK | wx.ICON_INFORMATION)
+            return
+
+        sch = find_schematic(self._project_path)
+        if not sch:
+            wx.MessageBox(
+                f'No .kicad_sch file found in:\n{self._project_path}',
+                'Update from schematic', wx.OK | wx.ICON_ERROR)
+            return
+
+        net_path = sch.with_suffix('.net')
+        self.SetStatusText('Exporting netlist from schematic…', 0)
+        self.Update()   # flush the status bar before the subprocess blocks
+
+        try:
+            result = subprocess.run(
+                ['kicad-cli', 'sch', 'export', 'netlist',
+                 '--format', 'kicadfmt', '-o', str(net_path), str(sch)],
+                capture_output=True, text=True, timeout=30,
+            )
+        except FileNotFoundError:
+            wx.MessageBox(
+                'kicad-cli not found on PATH.\n'
+                'Make sure KiCad 9 is installed and kicad-cli is accessible.',
+                'Update from schematic', wx.OK | wx.ICON_ERROR)
+            return
+        except subprocess.TimeoutExpired:
+            wx.MessageBox('kicad-cli timed out.', 'Update from schematic',
+                          wx.OK | wx.ICON_ERROR)
+            return
+
+        if result.returncode != 0:
+            wx.MessageBox(
+                f'kicad-cli failed (exit {result.returncode}):\n{result.stderr}',
+                'Update from schematic', wx.OK | wx.ICON_ERROR)
+            return
+
+        # Reload the freshly-written netlist, keeping existing placements
+        self._load_netlist(str(net_path))
+
+        # Remove placements for refs that no longer exist in the new netlist
+        if self.netlist:
+            removed = []
+            for ref in list(self.board.placements):
+                if ref not in self.netlist.components:
+                    self.board.remove(ref)
+                    removed.append(ref)
+            if removed:
+                self.tray.refresh_placed()
+                self.canvas.Refresh()
+                self.SetStatusText(
+                    f'Netlist updated. Removed orphaned placement(s): '
+                    f'{", ".join(removed)}.', 0)
 
     def _on_validate(self, _evt) -> None:
         if self.netlist is None:
@@ -234,13 +303,14 @@ class BreadboardWindow(wx.Frame):
     # ------------------------------------------------------------------
 
     def _auto_load_netlist(self, project_path: str) -> None:
+        self._project_path = project_path
         net_path = find_netlist(project_path)
         if net_path:
             self._load_netlist(str(net_path))
         else:
             self.SetStatusText(
                 f'No netlist found for "{project_path}". '
-                'Export one from Eeschema: File → Export → Netlist.', 0
+                'Use "Update from schematic" or export one manually.', 0
             )
 
     def _load_netlist(self, path: str) -> None:

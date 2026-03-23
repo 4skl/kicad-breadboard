@@ -5,5 +5,5 @@ from .breadboard import (
     RAIL_NAMES, RAIL_LEN, RAIL_SPLIT, TERMINAL_NAMES,
 )
 from .components import ComponentDef, ALL_DEFS, guess_type_id
-from .netlist import Netlist, NetlistComponent, Net, parse as parse_netlist, find_netlist
+from .netlist import Netlist, NetlistComponent, Net, parse as parse_netlist, find_netlist, find_schematic
 from .validator import validate, ValidationResult, ValidationIssue, IssueKind
