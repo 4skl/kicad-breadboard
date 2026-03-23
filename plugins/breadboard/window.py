@@ -33,6 +33,7 @@ ID_SELECT = wx.NewIdRef()
 ID_WIRE   = wx.NewIdRef()
 ID_DELETE = wx.NewIdRef()
 ID_VALIDATE = wx.NewIdRef()
+ID_CLEAR_WARNINGS = wx.NewIdRef()
 ID_CLEAR  = wx.NewIdRef()
 ID_OPEN   = wx.NewIdRef()
 
@@ -125,6 +126,8 @@ class BreadboardWindow(wx.Frame):
         tb.AddSeparator()
         tb.AddTool(ID_VALIDATE, 'Validate',   wx.NullBitmap,
                    shortHelp='Check if your circuit matches the schematic')
+        tb.AddTool(ID_CLEAR_WARNINGS, 'Clear warnings', wx.NullBitmap,
+                   shortHelp='Dismiss validation warning/short markers')
         tb.AddTool(ID_CLEAR,  'Clear board',  wx.NullBitmap,
                    shortHelp='Remove all placed components and wires')
         tb.Realize()
@@ -135,8 +138,9 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_select,   id=ID_SELECT)
         self.Bind(wx.EVT_TOOL, self._on_wire,     id=ID_WIRE)
         self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
-        self.Bind(wx.EVT_TOOL, self._on_validate, id=ID_VALIDATE)
-        self.Bind(wx.EVT_TOOL, self._on_clear,    id=ID_CLEAR)
+        self.Bind(wx.EVT_TOOL, self._on_validate,       id=ID_VALIDATE)
+        self.Bind(wx.EVT_TOOL, self._on_clear_warnings, id=ID_CLEAR_WARNINGS)
+        self.Bind(wx.EVT_TOOL, self._on_clear,          id=ID_CLEAR)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
     # ------------------------------------------------------------------
@@ -204,6 +208,10 @@ class BreadboardWindow(wx.Frame):
             self.SetStatusText(summary, 0)
             wx.MessageBox('\n'.join(lines), 'Validation issues',
                           wx.OK | wx.ICON_WARNING)
+
+    def _on_clear_warnings(self, _evt) -> None:
+        self.canvas.clear_highlights()
+        self.SetStatusText('Validation markers cleared.', 0)
 
     def _on_clear(self, _evt) -> None:
         if wx.MessageBox(

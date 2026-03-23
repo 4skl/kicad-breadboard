@@ -317,9 +317,12 @@ class BreadboardCanvas(wx.Panel):
 
         self._ghost: Optional[DragGhost] = None      # component pending placement
         self._ghost_pos: Tuple[int, int] = (0, 0)    # current mouse pos
+        self._place_pin1: Optional[Hole] = None       # locked pin-1 hole for 2-pin two-step placement
 
         self._selected_ref: Optional[str] = None     # selected placed component
         self._selected_wire: Optional[Wire] = None   # selected wire
+        self._hover_ref: Optional[str] = None         # hovered component (delete mode)
+        self._hover_wire: Optional[Wire] = None       # hovered wire (delete mode)
         self._drag_comp: Optional[str] = None        # ref being repositioned on board
         self._drag_offset: Tuple[int, int] = (0, 0)  # mouse offset from pin-1 hole
 
@@ -351,6 +354,8 @@ class BreadboardCanvas(wx.Panel):
     def set_mode(self, mode: str) -> None:
         self.mode = mode
         self._wire_start = None
+        self._ghost = None
+        self._place_pin1 = None
         self._selected_wire = None
         self._selected_ref = None
         self.Refresh()
@@ -358,6 +363,7 @@ class BreadboardCanvas(wx.Panel):
     def begin_place(self, comp_def: ComponentDef, ref: str) -> None:
         """Called from the tray when a component card is clicked."""
         self._ghost = DragGhost(comp_def=comp_def, ref=ref)
+        self._place_pin1 = None
         self.SetFocus()   # so key events (Escape) reach the canvas
         self.Refresh()
 
@@ -365,14 +371,36 @@ class BreadboardCanvas(wx.Panel):
         """Place the current ghost at canvas position (px, py). Returns True on success."""
         if self._ghost is None:
             return False
-        anchor = self.layout.nearest_hole(px, py)
-        if not isinstance(anchor, TieHole):
+        clicked = self.layout.nearest_hole(px, py)
+        if not isinstance(clicked, TieHole):
             return False
         comp_def = self._ghost.comp_def
         ref = self._ghost.ref
+
+        # Two-pin non-DIP components use a two-step click flow
+        if comp_def.pin_count == 2 and not comp_def.is_dip:
+            if self._place_pin1 is None:
+                # First click: lock pin 1, keep ghost active for pin 2
+                self._place_pin1 = clicked
+                self.Refresh()
+                return True
+            else:
+                # Second click: place with both pins
+                pin_holes = {1: self._place_pin1, 2: clicked}
+                placed = PlacedComponent(ref=ref, type_id=comp_def.type_id,
+                                         pin_holes=pin_holes, flipped=False)
+                self.board.place(placed)
+                self._ghost = None
+                self._place_pin1 = None
+                if self.on_placed:
+                    self.on_placed(ref)
+                self.Refresh()
+                return True
+
+        # Single-click placement (DIP, 3-pin, etc.)
         flipped = self._ghost.flipped
         try:
-            pin_holes = comp_def.place(anchor, flipped=flipped)
+            pin_holes = comp_def.place(clicked, flipped=flipped)
         except (AssertionError, IndexError, KeyError):
             return False
         placed = PlacedComponent(ref=ref, type_id=comp_def.type_id,
@@ -448,6 +476,7 @@ class BreadboardCanvas(wx.Panel):
         key = evt.GetKeyCode()
         if key == wx.WXK_ESCAPE:
             self._ghost = None
+            self._place_pin1 = None
             self._wire_start = None
             self._drag_comp = None
             self._selected_wire = None
@@ -549,6 +578,12 @@ class BreadboardCanvas(wx.Panel):
         if self._ghost:
             anchor = self.layout.nearest_hole(px, py)
             self._ghost.anchor = anchor if isinstance(anchor, TieHole) else None
+        if self.mode == MODE_DELETE:
+            self._hover_ref = self._comp_at(px, py)
+            self._hover_wire = self._wire_at(px, py) if not self._hover_ref else None
+        else:
+            self._hover_ref = None
+            self._hover_wire = None
         self.Refresh()
 
     def _on_right_down(self, evt: wx.MouseEvent) -> None:
@@ -569,6 +604,7 @@ class BreadboardCanvas(wx.Panel):
         # Otherwise cancel the current operation
         self._wire_start = None
         self._ghost = None
+        self._place_pin1 = None
         self._drag_comp = None
         self.Refresh()
 
@@ -637,10 +673,17 @@ class BreadboardCanvas(wx.Panel):
     def _comp_at(self, px: int, py: int) -> Optional[str]:
         """Return ref of the component whose body contains pixel (px, py)."""
         for ref, p in self.board.placements.items():
-            for hole in p.pin_holes.values():
-                xy = self.layout.hole_xy(hole)
-                if xy and math.hypot(xy[0] - px, xy[1] - py) < PITCH * 1.5:
-                    return ref
+            holes_xy = [self.layout.hole_xy(h) for h in p.pin_holes.values()]
+            holes_xy = [xy for xy in holes_xy if xy is not None]
+            if not holes_xy:
+                continue
+            # Hit-test the full bounding box of the component body
+            xs = [xy[0] for xy in holes_xy]
+            ys = [xy[1] for xy in holes_xy]
+            pad_x, pad_y = 6, 10
+            if (min(xs) - pad_x <= px <= max(xs) + pad_x and
+                    min(ys) - pad_y <= py <= max(ys) + pad_y):
+                return ref
         return None
 
     def _wire_at(self, px: int, py: int) -> Optional[Wire]:
@@ -800,11 +843,15 @@ class BreadboardCanvas(wx.Panel):
             if xy1 is None or xy2 is None:
                 continue
             selected = (wire is self._selected_wire)
+            delete_hover = (wire is self._hover_wire)
             width = 5 if selected else 3
             color = '#ffffff' if selected else wire.color
-            # Selection halo
+            # Selection / delete-hover halo
             if selected:
                 dc.SetPen(wx.Pen(wx.Colour(wire.color), 7))
+                dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
+            elif delete_hover:
+                dc.SetPen(wx.Pen(wx.Colour('#ff4444'), 7))
                 dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
             dc.SetPen(wx.Pen(wx.Colour(color), width))
             dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
@@ -820,11 +867,12 @@ class BreadboardCanvas(wx.Panel):
             if comp_def is None:
                 continue
             selected = (ref == self._selected_ref)
-            self._draw_placed_component(dc, ref, placed, comp_def, selected)
+            delete_hover = (ref == self._hover_ref)
+            self._draw_placed_component(dc, ref, placed, comp_def, selected, delete_hover)
 
     def _draw_placed_component(self, dc: wx.DC, ref: str,
                                 placed: PlacedComponent, comp_def: ComponentDef,
-                                selected: bool) -> None:
+                                selected: bool, delete_hover: bool = False) -> None:
         lay = self.layout
         holes = [lay.hole_xy(h) for h in placed.pin_holes.values() if lay.hole_xy(h)]
         if not holes:
@@ -832,11 +880,21 @@ class BreadboardCanvas(wx.Panel):
 
         xs = [xy[0] for xy in holes]
         ys = [xy[1] for xy in holes]
+
+        # Draw selection / delete-hover halo behind the component
+        if selected or delete_hover:
+            halo_color = '#ff4444' if delete_hover else '#00ccff'
+            halo_rect = wx.Rect(min(xs) - 8, min(ys) - 11,
+                                max(xs) - min(xs) + 16, max(ys) - min(ys) + 22)
+            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            dc.SetPen(wx.Pen(wx.Colour(halo_color), 3))
+            dc.DrawRoundedRectangle(halo_rect, 5)
+
         x_min, x_max = min(xs), max(xs)
         y_min, y_max = min(ys), max(ys)
 
         body_color = comp_def.color
-        border_color = '#224422' if selected else '#333333'
+        border_color = '#333333'
 
         dc.SetBrush(wx.Brush(body_color))
         dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
@@ -878,12 +936,12 @@ class BreadboardCanvas(wx.Panel):
             p1 = lay.hole_xy(placed.pin_holes[1])
             p2 = lay.hole_xy(placed.pin_holes[2])
             if p1 and p2:
-                dc.SetPen(wx.Pen('#888888', 1))
+                dc.SetPen(wx.Pen('#888888', 3))
                 if placed.type_id == 'LED':
                     # 5mm round dome body, centred between the two leads
                     cx = (p1[0] + p2[0]) // 2
                     cy = p1[1]
-                    r = 8
+                    r = 10
                     dc.DrawLine(p1[0], cy, cx - r, cy)
                     dc.DrawLine(cx + r, cy, p2[0], cy)
                     dc.SetBrush(wx.Brush(body_color))
@@ -902,7 +960,7 @@ class BreadboardCanvas(wx.Panel):
                     dc.SetBrush(wx.Brush(body_color))
                     dc.SetPen(wx.Pen(border_color, 1))
                     body_w = mid2_x - mid1_x
-                    body_rect = wx.Rect(mid1_x, p1[1] - 5, body_w, 10)
+                    body_rect = wx.Rect(mid1_x, p1[1] - 7, body_w, 14)
                     dc.DrawRoundedRectangle(body_rect, 4)
 
                     if placed.type_id == 'R' and self.netlist:
@@ -924,16 +982,16 @@ class BreadboardCanvas(wx.Panel):
                             dc.SetPen(wx.TRANSPARENT_PEN)
                             for pos, color in zip(positions, bands):
                                 dc.SetBrush(wx.Brush(color))
-                                dc.DrawRectangle(pos, p1[1] - 5, 5, 10)
+                                dc.DrawRectangle(pos, p1[1] - 6, 5, 12)
 
                     # Cathode stripe for diodes (silver band near pin 2)
                     elif placed.type_id in ('D', 'D_Zener'):
                         dc.SetBrush(wx.Brush('#cccccc'))
                         dc.SetPen(wx.Pen('#cccccc', 1))
-                        dc.DrawRectangle(mid2_x - 4, p1[1] - 5, 4, 10)
+                        dc.DrawRectangle(mid2_x - 4, p1[1] - 7, 4, 14)
         else:
             # 3-pin components (TO-92, POT): simple rectangle
-            body_rect = wx.Rect(x_min - 3, y_min - 5, x_max - x_min + 6, 10)
+            body_rect = wx.Rect(x_min - 3, y_min - 7, x_max - x_min + 6, 14)
             dc.DrawRoundedRectangle(body_rect, 3)
 
         # Reference label
@@ -1008,10 +1066,47 @@ class BreadboardCanvas(wx.Panel):
     def _draw_ghost(self, dc: wx.DC) -> None:
         """Draw a semi-transparent component preview at the drag position."""
         ghost = self._ghost
-        if ghost is None or ghost.anchor is None:
+        if ghost is None:
             return
         lay = self.layout
         comp_def = ghost.comp_def
+
+        # Two-pin two-step placement: use locked pin1 + hovered pin2
+        if comp_def.pin_count == 2 and not comp_def.is_dip:
+            if self._place_pin1 is not None:
+                # Pin 1 is locked; pin 2 follows mouse
+                p1_xy = lay.hole_xy(self._place_pin1)
+                pin2_hole = ghost.anchor  # snapped to hovered hole
+                p2_xy = lay.hole_xy(pin2_hole) if pin2_hole else None
+                if p2_xy is None:
+                    p2_xy = self._ghost_pos  # fall back to raw mouse
+                if p1_xy:
+                    self._draw_ghost_2pin(dc, comp_def, p1_xy, p2_xy)
+                    # Draw locked pin-1 indicator
+                    dc.SetBrush(wx.Brush(wx.Colour(255, 200, 0, 180)))
+                    dc.SetPen(wx.Pen('#ffcc00', 2))
+                    dc.DrawCircle(p1_xy[0], p1_xy[1], HOLE_R + 5)
+                return
+            else:
+                # Pin 1 not yet locked: show preview centered on hovered hole
+                if ghost.anchor is None:
+                    return
+                p1_xy = lay.hole_xy(ghost.anchor)
+                if p1_xy is None:
+                    return
+                # Show preview with pin 1 at the hovered hole, body extending right
+                px_off = PITCH * 4
+                self._draw_ghost_2pin(dc, comp_def,
+                                      p1_xy,
+                                      (p1_xy[0] + px_off, p1_xy[1]))
+                # Highlight the hover hole as the future pin-1
+                dc.SetBrush(wx.Brush(wx.Colour(255, 200, 0, 100)))
+                dc.SetPen(wx.Pen('#ffcc0088', 2))
+                dc.DrawCircle(p1_xy[0], p1_xy[1], HOLE_R + 5)
+                return
+
+        if ghost.anchor is None:
+            return
         try:
             pin_holes = comp_def.place(ghost.anchor, flipped=ghost.flipped)
         except (AssertionError, IndexError, KeyError):
@@ -1055,6 +1150,23 @@ class BreadboardCanvas(wx.Panel):
                 else:
                     dot_y = body_rect.GetBottom() - 6
                 dc.DrawCircle(p1_xy[0], dot_y, 3)
+
+    def _draw_ghost_2pin(self, dc: wx.DC, comp_def: ComponentDef,
+                         p1_xy: Tuple[int, int], p2_xy: Tuple[int, int]) -> None:
+        """Draw a 2-pin ghost body between two pixel coordinates."""
+        x1, y1 = p1_xy
+        x2, y2 = p2_xy
+        dc.SetPen(wx.Pen('#88888888', 3))
+        dc.DrawLine(x1, y1, x2, y2)
+        mid1_x = min(x1, x2) + abs(x2 - x1) // 4
+        mid2_x = max(x1, x2) - abs(x2 - x1) // 4
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        body_w = abs(mid2_x - mid1_x)
+        body_rect = wx.Rect(min(mid1_x, mid2_x), cy - 7, max(body_w, 8), 14)
+        dc.SetBrush(wx.Brush(wx.Colour(comp_def.color + '88')))
+        dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
+        dc.DrawRoundedRectangle(body_rect, 4)
 
     def _draw_wire_start_indicator(self, dc: wx.DC) -> None:
         xy = self.layout.hole_xy(self._wire_start)
