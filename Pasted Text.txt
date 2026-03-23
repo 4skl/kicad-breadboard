@@ -1,0 +1,9 @@
+(hierarchical_label "v+"
+	(shape input)
+	(at 35.56 57.15 90)
+	(effects
+		(font (size 1.27 1.27))
+		(justify left)
+	)
+	(uuid "f6720047-8a8b-42e3-b95c-15179743131b")
+)
