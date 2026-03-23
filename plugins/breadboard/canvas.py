@@ -793,22 +793,40 @@ class BreadboardCanvas(wx.Panel):
                         dot_y = body_rect.GetBottom() - 6
                     dc.DrawCircle(pin1_xy[0], dot_y, 3)
         elif comp_def.pin_count == 2:
-            # Axial body: pill shape between the two pin holes
             p1 = lay.hole_xy(placed.pin_holes[1])
             p2 = lay.hole_xy(placed.pin_holes[2])
             if p1 and p2:
-                # Lead lines
                 dc.SetPen(wx.Pen('#888888', 1))
-                mid1_x = p1[0] + (p2[0] - p1[0]) // 4
-                mid2_x = p1[0] + 3 * (p2[0] - p1[0]) // 4
-                dc.DrawLine(p1[0], p1[1], mid1_x, p1[1])
-                dc.DrawLine(mid2_x, p1[1], p2[0], p2[1])
-                # Body
-                dc.SetBrush(wx.Brush(body_color))
-                dc.SetPen(wx.Pen(border_color, 1))
-                body_w = (mid2_x - mid1_x)
-                body_rect = wx.Rect(mid1_x, p1[1] - 5, body_w, 10)
-                dc.DrawRoundedRectangle(body_rect, 4)
+                if placed.type_id == 'LED':
+                    # 5mm round dome body, centred between the two leads
+                    cx = (p1[0] + p2[0]) // 2
+                    cy = p1[1]
+                    r = 8
+                    dc.DrawLine(p1[0], cy, cx - r, cy)
+                    dc.DrawLine(cx + r, cy, p2[0], cy)
+                    dc.SetBrush(wx.Brush(body_color))
+                    dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
+                    dc.DrawCircle(cx, cy, r)
+                    # Flat on cathode side (pin 2 = right)
+                    dc.SetBrush(wx.Brush('#444444'))
+                    dc.SetPen(wx.Pen('#444444', 1))
+                    dc.DrawRectangle(cx + r - 4, cy - r + 1, 4, (r - 1) * 2)
+                else:
+                    # Axial pill (R, C, L, D, D_Zener …)
+                    mid1_x = p1[0] + (p2[0] - p1[0]) // 4
+                    mid2_x = p1[0] + 3 * (p2[0] - p1[0]) // 4
+                    dc.DrawLine(p1[0], p1[1], mid1_x, p1[1])
+                    dc.DrawLine(mid2_x, p1[1], p2[0], p2[1])
+                    dc.SetBrush(wx.Brush(body_color))
+                    dc.SetPen(wx.Pen(border_color, 1))
+                    body_w = mid2_x - mid1_x
+                    body_rect = wx.Rect(mid1_x, p1[1] - 5, body_w, 10)
+                    dc.DrawRoundedRectangle(body_rect, 4)
+                    # Cathode stripe for diodes (silver band near pin 2)
+                    if placed.type_id in ('D', 'D_Zener'):
+                        dc.SetBrush(wx.Brush('#cccccc'))
+                        dc.SetPen(wx.Pen('#cccccc', 1))
+                        dc.DrawRectangle(mid2_x - 4, p1[1] - 5, 4, 10)
         else:
             # 3-pin components (TO-92, POT): simple rectangle
             body_rect = wx.Rect(x_min - 3, y_min - 5, x_max - x_min + 6, 10)

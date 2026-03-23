@@ -126,6 +126,43 @@ INDUCTOR = ComponentDef(
 )
 
 # ---------------------------------------------------------------------------
+# Diodes (axial, 4-hole span — roughly 1N4001 body length)
+# Pin 1 = Anode (A), Pin 2 = Cathode (K)
+# ---------------------------------------------------------------------------
+
+DIODE = ComponentDef(
+    type_id='D',
+    display_name='Diode',
+    ref_prefix='D',
+    pin_offsets={1: PinOffset(0), 2: PinOffset(4)},
+    pin_names={1: 'A', 2: 'K'},
+    color='#222222',   # black body like 1N4001
+)
+
+ZENER = ComponentDef(
+    type_id='D_Zener',
+    display_name='Zener Diode',
+    ref_prefix='D',
+    pin_offsets={1: PinOffset(0), 2: PinOffset(4)},
+    pin_names={1: 'A', 2: 'K'},
+    color='#1a1a2a',   # near-black, slightly blue-tinted
+)
+
+# ---------------------------------------------------------------------------
+# LED (5mm round package, 2-hole pin span)
+# Pin 1 = Anode (A), Pin 2 = Cathode (K, shorter lead / flat side)
+# ---------------------------------------------------------------------------
+
+LED = ComponentDef(
+    type_id='LED',
+    display_name='LED (5mm)',
+    ref_prefix='D',
+    pin_offsets={1: PinOffset(0), 2: PinOffset(2)},
+    pin_names={1: 'A', 2: 'K'},
+    color='#e84040',   # default red; actual colour unknown from netlist
+)
+
+# ---------------------------------------------------------------------------
 # Potentiometer (3-pin, 3 consecutive holes)
 # Pin 1 = CCW terminal, Pin 2 = Wiper, Pin 3 = CW terminal
 # ---------------------------------------------------------------------------
@@ -202,24 +239,27 @@ BS170 = ComponentDef(
 # ---------------------------------------------------------------------------
 # DIP op-amps — anchor always in row 'e', bottom side in row 'f'
 #
-# 8-DIP pin layout (counterclockwise from notch, top view):
-#   Pins 1–4 along the top side  (row e, cols anchor … anchor+3)
-#   Pins 5–8 along the bottom side (row f, cols anchor+3 … anchor)
+# 8-DIP pin layout (counterclockwise from notch, viewed from top):
+#   Pins 1–4 along the bottom side (row f, cols anchor … anchor+3)
+#   Pins 5–8 along the top side    (row e, cols anchor+3 … anchor)
+#
+#   This matches the physical lab convention: pin 1 is at the lower-left when
+#   the board is viewed with top rails at the top of the screen.
 #
 # 14-DIP:
-#   Pins 1–7  top side  (row e, cols anchor … anchor+6)
-#   Pins 8–14 bottom side (row f, cols anchor+6 … anchor)
+#   Pins 1–7  bottom side (row f, cols anchor … anchor+6)
+#   Pins 8–14 top side    (row e, cols anchor+6 … anchor)
 # ---------------------------------------------------------------------------
 
 def _dip8_offsets() -> Dict[int, PinOffset]:
-    top = {i + 1: PinOffset(i, cross_gap=False) for i in range(4)}        # pins 1-4
-    bot = {i + 5: PinOffset(3 - i, cross_gap=True) for i in range(4)}     # pins 5-8
-    return {**top, **bot}
+    bot = {i + 1: PinOffset(i,     cross_gap=True)  for i in range(4)}    # pins 1-4, row f
+    top = {i + 5: PinOffset(3 - i, cross_gap=False) for i in range(4)}    # pins 5-8, row e
+    return {**bot, **top}
 
 def _dip14_offsets() -> Dict[int, PinOffset]:
-    top = {i + 1: PinOffset(i, cross_gap=False) for i in range(7)}        # pins 1-7
-    bot = {i + 8: PinOffset(6 - i, cross_gap=True) for i in range(7)}     # pins 8-14
-    return {**top, **bot}
+    bot = {i + 1: PinOffset(i,     cross_gap=True)  for i in range(7)}    # pins 1-7,  row f
+    top = {i + 8: PinOffset(6 - i, cross_gap=False) for i in range(7)}    # pins 8-14, row e
+    return {**bot, **top}
 
 # TL081 — single op-amp, 8-DIP
 # Pinout: 1=N1, 2=IN-, 3=IN+, 4=V-, 5=N2, 6=OUT, 7=V+, 8=N3
@@ -291,7 +331,9 @@ TL084 = ComponentDef(
 
 ALL_DEFS: Dict[str, ComponentDef] = {
     d.type_id: d for d in [
-        RESISTOR, CAPACITOR, CAPACITOR_ELECTROLYTIC, INDUCTOR, POTENTIOMETER,
+        RESISTOR, CAPACITOR, CAPACITOR_ELECTROLYTIC, INDUCTOR,
+        DIODE, ZENER, LED,
+        POTENTIOMETER,
         NPN_BJT, PNP_BJT, JFET_N, JFET_P, BS170,
         TL081, RC4558, TL084,
     ]
@@ -336,6 +378,12 @@ def guess_type_id(ref: str, value: str, symbol: str) -> Optional[str]:
         return 'L'
     if prefix in ('RV', 'POT'):
         return 'POT'
+    if prefix in ('D', 'LED'):
+        if 'LED' in v or 'LED' in s or prefix == 'LED':
+            return 'LED'
+        if 'ZENER' in s or 'ZEN' in s or 'BZX' in v or 'BZY' in v or 'BZT' in v:
+            return 'D_Zener'
+        return 'D'
     if prefix == 'U':
         # Quad op-amps (14-DIP)
         for key in ('LM324', 'LM348', 'TL074', 'LM4136'):
