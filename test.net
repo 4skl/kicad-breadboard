@@ -2,7 +2,7 @@
 	(version "E")
 	(design
 		(source "/home/robin/kicad/kicad-breadboard/test.kicad_sch")
-		(date "2026-03-23T14:02:05")
+		(date "2026-03-24T12:23:32")
 		(tool "Eeschema 10.0.0")
 		(sheet
 			(number "1")
@@ -79,7 +79,7 @@
 			)
 			(property
 				(name "Sheetfile")
-				(value "")
+				(value "test.kicad_sch")
 			)
 			(property
 				(name "ki_keywords")
@@ -133,7 +133,7 @@
 			)
 			(property
 				(name "Sheetfile")
-				(value "")
+				(value "test.kicad_sch")
 			)
 			(property
 				(name "ki_keywords")
@@ -211,7 +211,7 @@
 			)
 			(property
 				(name "Sheetfile")
-				(value "")
+				(value "test.kicad_sch")
 			)
 			(property
 				(name "ki_keywords")

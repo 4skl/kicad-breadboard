@@ -243,10 +243,61 @@ class BreadboardWindow(wx.Frame):
                 self._project_path = str(Path(path).parent)
                 self._load_netlist(path)
 
-    def _on_update(self, _evt) -> None:
-        """Re-export the netlist from the .kicad_sch via kicad-cli and reload."""
+    def _export_netlist(self, silent: bool = False) -> Optional[Path]:
+        """
+        Run kicad-cli to export the netlist from the project schematic.
+        Returns the .net path on success, or None on failure.
+        If silent=True, errors are written to the status bar instead of a dialog.
+        """
         import subprocess
 
+        sch = find_schematic(self._project_path)
+        if not sch:
+            msg = f'No .kicad_sch file found in:\n{self._project_path}'
+            if silent:
+                self.SetStatusText(msg, 0)
+            else:
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+            return None
+
+        net_path = sch.with_suffix('.net')
+        self.SetStatusText('Exporting netlist from schematic…', 0)
+        self.Update()
+
+        try:
+            result = subprocess.run(
+                ['kicad-cli', 'sch', 'export', 'netlist',
+                 '--format', 'kicadsexpr', '-o', str(net_path), str(sch)],
+                capture_output=True, text=True, timeout=30,
+            )
+        except FileNotFoundError:
+            msg = ('kicad-cli not found on PATH.\n'
+                   'Make sure KiCad is installed and kicad-cli is accessible.')
+            if silent:
+                self.SetStatusText(msg.replace('\n', ' '), 0)
+            else:
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+            return None
+        except subprocess.TimeoutExpired:
+            msg = 'kicad-cli timed out.'
+            if silent:
+                self.SetStatusText(msg, 0)
+            else:
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+            return None
+
+        if result.returncode != 0:
+            msg = f'kicad-cli failed (exit {result.returncode}):\n{result.stderr}'
+            if silent:
+                self.SetStatusText(msg.replace('\n', ' '), 0)
+            else:
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+            return None
+
+        return net_path
+
+    def _on_update(self, _evt) -> None:
+        """Re-export the netlist from the .kicad_sch via kicad-cli and reload."""
         if not self._project_path:
             wx.MessageBox(
                 'No project loaded yet.\n'
@@ -254,38 +305,8 @@ class BreadboardWindow(wx.Frame):
                 'Update from schematic', wx.OK | wx.ICON_INFORMATION)
             return
 
-        sch = find_schematic(self._project_path)
-        if not sch:
-            wx.MessageBox(
-                f'No .kicad_sch file found in:\n{self._project_path}',
-                'Update from schematic', wx.OK | wx.ICON_ERROR)
-            return
-
-        net_path = sch.with_suffix('.net')
-        self.SetStatusText('Exporting netlist from schematic…', 0)
-        self.Update()   # flush the status bar before the subprocess blocks
-
-        try:
-            result = subprocess.run(
-                ['kicad-cli', 'sch', 'export', 'netlist',
-                 '--format', 'kicadfmt', '-o', str(net_path), str(sch)],
-                capture_output=True, text=True, timeout=30,
-            )
-        except FileNotFoundError:
-            wx.MessageBox(
-                'kicad-cli not found on PATH.\n'
-                'Make sure KiCad 9 is installed and kicad-cli is accessible.',
-                'Update from schematic', wx.OK | wx.ICON_ERROR)
-            return
-        except subprocess.TimeoutExpired:
-            wx.MessageBox('kicad-cli timed out.', 'Update from schematic',
-                          wx.OK | wx.ICON_ERROR)
-            return
-
-        if result.returncode != 0:
-            wx.MessageBox(
-                f'kicad-cli failed (exit {result.returncode}):\n{result.stderr}',
-                'Update from schematic', wx.OK | wx.ICON_ERROR)
+        net_path = self._export_netlist(silent=False)
+        if net_path is None:
             return
 
         # Reload the freshly-written netlist, keeping existing placements
@@ -374,13 +395,10 @@ class BreadboardWindow(wx.Frame):
     def _auto_load_netlist(self, project_path: str) -> None:
         self._project_path = project_path
         net_path = find_netlist(project_path)
+        if not net_path:
+            net_path = self._export_netlist(silent=True)
         if net_path:
             self._load_netlist(str(net_path))
-        else:
-            self.SetStatusText(
-                f'No netlist found for "{project_path}". '
-                'Use "Update from schematic" or export one manually.', 0
-            )
 
     def _on_term_choice(self, term_name: str, evt) -> None:
         ch = self._term_choices[term_name]
