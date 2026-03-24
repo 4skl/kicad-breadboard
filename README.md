@@ -117,6 +117,7 @@ Example workflow:
 At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard editor.
 
 Here, you can select which component you want to place and click "Validate" to check if your build contains errors. If it does, it will indicate missing connections and short circuits on the relevant pins as illustrated below.
+
 ![shortcircuit](images/shortcircuit.png)
 
 Thats it! Have fun!
