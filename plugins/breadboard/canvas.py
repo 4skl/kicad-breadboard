@@ -57,7 +57,7 @@ from .model import (
 PITCH = 18          # distance between adjacent holes
 HOLE_R = 3          # hole dot radius
 RAIL_H = 18         # height of each power rail colour strip
-RAIL_GAP = 8        # gap between rail area and tie-strip area
+RAIL_GAP = 18       # gap between rail area and tie-strip area
 CENTER_GAP = 28     # gap between top and bottom tie-strip banks
 MARGIN = 20         # outer margin
 RAIL_BREAK_PX = 58  # extra pixel gap at the mid-board split (wider than group gaps)
@@ -189,7 +189,7 @@ class CanvasLayout:
         for i, row in enumerate(BOT_ROWS):
             self._row_y[row] = tie_bot_start_y + i * PITCH
 
-        bot_plus_y  = self._row_y['j'] + PITCH + RAIL_GAP
+        bot_plus_y  = self._row_y['j'] + RAIL_GAP
         bot_minus_y = bot_plus_y + RAIL_H + 2
 
         self._rail_y = {
@@ -334,10 +334,16 @@ class BreadboardCanvas(wx.Panel):
         # Called with ref after a component is successfully placed
         self.on_placed: Optional[callable] = None
 
-        # Draw offset for centering the board in the canvas (updated on each paint)
-        self._draw_offset: Tuple[int, int] = (0, 0)
+        # Zoom / pan state
+        self._zoom: float = 1.0
+        self._pan_x: float = 0.0
+        self._pan_y: float = 0.0
+        self._pan_initialized: bool = False
+        self._mid_drag: bool = False
+        self._mid_drag_start: Tuple[int, int] = (0, 0)
+        self._pan_at_drag_start: Tuple[float, float] = (0.0, 0.0)
 
-        self.SetMinSize((self.layout.total_width(), self.layout.total_height))
+        self.SetMinSize((400, 300))
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
 
         self.Bind(wx.EVT_PAINT, self._on_paint)
@@ -346,6 +352,10 @@ class BreadboardCanvas(wx.Panel):
         self.Bind(wx.EVT_MOTION, self._on_motion)
         self.Bind(wx.EVT_RIGHT_DOWN, self._on_right_down)
         self.Bind(wx.EVT_KEY_DOWN, self._on_key_down)
+        self.Bind(wx.EVT_MOUSEWHEEL, self._on_mousewheel)
+        self.Bind(wx.EVT_MIDDLE_DOWN, self._on_middle_down)
+        self.Bind(wx.EVT_MIDDLE_UP, self._on_middle_up)
+        self.Bind(wx.EVT_SIZE, lambda e: self.Refresh())
 
     # ------------------------------------------------------------------
     # Public API (called from window / tray)
@@ -372,12 +382,13 @@ class BreadboardCanvas(wx.Panel):
         if self._ghost is None:
             return False
         clicked = self.layout.nearest_hole(px, py)
-        if not isinstance(clicked, TieHole):
+        if clicked is None:
             return False
         comp_def = self._ghost.comp_def
         ref = self._ghost.ref
 
-        # Two-pin non-DIP components use a two-step click flow
+        # Two-pin non-DIP components use a two-step click flow.
+        # They can land on any hole (tie strip OR power rail).
         if comp_def.pin_count == 2 and not comp_def.is_dip:
             if self._place_pin1 is None:
                 # First click: lock pin 1, keep ghost active for pin 2
@@ -397,7 +408,9 @@ class BreadboardCanvas(wx.Panel):
                 self.Refresh()
                 return True
 
-        # Single-click placement (DIP, 3-pin, etc.)
+        # Single-click placement (DIP, 3-pin, etc.) — anchor must be a tie hole
+        if not isinstance(clicked, TieHole):
+            return False
         flipped = self._ghost.flipped
         try:
             pin_holes = comp_def.place(clicked, flipped=flipped)
@@ -463,10 +476,21 @@ class BreadboardCanvas(wx.Panel):
         self._wire_color_idx += 1
         return c
 
-    def _board_pos(self, px: int, py: int) -> Tuple[int, int]:
+    def _board_pos(self, px: int, py: int) -> Tuple[float, float]:
         """Convert a window-pixel mouse position to board-pixel coordinates."""
-        ox, oy = self._draw_offset
-        return px - ox, py - oy
+        return (px - self._pan_x) / self._zoom, (py - self._pan_y) / self._zoom
+
+    def _fit_view(self) -> None:
+        """Reset zoom and pan so the board fits centred in the window."""
+        cw, ch = self.GetClientSize()
+        if cw <= 0 or ch <= 0:
+            return
+        bw = self.layout.total_width()
+        bh = self.layout.total_height
+        self._zoom = min(cw / bw, ch / bh, 1.0)
+        self._pan_x = (cw - bw * self._zoom) / 2
+        self._pan_y = (ch - bh * self._zoom) / 2
+        self.Refresh()
 
     # ------------------------------------------------------------------
     # Mouse event handlers
@@ -499,6 +523,26 @@ class BreadboardCanvas(wx.Panel):
                     self.on_placed(self._selected_ref)
                 self._selected_ref = None
                 self.Refresh()
+        elif key == wx.WXK_HOME and evt.ControlDown():
+            self._fit_view()
+        elif key in (ord('+'), ord('='), wx.WXK_NUMPAD_ADD):
+            cw, ch = self.GetClientSize()
+            cx, cy = cw / 2, ch / 2
+            new_zoom = min(5.0, self._zoom * 1.2)
+            scale = new_zoom / self._zoom
+            self._pan_x = cx - (cx - self._pan_x) * scale
+            self._pan_y = cy - (cy - self._pan_y) * scale
+            self._zoom = new_zoom
+            self.Refresh()
+        elif key in (ord('-'), wx.WXK_NUMPAD_SUBTRACT):
+            cw, ch = self.GetClientSize()
+            cx, cy = cw / 2, ch / 2
+            new_zoom = max(0.15, self._zoom / 1.2)
+            scale = new_zoom / self._zoom
+            self._pan_x = cx - (cx - self._pan_x) * scale
+            self._pan_y = cy - (cy - self._pan_y) * scale
+            self._zoom = new_zoom
+            self.Refresh()
         else:
             evt.Skip()
 
@@ -572,12 +616,52 @@ class BreadboardCanvas(wx.Panel):
             self._drag_comp = None
             self.Refresh()
 
+    def _on_mousewheel(self, evt: wx.MouseEvent) -> None:
+        rotation = evt.GetWheelRotation()
+        cx, cy = evt.GetPosition()
+        factor = 1.12 if rotation > 0 else (1.0 / 1.12)
+        new_zoom = max(0.15, min(5.0, self._zoom * factor))
+        # Keep the point under the cursor fixed
+        scale = new_zoom / self._zoom
+        self._pan_x = cx - (cx - self._pan_x) * scale
+        self._pan_y = cy - (cy - self._pan_y) * scale
+        self._zoom = new_zoom
+        self.Refresh()
+
+    def _on_middle_down(self, evt: wx.MouseEvent) -> None:
+        self._mid_drag = True
+        pos = evt.GetPosition()
+        self._mid_drag_start = (pos.x, pos.y)
+        self._pan_at_drag_start = (self._pan_x, self._pan_y)
+        if not self.HasCapture():
+            self.CaptureMouse()
+        self.SetCursor(wx.Cursor(wx.CURSOR_SIZING))
+
+    def _on_middle_up(self, evt: wx.MouseEvent) -> None:
+        if self._mid_drag:
+            self._mid_drag = False
+            if self.HasCapture():
+                self.ReleaseMouse()
+            self.SetCursor(wx.Cursor(wx.CURSOR_ARROW))
+
     def _on_motion(self, evt: wx.MouseEvent) -> None:
+        if self._mid_drag:
+            pos = evt.GetPosition()
+            dx = pos.x - self._mid_drag_start[0]
+            dy = pos.y - self._mid_drag_start[1]
+            self._pan_x = self._pan_at_drag_start[0] + dx
+            self._pan_y = self._pan_at_drag_start[1] + dy
+            self.Refresh()
+            return
         px, py = self._board_pos(*evt.GetPosition())
         self._ghost_pos = (px, py)
         if self._ghost:
             anchor = self.layout.nearest_hole(px, py)
-            self._ghost.anchor = anchor if isinstance(anchor, TieHole) else None
+            comp_def = self._ghost.comp_def
+            if comp_def.pin_count == 2 and not comp_def.is_dip:
+                self._ghost.anchor = anchor  # accept tie strip or power rail
+            else:
+                self._ghost.anchor = anchor if isinstance(anchor, TieHole) else None
         if self.mode == MODE_DELETE:
             self._hover_ref = self._comp_at(px, py)
             self._hover_wire = self._wire_at(px, py) if not self._hover_ref else None
@@ -588,11 +672,6 @@ class BreadboardCanvas(wx.Panel):
 
     def _on_right_down(self, evt: wx.MouseEvent) -> None:
         px, py = self._board_pos(*evt.GetPosition())
-        # Right-click on a terminal → net assignment
-        term = self._terminal_at(px, py)
-        if term is not None:
-            self._assign_terminal(term)
-            return
         # Right-click on a placed DIP or 3-pin component → flip it
         ref = self._comp_at(px, py)
         if ref:
@@ -607,41 +686,6 @@ class BreadboardCanvas(wx.Panel):
         self._place_pin1 = None
         self._drag_comp = None
         self.Refresh()
-
-    def _terminal_at(self, px: int, py: int) -> Optional[Terminal]:
-        """Return the Terminal whose circle contains pixel (px, py), or None."""
-        for name in TERMINAL_NAMES:
-            t = Terminal(name)
-            xy = self.layout.hole_xy(t)
-            if xy and math.hypot(xy[0] - px, xy[1] - py) <= TERM_R + 4:
-                return t
-        return None
-
-    def _assign_terminal(self, terminal: Terminal) -> None:
-        """Show a net-selection dialog and update the terminal assignment."""
-        if self.netlist is None:
-            wx.MessageBox('Load a netlist first.', 'Terminal Assignment',
-                          wx.OK | wx.ICON_INFORMATION)
-            return
-        net_names = sorted(net.name for net in self.netlist.nets if net.name)
-        choices = ['(unassigned)'] + net_names
-        current = self.board.get_terminal_net(terminal.name)
-        with wx.SingleChoiceDialog(
-            self,
-            f'Assign binding post "{terminal.name}" to a schematic net.\n'
-            f'Students will wire this post to the breadboard.',
-            f'Assign {terminal.name}',
-            choices,
-        ) as dlg:
-            if current in net_names:
-                dlg.SetSelection(net_names.index(current) + 1)
-            if dlg.ShowModal() == wx.ID_OK:
-                sel = dlg.GetSelection()
-                self.board.assign_terminal(
-                    terminal.name,
-                    net_names[sel - 1] if sel > 0 else '',
-                )
-                self.Refresh()
 
     def _flip_component(self, ref: str) -> None:
         """Rotate a placed DIP or 3-pin component 180°, keeping its body in the same position."""
@@ -739,12 +783,11 @@ class BreadboardCanvas(wx.Panel):
         dc = wx.AutoBufferedPaintDC(self)
         dc.SetBackground(wx.Brush('#f0f0f0'))
         dc.Clear()
-        # Centre the board in whatever space is available
-        cw, ch = self.GetClientSize()
-        ox = max(0, (cw - self.layout.total_width()) // 2)
-        oy = max(0, (ch - self.layout.total_height) // 2)
-        self._draw_offset = (ox, oy)
-        dc.SetDeviceOrigin(ox, oy)
+        if not self._pan_initialized:
+            self._fit_view()
+            self._pan_initialized = True
+        dc.SetUserScale(self._zoom, self._zoom)
+        dc.SetDeviceOrigin(int(self._pan_x), int(self._pan_y))
         self._draw_board(dc)
 
     def _draw_board(self, dc: wx.DC) -> None:
@@ -1068,7 +1111,7 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawText(name, cx - tw // 2, cy + TERM_R + 3)
 
             # Net assignment (small, below name)
-            net_label = assigned if assigned else 'right-click'
+            net_label = assigned if assigned else ''
             dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
             dc.SetTextForeground('#446644' if assigned else '#999999')

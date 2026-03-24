@@ -76,6 +76,31 @@ class BreadboardWindow(wx.Frame):
 
         tray_panel = wx.Panel(splitter)
         tray_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # --- Binding-post assignment section ---
+        term_label = wx.StaticText(tray_panel, label='Binding posts')
+        term_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_BOLD))
+        tray_sizer.Add(term_label, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
+
+        _TERM_COLORS = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30'}
+        self._term_choices: dict = {}
+        term_grid = wx.FlexGridSizer(rows=3, cols=2, vgap=4, hgap=6)
+        term_grid.AddGrowableCol(1)
+        for name in ('GND', 'V1', 'V2'):
+            lbl = wx.StaticText(tray_panel, label=name)
+            lbl.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                wx.FONTWEIGHT_BOLD))
+            lbl.SetForegroundColour(_TERM_COLORS[name])
+            ch = wx.Choice(tray_panel, choices=['(unassigned)'])
+            ch.SetSelection(0)
+            self._term_choices[name] = ch
+            term_grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+            term_grid.Add(ch, 1, wx.EXPAND)
+        tray_sizer.Add(term_grid, 0, wx.EXPAND | wx.ALL, 6)
+        tray_sizer.Add(wx.StaticLine(tray_panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
+        # --- Component tray ---
         label = wx.StaticText(tray_panel, label='Components')
         label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                               wx.FONTWEIGHT_BOLD))
@@ -84,17 +109,31 @@ class BreadboardWindow(wx.Frame):
         tray_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         hotkey_label = wx.StaticText(tray_panel, label=(
+            'Hotkeys\n'
             'W  Wire\n'
             'D  Delete\n'
             'R  Rotate DIP / TO-92 180°\n'
-            'Esc  Select\n'
+            'Esc  Select / cancel\n'
             'Del  Delete selected\n'
-            'R-click  Rotate / Assign net'
+            'R-click  Rotate component\n'
+            '\n'
+            'View\n'
+            'Scroll  Zoom in / out\n'
+            'Middle drag  Pan\n'
+            'Ctrl+Home  Fit view\n'
+            '+  /  \u2212  Zoom in / out\n'
         ))
-        hotkey_label.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
+        hotkey_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        hotkey_label.SetForegroundColour('#777777')
+        hotkey_label.SetForegroundColour('#000000')
         tray_sizer.Add(hotkey_label, 0, wx.ALL, 6)
+
+        credit_label = wx.StaticText(tray_panel,
+                                     label='Made with \u2665 at Cosys-lab\ncosys.uantwerpen.be')
+        credit_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                                     wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
+        credit_label.SetForegroundColour('#444444')
+        tray_sizer.Add(credit_label, 0, wx.ALL | wx.ALIGN_CENTRE_HORIZONTAL, 8)
 
         tray_panel.SetSizer(tray_sizer)
 
@@ -152,6 +191,8 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_clear_warnings, id=ID_CLEAR_WARNINGS)
         self.Bind(wx.EVT_TOOL, self._on_clear,          id=ID_CLEAR)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
+        for name, ch in self._term_choices.items():
+            ch.Bind(wx.EVT_CHOICE, lambda evt, n=name: self._on_term_choice(n, evt))
 
     # ------------------------------------------------------------------
     # Toolbar handlers
@@ -341,6 +382,28 @@ class BreadboardWindow(wx.Frame):
                 'Use "Update from schematic" or export one manually.', 0
             )
 
+    def _on_term_choice(self, term_name: str, evt) -> None:
+        ch = self._term_choices[term_name]
+        sel = ch.GetSelection()
+        # item 0 is "(unassigned)"; items 1..n are net names
+        net = ch.GetString(sel) if sel > 0 else ''
+        self.board.assign_terminal(term_name, net)
+        self.canvas.Refresh()
+
+    def _refresh_terminal_choices(self) -> None:
+        """Repopulate the binding-post dropdowns from the loaded netlist."""
+        if self.netlist is None:
+            return
+        net_names = sorted(net.name for net in self.netlist.nets if net.name)
+        choices = ['(unassigned)'] + net_names
+        for name, ch in self._term_choices.items():
+            ch.SetItems(choices)
+            current = self.board.get_terminal_net(name)
+            if current in net_names:
+                ch.SetSelection(net_names.index(current) + 1)
+            else:
+                ch.SetSelection(0)
+
     def _load_netlist(self, path: str) -> None:
         try:
             self.netlist = parse_netlist(path)
@@ -355,6 +418,8 @@ class BreadboardWindow(wx.Frame):
         # Auto-assign GND terminal to the simulation ground net ("0")
         if self.netlist.net_by_name('0'):
             self.board.assign_terminal('GND', '0')
+
+        self._refresh_terminal_choices()
 
         n = len(self.netlist.components)
         self.SetStatusText(
