@@ -105,3 +105,20 @@ python -m plugins.breadboard.standalone path/to/circuit.net
 | Del | Delete selected component or wire |
 | Right-click on DIP | Rotate 180° |
 | Right-click on binding post | Assign to schematic net |
+
+Example workflow:
+- Draw a schematic.
+
+![schematic](images/schematic.png)
+
+- Go to the PCB editor (using the green button on the toolbar, or by using Tools -> Switch to PCB editor)
+![icon](images/icon.png)
+
+At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard editor.
+
+Here, you can select which component you want to place and click "Validate" to check if your build contains errors. If it does, it will indicate missing connections and short circuits on the relevant pins as illustrated below.
+![shortcircuit](images/shortcircuit.png)
+
+Thats it! Have fun!
+
+Robin
