@@ -1040,9 +1040,66 @@ class BreadboardCanvas(wx.Panel):
             if p1 and p2:
                 self._draw_axial_component(dc, comp_def, placed, ref, p1, p2, selected)
         else:
-            # 3-pin components (TO-92, POT): simple rectangle
-            body_rect = wx.Rect(x_min - 3, y_min - 7, x_max - x_min + 6, 14)
-            dc.DrawRoundedRectangle(body_rect, 3)
+            # 3-pin components
+            _TO92_TYPES = frozenset({'NPN', 'PNP', 'JFET_N', 'JFET_P', 'BS170'})
+            if placed.type_id in _TO92_TYPES:
+                # Ammo-pack style TO-92: small D-shaped body elevated above holes,
+                # three thin wire leads sticking out to each pin hole.
+                sample_hole = next(iter(placed.pin_holes.values()))
+                in_top = isinstance(sample_hole, TieHole) and sample_hole.row in TOP_ROWS
+
+                # Fixed body size centered on the middle pin hole
+                cx_mid    = float((x_min + x_max) // 2)
+                body_half = 12.0   # half-width → body is 24 px wide
+                r_body    = body_half
+                # Flat face sits at the hole-row centre (halfway into the hole circle)
+                flat_y    = float(y_min) if in_top else float(y_max)
+
+                # Converging leads from each pin hole to the flat face of the body.
+                # flat_y == pin_y so outer leads are short horizontal stubs.
+                inset     = 3.0
+                step      = (2 * body_half - 2 * inset) / 2
+                attach_xs = [cx_mid - body_half + inset + i * step for i in range(3)]
+                pin_xs    = sorted(xy[0] for xy in holes)
+                pin_y     = y_min if in_top else y_max
+                dc.SetPen(wx.Pen('#888888', 3))
+                for px, ax in zip(pin_xs, attach_xs):
+                    dc.DrawLine(px, pin_y, int(ax), int(flat_y))
+
+                # D-shaped body via GraphicsContext path
+                gc = wx.GraphicsContext.Create(dc)
+                path = gc.CreatePath()
+                if in_top:
+                    path.MoveToPoint(cx_mid - body_half, flat_y)
+                    path.AddLineToPoint(cx_mid + body_half, flat_y)
+                    path.AddArc(cx_mid, flat_y, r_body, 0.0, math.pi, False)
+                else:
+                    path.MoveToPoint(cx_mid - body_half, flat_y)
+                    path.AddLineToPoint(cx_mid + body_half, flat_y)
+                    path.AddArc(cx_mid, flat_y, r_body, 0.0, math.pi, True)
+                path.CloseSubpath()
+
+                gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(comp_def.color))))
+                gc.SetPen(gc.CreatePen(
+                    wx.GraphicsPenInfo(wx.Colour('#333333')).Width(2 if selected else 1)))
+                gc.DrawPath(path)
+
+                # Ref label centered in the dome (use dc for screen coords)
+                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.SetTextForeground('#eeeeee')
+                tw, th = dc.GetTextExtent(ref)
+                lx = int(cx_mid) - tw // 2
+                if in_top:
+                    ly = int(flat_y - r_body * 0.55) - th // 2
+                else:
+                    ly = int(flat_y + r_body * 0.55) - th // 2
+                dc.DrawText(ref, lx, ly)
+                return
+            else:
+                # POT: simple rectangle
+                body_rect = wx.Rect(x_min - 3, y_min - 7, x_max - x_min + 6, 14)
+                dc.DrawRoundedRectangle(body_rect, 3)
 
         # Reference label
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -1094,6 +1151,46 @@ class BreadboardCanvas(wx.Panel):
             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#444444'))))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#444444')).Width(1)))
             gc.DrawRectangle(-r, -(r - 1), 4, (r - 1) * 2)
+        elif placed.type_id == 'C_POL':
+            # Electrolytic capacitor — top-down view: circle with a black stripe
+            # on the negative (pin-2) side and a "+" marker on the positive side.
+            r = 13.0
+            # Lead lines from pins to circle edge
+            dc.SetPen(wx.Pen('#888888', 3))
+            dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
+            dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
+            # Circle body (fill only; border redrawn after stripe in gc)
+            dc.SetBrush(wx.Brush(body_color))
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.DrawCircle(int(mx), int(my), int(r))
+            # Rotated details via GraphicsContext
+            gc = wx.GraphicsContext.Create(dc)
+            gc.Translate(mx, my)
+            gc.Rotate(angle)
+            # Black stripe on pin-2 (−) side — circular arc segment so it
+            # follows the circle edge exactly
+            stripe_x = r * 0.55
+            y_isect  = math.sqrt(r * r - stripe_x * stripe_x)
+            theta    = math.atan2(y_isect, stripe_x)   # angle to intersection pts
+            sp = gc.CreatePath()
+            sp.MoveToPoint(stripe_x, -y_isect)          # top intersection
+            sp.AddArc(0, 0, r, -theta, theta, True)     # arc CW → right side of circle
+            sp.AddLineToPoint(stripe_x, -y_isect)       # close up the left edge
+            sp.CloseSubpath()
+            stripe = wx.Colour('#111111')
+            gc.SetBrush(gc.CreateBrush(wx.Brush(stripe)))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(stripe).Width(0)))
+            gc.DrawPath(sp)
+            # Redraw circle border on top
+            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+            gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
+            # "+" text on pin-1 (+) side
+            font = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                           wx.FONTWEIGHT_BOLD)
+            gc.SetFont(gc.CreateFont(font, wx.WHITE))
+            tw, th = gc.GetTextExtent('+')
+            gc.DrawText('+', -r + 3, -th / 2)
         else:
             # Axial pill (R, C, L, D, D_Zener, C_POL …)
             # Body occupies the middle half of the span (25%–75%)
@@ -1261,38 +1358,79 @@ class BreadboardCanvas(wx.Panel):
             return
         xs = [xy[0] for xy in holes_xy]
         ys = [xy[1] for xy in holes_xy]
-        body_rect = wx.Rect(min(xs) - 4, min(ys) - 6,
-                            max(xs) - min(xs) + 8, max(ys) - min(ys) + 12)
 
-        if comp_def.is_dip:
-            # Ghost legs
-            dc.SetBrush(wx.Brush('#88888866'))
-            dc.SetPen(wx.Pen('#88888866', 1))
-            for pin, hole in pin_holes.items():
-                xy = lay.hole_xy(hole)
-                if xy is None:
-                    continue
-                hx, hy = xy
-                if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
-                    dc.DrawRectangle(hx - 1, body_rect.GetTop() - 6, 3, 7)
-                elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
-                    dc.DrawRectangle(hx - 1, body_rect.GetBottom() - 1, 3, 7)
+        _TO92_TYPES = frozenset({'NPN', 'PNP', 'JFET_N', 'JFET_P', 'BS170'})
+        base_color = wx.Colour(comp_def.color)
+        ghost_color = wx.Colour(base_color.Red(), base_color.Green(), base_color.Blue(), 0x88)
 
-        dc.SetBrush(wx.Brush(wx.Colour(comp_def.color + '88')))
-        dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
-        dc.DrawRoundedRectangle(body_rect, 4)
+        if comp_def.type_id in _TO92_TYPES:
+            # Ammo-pack ghost for TO-92
+            sample_hole = next(iter(pin_holes.values()))
+            in_top = isinstance(sample_hole, TieHole) and sample_hole.row in TOP_ROWS
+            x_min_g, x_max_g = min(xs), max(xs)
+            cx_mid_g    = float((x_min_g + x_max_g) // 2)
+            body_half_g = 12.0
+            r_body_g    = body_half_g
+            pin_y_g     = min(ys) if in_top else max(ys)
+            flat_y_g    = float(pin_y_g)
 
-        if comp_def.is_dip:
-            p1_hole = pin_holes.get(1)
-            p1_xy = lay.hole_xy(p1_hole) if p1_hole else None
-            if p1_xy:
-                dc.SetBrush(wx.Brush('#ffffff88'))
-                dc.SetPen(wx.Pen('#aaaaaa88', 1))
-                if isinstance(p1_hole, TieHole) and p1_hole.row in TOP_ROWS:
-                    dot_y = body_rect.GetY() + 6
-                else:
-                    dot_y = body_rect.GetBottom() - 6
-                dc.DrawCircle(p1_xy[0], dot_y, 3)
+            inset_g     = 3.0
+            step_g      = (2 * body_half_g - 2 * inset_g) / 2
+            attach_xs_g = [cx_mid_g - body_half_g + inset_g + i * step_g for i in range(3)]
+            pin_xs_g    = sorted(xy[0] for xy in holes_xy)
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            for px_g, ax_g in zip(pin_xs_g, attach_xs_g):
+                dc.DrawLine(int(px_g), pin_y_g, int(ax_g), int(flat_y_g))
+
+            gc = wx.GraphicsContext.Create(dc)
+            path = gc.CreatePath()
+            if in_top:
+                path.MoveToPoint(cx_mid_g - body_half_g, flat_y_g)
+                path.AddLineToPoint(cx_mid_g + body_half_g, flat_y_g)
+                path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, False)
+            else:
+                path.MoveToPoint(cx_mid_g - body_half_g, flat_y_g)
+                path.AddLineToPoint(cx_mid_g + body_half_g, flat_y_g)
+                path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, True)
+            path.CloseSubpath()
+            gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+            gc.SetPen(gc.CreatePen(
+                wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1)
+                .Style(wx.PENSTYLE_DOT)))
+            gc.DrawPath(path)
+        else:
+            body_rect = wx.Rect(min(xs) - 4, min(ys) - 6,
+                                max(xs) - min(xs) + 8, max(ys) - min(ys) + 12)
+
+            if comp_def.is_dip:
+                # Ghost legs
+                dc.SetBrush(wx.Brush('#88888866'))
+                dc.SetPen(wx.Pen('#88888866', 1))
+                for pin, hole in pin_holes.items():
+                    xy = lay.hole_xy(hole)
+                    if xy is None:
+                        continue
+                    hx, hy = xy
+                    if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
+                        dc.DrawRectangle(hx - 1, body_rect.GetTop() - 6, 3, 7)
+                    elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
+                        dc.DrawRectangle(hx - 1, body_rect.GetBottom() - 1, 3, 7)
+
+            dc.SetBrush(wx.Brush(wx.Colour(comp_def.color + '88')))
+            dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
+            dc.DrawRoundedRectangle(body_rect, 4)
+
+            if comp_def.is_dip:
+                p1_hole = pin_holes.get(1)
+                p1_xy = lay.hole_xy(p1_hole) if p1_hole else None
+                if p1_xy:
+                    dc.SetBrush(wx.Brush('#ffffff88'))
+                    dc.SetPen(wx.Pen('#aaaaaa88', 1))
+                    if isinstance(p1_hole, TieHole) and p1_hole.row in TOP_ROWS:
+                        dot_y = body_rect.GetY() + 6
+                    else:
+                        dot_y = body_rect.GetBottom() - 6
+                    dc.DrawCircle(p1_xy[0], dot_y, 3)
 
     def _draw_ghost_2pin(self, dc: wx.DC, comp_def: ComponentDef,
                          p1_xy: Tuple[int, int], p2_xy: Tuple[int, int]) -> None:
