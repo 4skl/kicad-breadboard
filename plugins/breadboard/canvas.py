@@ -991,63 +991,29 @@ class BreadboardCanvas(wx.Panel):
                     else:
                         dot_y = body_rect.GetBottom() - 6
                     dc.DrawCircle(pin1_xy[0], dot_y, 3)
+
+            # Pin number labels outside the legs
+            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#cccccc')
+            for pin_num, hole in placed.pin_holes.items():
+                xy = lay.hole_xy(hole)
+                if xy is None:
+                    continue
+                label = str(pin_num)
+                tw, th = dc.GetTextExtent(label)
+                hx = xy[0]
+                if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
+                    # Leg extends upward; label sits above it
+                    dc.DrawText(label, hx - tw // 2, body_rect.GetTop() - 6 - th - 1)
+                elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
+                    # Leg extends downward; label sits below it
+                    dc.DrawText(label, hx - tw // 2, body_rect.GetBottom() + 7)
         elif comp_def.pin_count == 2:
             p1 = lay.hole_xy(placed.pin_holes[1])
             p2 = lay.hole_xy(placed.pin_holes[2])
             if p1 and p2:
-                dc.SetPen(wx.Pen('#888888', 3))
-                if placed.type_id == 'LED':
-                    # 5mm round dome body, centred between the two leads
-                    cx = (p1[0] + p2[0]) // 2
-                    cy = p1[1]
-                    r = 10
-                    dc.DrawLine(p1[0], cy, cx - r, cy)
-                    dc.DrawLine(cx + r, cy, p2[0], cy)
-                    dc.SetBrush(wx.Brush(body_color))
-                    dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
-                    dc.DrawCircle(cx, cy, r)
-                    # Flat on cathode side (pin 2 = right)
-                    dc.SetBrush(wx.Brush('#444444'))
-                    dc.SetPen(wx.Pen('#444444', 1))
-                    dc.DrawRectangle(cx + r - 4, cy - r + 1, 4, (r - 1) * 2)
-                else:
-                    # Axial pill (R, C, L, D, D_Zener …)
-                    mid1_x = p1[0] + (p2[0] - p1[0]) // 4
-                    mid2_x = p1[0] + 3 * (p2[0] - p1[0]) // 4
-                    dc.DrawLine(p1[0], p1[1], mid1_x, p1[1])
-                    dc.DrawLine(mid2_x, p1[1], p2[0], p2[1])
-                    dc.SetBrush(wx.Brush(body_color))
-                    dc.SetPen(wx.Pen(border_color, 1))
-                    body_w = mid2_x - mid1_x
-                    body_rect = wx.Rect(mid1_x, p1[1] - 7, body_w, 14)
-                    dc.DrawRoundedRectangle(body_rect, 4)
-
-                    if placed.type_id == 'R' and self.netlist:
-                        # Colour bands decoded from the component value
-                        comp = self.netlist.components.get(ref)
-                        ohms = _parse_ohms(comp.value) if comp else None
-                        bands = _resistor_bands(ohms) if ohms is not None else None
-                        if bands:
-                            bx = mid1_x
-                            bw = body_w
-                            # Three signal bands left-of-centre; tolerance
-                            # band near the right with a small gap.
-                            positions = [
-                                bx + 3,
-                                bx + 9,
-                                bx + 15,
-                                bx + bw - 8,   # tolerance, separated
-                            ]
-                            dc.SetPen(wx.TRANSPARENT_PEN)
-                            for pos, color in zip(positions, bands):
-                                dc.SetBrush(wx.Brush(color))
-                                dc.DrawRectangle(pos, p1[1] - 6, 5, 12)
-
-                    # Cathode stripe for diodes (silver band near pin 2)
-                    elif placed.type_id in ('D', 'D_Zener'):
-                        dc.SetBrush(wx.Brush('#cccccc'))
-                        dc.SetPen(wx.Pen('#cccccc', 1))
-                        dc.DrawRectangle(mid2_x - 4, p1[1] - 7, 4, 14)
+                self._draw_axial_component(dc, comp_def, placed, ref, p1, p2, selected)
         else:
             # 3-pin components (TO-92, POT): simple rectangle
             body_rect = wx.Rect(x_min - 3, y_min - 7, x_max - x_min + 6, 14)
@@ -1060,6 +1026,97 @@ class BreadboardCanvas(wx.Panel):
         label_x = (x_min + x_max) // 2
         label_y = (y_min + y_max) // 2 - 5
         dc.DrawText(ref, label_x - dc.GetTextExtent(ref).Width // 2, label_y)
+
+    def _draw_axial_component(self, dc: wx.DC, comp_def: ComponentDef,
+                              placed: PlacedComponent, ref: str,
+                              p1: Tuple[int, int], p2: Tuple[int, int],
+                              selected: bool) -> None:
+        """
+        Draw a 2-pin axial or round component between two pixel positions.
+        Works at any angle: horizontal, vertical, or diagonal.
+        Pin 1 is at p1, pin 2 is at p2.
+        """
+        x1, y1 = float(p1[0]), float(p1[1])
+        x2, y2 = float(p2[0]), float(p2[1])
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 1:
+            return
+
+        angle = math.atan2(dy, dx)
+        ux, uy = dx / length, dy / length  # unit vector p1→p2
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+
+        body_color = wx.Colour(comp_def.color)
+        border_color = wx.Colour('#333333')
+        pen_w = 2 if selected else 1
+
+        if placed.type_id == 'LED':
+            r = 10.0
+            # Lead lines from each pin to the circle edge
+            dc.SetPen(wx.Pen('#888888', 3))
+            dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
+            dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
+            # Circle body (rotation-invariant)
+            dc.SetBrush(wx.Brush(body_color))
+            dc.SetPen(wx.Pen(border_color, pen_w))
+            dc.DrawCircle(int(mx), int(my), int(r))
+            # Flat cathode marker on pin-2 side, drawn rotated via GC
+            gc = wx.GraphicsContext.Create(dc)
+            gc.Translate(mx, my)
+            gc.Rotate(angle)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#444444'))))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#444444')).Width(1)))
+            gc.DrawRectangle(r - 4, -(r - 1), 4, (r - 1) * 2)
+        else:
+            # Axial pill (R, C, L, D, D_Zener, C_POL …)
+            # Body occupies the middle half of the span (25%–75%)
+            body_half = length * 0.25
+
+            # Lead attachment points on the body surface
+            bx1, by1 = mx - ux * body_half, my - uy * body_half   # near pin 1
+            bx2, by2 = mx + ux * body_half, my + uy * body_half   # near pin 2
+
+            # Lead lines
+            dc.SetPen(wx.Pen('#888888', 3))
+            dc.DrawLine(int(x1), int(y1), int(bx1), int(by1))
+            dc.DrawLine(int(bx2), int(by2), int(x2), int(y2))
+
+            # Body via GraphicsContext so it rotates with the component
+            gc = wx.GraphicsContext.Create(dc)
+            gc.Translate(mx, my)
+            gc.Rotate(angle)
+
+            body_w = body_half * 2
+            body_h = 14.0
+
+            gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+            gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+
+            if placed.type_id == 'R' and self.netlist:
+                comp = self.netlist.components.get(ref)
+                ohms = _parse_ohms(comp.value) if comp else None
+                bands = _resistor_bands(ohms) if ohms is not None else None
+                if bands:
+                    # Band x-positions in local coords; pin-1 end is at -body_half
+                    positions = [
+                        -body_half + 3,
+                        -body_half + 9,
+                        -body_half + 15,
+                        body_half - 8,   # tolerance band, near pin-2 end
+                    ]
+                    no_pen = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(0, 0, 0, 0)).Width(0))
+                    gc.SetPen(no_pen)
+                    for bx_pos, bcolor in zip(positions, bands):
+                        gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
+                        gc.DrawRectangle(bx_pos, -body_h / 2 + 1, 5, body_h - 2)
+
+            elif placed.type_id in ('D', 'D_Zener'):
+                # Cathode stripe near pin-2 end (positive x in local coords)
+                gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#cccccc'))))
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#cccccc')).Width(1)))
+                gc.DrawRectangle(body_half - 4, -body_h / 2, 4, body_h)
 
     def _draw_terminals(self, dc: wx.DC) -> None:
         lay = self.layout
@@ -1212,20 +1269,40 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_ghost_2pin(self, dc: wx.DC, comp_def: ComponentDef,
                          p1_xy: Tuple[int, int], p2_xy: Tuple[int, int]) -> None:
-        """Draw a 2-pin ghost body between two pixel coordinates."""
-        x1, y1 = p1_xy
-        x2, y2 = p2_xy
-        dc.SetPen(wx.Pen('#88888888', 3))
-        dc.DrawLine(x1, y1, x2, y2)
-        mid1_x = min(x1, x2) + abs(x2 - x1) // 4
-        mid2_x = max(x1, x2) - abs(x2 - x1) // 4
-        cx = (x1 + x2) // 2
-        cy = (y1 + y2) // 2
-        body_w = abs(mid2_x - mid1_x)
-        body_rect = wx.Rect(min(mid1_x, mid2_x), cy - 7, max(body_w, 8), 14)
-        dc.SetBrush(wx.Brush(wx.Colour(comp_def.color + '88')))
-        dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
-        dc.DrawRoundedRectangle(body_rect, 4)
+        """Draw a semi-transparent 2-pin ghost body between two pixel coordinates."""
+        x1, y1 = float(p1_xy[0]), float(p1_xy[1])
+        x2, y2 = float(p2_xy[0]), float(p2_xy[1])
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 1:
+            return
+
+        angle = math.atan2(dy, dx)
+        ux, uy = dx / length, dy / length
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        body_half = max(length * 0.25, 8.0)
+
+        bx1, by1 = mx - ux * body_half, my - uy * body_half
+        bx2, by2 = mx + ux * body_half, my + uy * body_half
+
+        dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+        dc.DrawLine(int(x1), int(y1), int(bx1), int(by1))
+        dc.DrawLine(int(bx2), int(by2), int(x2), int(y2))
+
+        base = wx.Colour(comp_def.color)
+        ghost_color = wx.Colour(base.Red(), base.Green(), base.Blue(), 0x88)
+
+        gc = wx.GraphicsContext.Create(dc)
+        gc.Translate(mx, my)
+        gc.Rotate(angle)
+        body_w = body_half * 2
+        body_h = 14.0
+        gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+        gc.SetPen(gc.CreatePen(
+            wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1)
+            .Style(wx.PENSTYLE_DOT)
+        ))
+        gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
     def _draw_wire_start_indicator(self, dc: wx.DC) -> None:
         xy = self.layout.hole_xy(self._wire_start)

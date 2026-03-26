@@ -18,8 +18,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
-from .breadboard import Breadboard, Hole, TieHole, Terminal, TERMINAL_NAMES
-from .components import guess_type_id
+from .breadboard import Breadboard, Hole, TieHole, Terminal, TERMINAL_NAMES, UnionFind
+from .components import guess_type_id, ALL_DEFS
 from .netlist import Net, Netlist
 
 
@@ -55,6 +55,65 @@ class ValidationResult:
         return '\n'.join(str(i) for i in self.issues)
 
 
+def _symmetric_pin_overrides(
+    board: Breadboard, netlist: Netlist, uf: UnionFind
+) -> Dict[Tuple[str, int], Hole]:
+    """
+    For non-polar 2-pin components (R, L, C) determine whether the student
+    placed the component in reversed orientation and, if so, return a mapping
+    that swaps pin 1 ↔ pin 2 for the validator so the circuit still validates.
+
+    A swap is applied only when there is clear evidence that the reversed
+    assignment gives better connectivity (i.e. the other pin is already
+    connected to the net that pin 1 should belong to).
+    """
+    override: Dict[Tuple[str, int], Hole] = {}
+
+    # ref → {pin_num → net_name}
+    comp_pin_nets: Dict[str, Dict[int, str]] = {}
+    for net in netlist.nets:
+        for pn in net.pins:
+            comp_pin_nets.setdefault(pn.ref, {})[pn.pin] = net.name
+
+    for ref, placed in board.placements.items():
+        comp_def = ALL_DEFS.get(placed.type_id)
+        if not (comp_def and comp_def.symmetric and comp_def.pin_count == 2):
+            continue
+        h1 = placed.pin_holes.get(1)
+        h2 = placed.pin_holes.get(2)
+        if h1 is None or h2 is None:
+            continue
+
+        pin_nets = comp_pin_nets.get(ref, {})
+        net1 = pin_nets.get(1)   # net that schematic says pin 1 belongs to
+        if not net1:
+            continue
+
+        # Collect holes of other components on net1 (excluding this component)
+        net1_other: List[Hole] = []
+        for net in netlist.nets:
+            if net.name == net1:
+                for pn in net.pins:
+                    if pn.ref != ref:
+                        h = board.hole_for_pin(pn.ref, pn.pin)
+                        if h is not None:
+                            net1_other.append(h)
+                break
+
+        if not net1_other:
+            continue
+
+        h1_ok = any(uf.connected(h1, h) for h in net1_other)
+        h2_ok = any(uf.connected(h2, h) for h in net1_other)
+
+        if not h1_ok and h2_ok:
+            # Reversed placement: swap so the validator sees the correct mapping
+            override[(ref, 1)] = h2
+            override[(ref, 2)] = h1
+
+    return override
+
+
 def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
     """
     Validate the student's breadboard against the schematic netlist.
@@ -83,6 +142,9 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
                     description=f"{ref} ({comp.value}) is not placed on the breadboard.",
                 ))
 
+    # For symmetric (non-polar) components, determine optimal pin-hole mapping
+    pin_override = _symmetric_pin_overrides(board, netlist, uf)
+
     # Step 2 — build a map: net_name → list of holes
     # Terminals assigned to a net count as a hole on that net.
     net_holes: Dict[str, List[Hole]] = {}
@@ -90,7 +152,8 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
     for net in netlist.nets:
         holes: List[Hole] = []
         for pin_node in net.pins:
-            hole = board.hole_for_pin(pin_node.ref, pin_node.pin)
+            key = (pin_node.ref, pin_node.pin)
+            hole = pin_override.get(key) if key in pin_override else board.hole_for_pin(pin_node.ref, pin_node.pin)
             if hole is not None:
                 holes.append(hole)
         if holes:

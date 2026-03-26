@@ -62,6 +62,7 @@ class ComponentDef:
     pin_names: Dict[int, str]           # pin_number → net-facing name (B, C, E, IN+, …)
     color: str = '#888888'              # body fill color for canvas
     is_dip: bool = False                # True → anchor forced to row 'e'
+    symmetric: bool = False             # True → non-polar; validator accepts either pin order
 
     @property
     def pin_count(self) -> int:
@@ -96,6 +97,7 @@ RESISTOR = ComponentDef(
     pin_offsets={1: PinOffset(0), 2: PinOffset(5)},
     pin_names={1: '1', 2: '2'},
     color='#e8e4cc',   # ceramic cream — good contrast for colour bands
+    symmetric=True,
 )
 
 CAPACITOR = ComponentDef(
@@ -105,6 +107,7 @@ CAPACITOR = ComponentDef(
     pin_offsets={1: PinOffset(0), 2: PinOffset(3)},
     pin_names={1: '1', 2: '2'},
     color='#4080c0',
+    symmetric=True,
 )
 
 CAPACITOR_ELECTROLYTIC = ComponentDef(
@@ -123,6 +126,7 @@ INDUCTOR = ComponentDef(
     pin_offsets={1: PinOffset(0), 2: PinOffset(5)},
     pin_names={1: '1', 2: '2'},
     color='#60a080',
+    symmetric=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -262,22 +266,7 @@ def _dip14_offsets() -> Dict[int, PinOffset]:
     return {**bot, **top}
 
 # TL081 — single op-amp, 8-DIP
-# Pinout: 1=N1, 2=IN-, 3=IN+, 4=V-, 5=N2, 6=OUT, 7=V+, 8=N3
-OPAMP = ComponentDef(
-    type_id='OPAMP',
-    display_name='OPAMP',
-    ref_prefix='U',
-    pin_offsets=_dip8_offsets(),
-    pin_names={
-        1: 'N1', 2: 'IN-', 3: 'IN+', 4: 'V-',
-        5: 'N2', 6: 'OUT', 7: 'V+', 8: 'N3',
-    },
-    color='#303080',
-    is_dip=True,
-)
-
-# TL081 — single op-amp, 8-DIP
-# Pinout: 1=N1, 2=IN-, 3=IN+, 4=V-, 5=N2, 6=OUT, 7=V+, 8=N3
+# Pinout: 1=Offset_N1, 2=IN-, 3=IN+, 4=V-, 5=Offset_N2, 6=OUT, 7=V+, 8=NC
 TL081 = ComponentDef(
     type_id='TL081',
     display_name='TL081 (single op-amp)',
@@ -285,7 +274,7 @@ TL081 = ComponentDef(
     pin_offsets=_dip8_offsets(),
     pin_names={
         1: 'N1', 2: 'IN-', 3: 'IN+', 4: 'V-',
-        5: 'N2', 6: 'OUT', 7: 'V+', 8: 'N3',
+        5: 'N2', 6: 'OUT', 7: 'V+', 8: 'NC',
     },
     color='#303080',
     is_dip=True,

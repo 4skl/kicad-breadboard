@@ -75,6 +75,10 @@ If you have not exported a netlist yet, use **"Update from schematic"** in the t
 
 ## Standalone mode (development / no KiCad needed)
 
+> **Note:** Standalone mode is intended for UI development only.
+> The **"Update from schematic"** feature requires `kicad-cli` (part of a KiCad 9 installation) and will not work in standalone mode.
+> For the full workflow — drawing a schematic, exporting a netlist, and validating a breadboard build — use the plugin inside KiCad as described above.
+
 ```bash
 pip install wxPython
 cd /path/to/kicad-breadboard
@@ -88,7 +92,7 @@ python -m plugins.breadboard.standalone path/to/circuit.net
 | Button | Action |
 |---|---|
 | Open netlist | Load a `.net` file manually |
-| Update from schematic | Re-export netlist from `.kicad_sch` via `kicad-cli` and reload |
+| Update from schematic | Re-export netlist from `.kicad_sch` via `kicad-cli` and reload *(requires KiCad project; not available in standalone mode)* |
 | Export image | Save the current board view as a PNG |
 | Validate | Check if the breadboard matches the schematic |
 | Clear warnings | Dismiss `?` / `⚡` validation markers |
