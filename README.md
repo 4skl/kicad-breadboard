@@ -30,7 +30,7 @@ A KiCad 9 Action Plugin for introductory analog electronics courses at the Unive
 
 ---
 
-## Installation in KiCad 9
+## Installation in KiCad 9 or 10
 
 ### Step 1 — Clone the repository
 
@@ -40,18 +40,32 @@ git clone https://cosysgit.uantwerpen.be/rkerstens/kicad-breadboard.git
 
 ### Step 2 — Link the plugin into KiCad's scripting folder
 
-KiCad looks for plugins in `~/.local/share/kicad/9.0/scripting/plugins/` on Linux/macOS, or `%APPDATA%\kicad\9.0\scripting\plugins\` on Windows.
+The scripting plugin directory depends on your KiCad version and operating system.
+Replace `<version>` with `9.0` or `10.0` to match your installation.
 
-**Linux / macOS:**
+| Platform | KiCad 9 | KiCad 10 |
+|---|---|---|
+| Linux | `~/.local/share/kicad/9.0/scripting/plugins/` | `~/.config/kicad/10.0/scripting/plugins/` |
+| macOS | `~/Library/Preferences/kicad/9.0/scripting/plugins/` | `~/Library/Preferences/kicad/10.0/scripting/plugins/` |
+| Windows | `%APPDATA%\kicad\9.0\scripting\plugins\` | `%APPDATA%\kicad\10.0\scripting\plugins\` |
+
+> If you are unsure of the exact path, open KiCad and go to **Preferences → Configure Paths…** — the scripting plugin directory is listed there.
+
+**Linux / macOS (adjust path for your version):**
 ```bash
+# KiCad 9
 ln -s /path/to/kicad-breadboard/plugins/breadboard \
       ~/.local/share/kicad/9.0/scripting/plugins/breadboard
+
+# KiCad 10
+ln -s /path/to/kicad-breadboard/plugins/breadboard \
+      ~/.config/kicad/10.0/scripting/plugins/breadboard
 ```
 
-**Windows** (run PowerShell as Administrator):
+**Windows** (run PowerShell as Administrator, adjust version number):
 ```powershell
 New-Item -ItemType Junction `
-  -Path  "$env:APPDATA\kicad\9.0\scripting\plugins\breadboard" `
+  -Path  "$env:APPDATA\kicad\10.0\scripting\plugins\breadboard" `
   -Target "C:\path\to\kicad-breadboard\plugins\breadboard"
 ```
 
@@ -69,7 +83,7 @@ Or simply **copy** the `plugins/breadboard/` folder into the scripting plugins d
 
 Click the toolbar button (or menu entry). The plugin will automatically find the netlist (`.net`) in the same folder as the open PCB file.
 
-If you have not exported a netlist yet, use **"Update from schematic"** in the toolbar — this calls `kicad-cli` to export one automatically. `kicad-cli` ships with KiCad 9 and is on the PATH when KiCad is installed normally.
+If you have not exported a netlist yet, use **"Update from schematic"** in the toolbar — this calls `kicad-cli` to export one automatically. `kicad-cli` ships with KiCad 9 and 10 and is on the PATH when KiCad is installed normally.
 
 ---
 

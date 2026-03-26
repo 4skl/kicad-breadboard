@@ -7,3 +7,4 @@ from .breadboard import (
 from .components import ComponentDef, ALL_DEFS, guess_type_id
 from .netlist import Netlist, NetlistComponent, Net, parse as parse_netlist, find_netlist, find_schematic
 from .validator import validate, ValidationResult, ValidationIssue, IssueKind
+from .session import save_session, load_session

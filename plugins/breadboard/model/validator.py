@@ -61,11 +61,14 @@ def _symmetric_pin_overrides(
     """
     For non-polar 2-pin components (R, L, C) determine whether the student
     placed the component in reversed orientation and, if so, return a mapping
-    that swaps pin 1 ↔ pin 2 for the validator so the circuit still validates.
+    that swaps pin 1 ↔ pin 2 so the circuit still validates.
 
-    A swap is applied only when there is clear evidence that the reversed
-    assignment gives better connectivity (i.e. the other pin is already
-    connected to the net that pin 1 should belong to).
+    A swap is applied when either:
+      (a) h2 connects to other placed pins on net1 but h1 does not, OR
+      (b) h1 connects to placed pins on net2 but h2 does not —
+          which catches the case where net1 is a single-endpoint net (e.g. a
+          schematic signal label with no other placed component) but the
+          component is clearly wired into net2's side.
     """
     override: Dict[Tuple[str, int], Hole] = {}
 
@@ -74,6 +77,19 @@ def _symmetric_pin_overrides(
     for net in netlist.nets:
         for pn in net.pins:
             comp_pin_nets.setdefault(pn.ref, {})[pn.pin] = net.name
+
+    # net_name → placed holes (excluding terminals handled separately)
+    def placed_holes_for_net(net_name: str, exclude_ref: str) -> List[Hole]:
+        holes: List[Hole] = []
+        for net in netlist.nets:
+            if net.name == net_name:
+                for pn in net.pins:
+                    if pn.ref != exclude_ref:
+                        h = board.hole_for_pin(pn.ref, pn.pin)
+                        if h is not None:
+                            holes.append(h)
+                break
+        return holes
 
     for ref, placed in board.placements.items():
         comp_def = ALL_DEFS.get(placed.type_id)
@@ -85,29 +101,21 @@ def _symmetric_pin_overrides(
             continue
 
         pin_nets = comp_pin_nets.get(ref, {})
-        net1 = pin_nets.get(1)   # net that schematic says pin 1 belongs to
+        net1 = pin_nets.get(1)
+        net2 = pin_nets.get(2)
         if not net1:
             continue
 
-        # Collect holes of other components on net1 (excluding this component)
-        net1_other: List[Hole] = []
-        for net in netlist.nets:
-            if net.name == net1:
-                for pn in net.pins:
-                    if pn.ref != ref:
-                        h = board.hole_for_pin(pn.ref, pn.pin)
-                        if h is not None:
-                            net1_other.append(h)
-                break
+        net1_other = placed_holes_for_net(net1, ref)
+        net2_other = placed_holes_for_net(net2, ref) if net2 else []
 
-        if not net1_other:
-            continue
+        h1_on_net1 = bool(net1_other) and any(uf.connected(h1, h) for h in net1_other)
+        h2_on_net1 = bool(net1_other) and any(uf.connected(h2, h) for h in net1_other)
+        h1_on_net2 = bool(net2_other) and any(uf.connected(h1, h) for h in net2_other)
+        h2_on_net2 = bool(net2_other) and any(uf.connected(h2, h) for h in net2_other)
 
-        h1_ok = any(uf.connected(h1, h) for h in net1_other)
-        h2_ok = any(uf.connected(h2, h) for h in net1_other)
-
-        if not h1_ok and h2_ok:
-            # Reversed placement: swap so the validator sees the correct mapping
+        swap = (not h1_on_net1 and h2_on_net1) or (h1_on_net2 and not h2_on_net2)
+        if swap:
             override[(ref, 1)] = h2
             override[(ref, 2)] = h1
 
@@ -146,7 +154,11 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
     pin_override = _symmetric_pin_overrides(board, netlist, uf)
 
     # Step 2 — build a map: net_name → list of holes
-    # Terminals assigned to a net count as a hole on that net.
+    # comp_pin_counts tracks only placed-component pins (not terminals) so that
+    # single-endpoint nets (e.g. a wire ending only in a schematic label like
+    # "OUTPUT") are not flagged as OPEN_NET — they have only 1 component pin
+    # and are deliberately unconnected to another component.
+    comp_pin_counts: Dict[str, int] = {}
     net_holes: Dict[str, List[Hole]] = {}
 
     for net in netlist.nets:
@@ -157,17 +169,20 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
             if hole is not None:
                 holes.append(hole)
         if holes:
+            comp_pin_counts[net.name] = len(holes)
             net_holes[net.name] = holes
 
-    # Add terminal holes for their assigned nets
+    # Add terminal holes for SHORT detection (not counted in comp_pin_counts)
     for term_name in TERMINAL_NAMES:
         net_name = board.get_terminal_net(term_name)
         if net_name:
             net_holes.setdefault(net_name, []).append(Terminal(term_name))
 
     # Step 3 — open nets
+    # Require at least 2 placed component pins; single-endpoint label-only nets
+    # (comp_pin_counts == 1) are intentionally exempt.
     for net_name, holes in net_holes.items():
-        if len(holes) < 2:
+        if comp_pin_counts.get(net_name, 0) < 2:
             continue
         roots = {uf.find(h) for h in holes}
         if len(roots) > 1:

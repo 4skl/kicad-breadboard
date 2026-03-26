@@ -331,6 +331,8 @@ class BreadboardCanvas(wx.Panel):
         # (x, y, IssueKind) for each validation issue with locatable holes
         self._validation_icons: List[Tuple[int, int, IssueKind]] = []
 
+        self.show_net_labels: bool = True   # toggled by toolbar checkbox
+
         # Called with ref after a component is successfully placed
         self.on_placed: Optional[callable] = None
 
@@ -618,14 +620,23 @@ class BreadboardCanvas(wx.Panel):
 
     def _on_mousewheel(self, evt: wx.MouseEvent) -> None:
         rotation = evt.GetWheelRotation()
-        cx, cy = evt.GetPosition()
-        factor = 1.12 if rotation > 0 else (1.0 / 1.12)
-        new_zoom = max(0.15, min(5.0, self._zoom * factor))
-        # Keep the point under the cursor fixed
-        scale = new_zoom / self._zoom
-        self._pan_x = cx - (cx - self._pan_x) * scale
-        self._pan_y = cy - (cy - self._pan_y) * scale
-        self._zoom = new_zoom
+        # KiCad-style controls:
+        #   Scroll alone      → zoom (cursor-centred)
+        #   Shift + scroll    → vertical pan
+        #   Ctrl  + scroll    → horizontal pan
+        PAN_STEP = 60   # pixels per wheel notch
+        if evt.ShiftDown():
+            self._pan_y += PAN_STEP if rotation > 0 else -PAN_STEP
+        elif evt.ControlDown():
+            self._pan_x += PAN_STEP if rotation > 0 else -PAN_STEP
+        else:
+            cx, cy = evt.GetPosition()
+            factor = 1.12 if rotation > 0 else (1.0 / 1.12)
+            new_zoom = max(0.15, min(5.0, self._zoom * factor))
+            scale = new_zoom / self._zoom
+            self._pan_x = cx - (cx - self._pan_x) * scale
+            self._pan_y = cy - (cy - self._pan_y) * scale
+            self._zoom = new_zoom
         self.Refresh()
 
     def _on_middle_down(self, evt: wx.MouseEvent) -> None:
@@ -705,6 +716,15 @@ class BreadboardCanvas(wx.Panel):
         elif comp_def.pin_count == 3:
             n = 2   # span = pin_count - 1
             new_anchor = TieHole(pin1.col + (n if new_flipped else -n), pin1.row)
+        elif comp_def.pin_count == 2:
+            # For 2-pin axial: use pin2 as new anchor and toggle flipped.
+            # place(pin2, flipped=True)  → pin1 at pin2.col, pin2 at pin2.col-span
+            # place(pin2, flipped=False) → restores original orientation
+            pin2 = placed.pin_holes.get(2)
+            if not isinstance(pin2, TieHole):
+                return
+            new_anchor = pin2
+            # new_flipped already set to `not placed.flipped` above
         else:
             return
         try:
@@ -819,6 +839,11 @@ class BreadboardCanvas(wx.Panel):
 
         self._draw_column_labels(dc)
         self._draw_validation_icons(dc)
+
+        # Legend is drawn in screen coordinates (reset transform first)
+        dc.SetUserScale(1.0, 1.0)
+        dc.SetDeviceOrigin(0, 0)
+        self._draw_net_labels(dc)
 
     def _draw_rails(self, dc: wx.DC) -> None:
         lay = self.layout
@@ -992,7 +1017,7 @@ class BreadboardCanvas(wx.Panel):
                         dot_y = body_rect.GetBottom() - 6
                     dc.DrawCircle(pin1_xy[0], dot_y, 3)
 
-            # Pin number labels outside the legs
+            # Pin number labels inside the body, flush to the edge near each leg
             dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
             dc.SetTextForeground('#cccccc')
@@ -1004,11 +1029,11 @@ class BreadboardCanvas(wx.Panel):
                 tw, th = dc.GetTextExtent(label)
                 hx = xy[0]
                 if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
-                    # Leg extends upward; label sits above it
-                    dc.DrawText(label, hx - tw // 2, body_rect.GetTop() - 6 - th - 1)
+                    # Top-side pin: label just inside the top edge of the body
+                    dc.DrawText(label, hx - tw // 2, body_rect.GetTop() + 2)
                 elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
-                    # Leg extends downward; label sits below it
-                    dc.DrawText(label, hx - tw // 2, body_rect.GetBottom() + 7)
+                    # Bottom-side pin: label just inside the bottom edge of the body
+                    dc.DrawText(label, hx - tw // 2, body_rect.GetBottom() - th - 2)
         elif comp_def.pin_count == 2:
             p1 = lay.hole_xy(placed.pin_holes[1])
             p2 = lay.hole_xy(placed.pin_holes[2])
@@ -1061,13 +1086,14 @@ class BreadboardCanvas(wx.Panel):
             dc.SetBrush(wx.Brush(body_color))
             dc.SetPen(wx.Pen(border_color, pen_w))
             dc.DrawCircle(int(mx), int(my), int(r))
-            # Flat cathode marker on pin-2 side, drawn rotated via GC
+            # Flat cathode marker on pin-1 side, drawn rotated via GC
+            # Pin 1 = K (cathode) per KiCad Device:LED convention
             gc = wx.GraphicsContext.Create(dc)
             gc.Translate(mx, my)
             gc.Rotate(angle)
             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#444444'))))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#444444')).Width(1)))
-            gc.DrawRectangle(r - 4, -(r - 1), 4, (r - 1) * 2)
+            gc.DrawRectangle(-r, -(r - 1), 4, (r - 1) * 2)
         else:
             # Axial pill (R, C, L, D, D_Zener, C_POL …)
             # Body occupies the middle half of the span (25%–75%)
@@ -1113,10 +1139,11 @@ class BreadboardCanvas(wx.Panel):
                         gc.DrawRectangle(bx_pos, -body_h / 2 + 1, 5, body_h - 2)
 
             elif placed.type_id in ('D', 'D_Zener'):
-                # Cathode stripe near pin-2 end (positive x in local coords)
+                # Cathode stripe near pin-1 end (negative x in local coords)
+                # Pin 1 = K (cathode) per KiCad Device:D convention
                 gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#cccccc'))))
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#cccccc')).Width(1)))
-                gc.DrawRectangle(body_half - 4, -body_h / 2, 4, body_h)
+                gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
 
     def _draw_terminals(self, dc: wx.DC) -> None:
         lay = self.layout
@@ -1347,6 +1374,94 @@ class BreadboardCanvas(wx.Panel):
             dc.SetTextForeground('#ffffff')
             tw, th = dc.GetTextExtent(symbol)
             dc.DrawText(symbol, cx - tw // 2, cy - th // 2)
+
+    def _draw_net_labels(self, dc: wx.DC) -> None:
+        """Draw a legend box in the bottom-right corner listing signal nets.
+
+        Only single-endpoint named nets are shown (schematic labels with no
+        other placed component on that net — e.g. /Vin, /Vout).
+        Called after the zoom/pan transform is reset, so coordinates are
+        plain screen pixels.
+        """
+        if not self.netlist or not self.show_net_labels:
+            return
+
+        # Collect: net_name → ref of the sole placed component pin
+        entries: List[Tuple[str, str]] = []   # (net_name, ref)
+        for net in self.netlist.nets:
+            name = net.name
+            if name.startswith('Net-(') or name.startswith('unconnected-(') or name == '0':
+                continue
+            placed_pins = []
+            for pn in net.pins:
+                h = self.board.hole_for_pin(pn.ref, pn.pin)
+                if h is not None:
+                    placed_pins.append(pn.ref)
+            if len(placed_pins) == 1:
+                entries.append((name, placed_pins[0]))
+
+        if not entries:
+            return
+
+        BG      = wx.Colour(0x00, 0x70, 0x70, 200)   # semi-transparent teal
+        FG      = wx.Colour(0xff, 0xff, 0xff)
+        HDR     = wx.Colour(0x00, 0x50, 0x50, 220)
+        PAD     = 6
+        ROW_GAP = 2
+
+        font_hdr  = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        font_body = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+
+        dc.SetFont(font_body)
+        _, row_h = dc.GetTextExtent('Ag')
+
+        # Measure column widths
+        dc.SetFont(font_hdr)
+        hdr_w1, _ = dc.GetTextExtent('Signal')
+        hdr_w2, _ = dc.GetTextExtent('Component')
+        dc.SetFont(font_body)
+        col1_w = hdr_w1
+        col2_w = hdr_w2
+        for net_name, ref in entries:
+            w1, _ = dc.GetTextExtent(net_name)
+            w2, _ = dc.GetTextExtent(ref)
+            col1_w = max(col1_w, w1)
+            col2_w = max(col2_w, w2)
+
+        col_gap = 12
+        box_w = PAD + col1_w + col_gap + col2_w + PAD
+        n_rows = 1 + len(entries)   # header + data rows
+        box_h = PAD + n_rows * (row_h + ROW_GAP) + PAD
+
+        cw, ch = self.GetClientSize()
+        MARGIN = 8
+        bx = cw - box_w - MARGIN
+        by = ch - box_h - MARGIN
+
+        # Background
+        dc.SetBrush(wx.Brush(BG))
+        dc.SetPen(wx.Pen(wx.Colour(0, 80, 80), 1))
+        dc.DrawRoundedRectangle(bx, by, box_w, box_h, 4)
+
+        # Header row background
+        dc.SetBrush(wx.Brush(HDR))
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.DrawRoundedRectangle(bx, by, box_w, row_h + ROW_GAP + PAD, 4)
+        dc.DrawRectangle(bx, by + (row_h + ROW_GAP + PAD) // 2,
+                         box_w, (row_h + ROW_GAP + PAD + 1) // 2)
+
+        dc.SetTextForeground(FG)
+        dc.SetFont(font_hdr)
+        y = by + PAD
+        dc.DrawText('Signal',    bx + PAD, y)
+        dc.DrawText('Component', bx + PAD + col1_w + col_gap, y)
+        y += row_h + ROW_GAP
+
+        dc.SetFont(font_body)
+        for net_name, ref in entries:
+            dc.DrawText(net_name, bx + PAD, y)
+            dc.DrawText(ref,      bx + PAD + col1_w + col_gap, y)
+            y += row_h + ROW_GAP
 
     def _draw_column_labels(self, dc: wx.DC) -> None:
         lay = self.layout

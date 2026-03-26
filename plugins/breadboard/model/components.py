@@ -139,7 +139,7 @@ DIODE = ComponentDef(
     display_name='Diode',
     ref_prefix='D',
     pin_offsets={1: PinOffset(0), 2: PinOffset(4)},
-    pin_names={1: 'A', 2: 'K'},
+    pin_names={1: 'K', 2: 'A'},   # KiCad Device:D convention: pin 1=K, pin 2=A
     color='#222222',   # black body like 1N4001
 )
 
@@ -148,7 +148,7 @@ ZENER = ComponentDef(
     display_name='Zener Diode',
     ref_prefix='D',
     pin_offsets={1: PinOffset(0), 2: PinOffset(4)},
-    pin_names={1: 'A', 2: 'K'},
+    pin_names={1: 'K', 2: 'A'},   # KiCad Device:D_Zener convention: pin 1=K, pin 2=A
     color='#1a1a2a',   # near-black, slightly blue-tinted
 )
 
@@ -162,7 +162,7 @@ LED = ComponentDef(
     display_name='LED (5mm)',
     ref_prefix='D',
     pin_offsets={1: PinOffset(0), 2: PinOffset(2)},
-    pin_names={1: 'A', 2: 'K'},
+    pin_names={1: 'K', 2: 'A'},   # KiCad Device:LED convention: pin 1=K, pin 2=A
     color='#e84040',   # default red; actual colour unknown from netlist
 )
 

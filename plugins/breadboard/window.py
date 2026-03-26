@@ -26,18 +26,22 @@ from .model import (
     parse_netlist, find_netlist, find_schematic,
     validate, IssueKind,
     ALL_DEFS, guess_type_id,
+    save_session, load_session,
 )
 
 # Toolbar button IDs
 ID_SELECT = wx.NewIdRef()
 ID_WIRE   = wx.NewIdRef()
 ID_DELETE = wx.NewIdRef()
-ID_UPDATE   = wx.NewIdRef()
-ID_EXPORT   = wx.NewIdRef()
-ID_VALIDATE = wx.NewIdRef()
+ID_UPDATE      = wx.NewIdRef()
+ID_EXPORT      = wx.NewIdRef()
+ID_VALIDATE    = wx.NewIdRef()
 ID_CLEAR_WARNINGS = wx.NewIdRef()
-ID_CLEAR  = wx.NewIdRef()
-ID_OPEN   = wx.NewIdRef()
+ID_CLEAR       = wx.NewIdRef()
+ID_OPEN        = wx.NewIdRef()
+ID_NET_LABELS  = wx.NewIdRef()
+ID_SAVE        = wx.NewIdRef()
+ID_LOAD        = wx.NewIdRef()
 
 
 class BreadboardWindow(wx.Frame):
@@ -53,6 +57,7 @@ class BreadboardWindow(wx.Frame):
         self.board = Breadboard()
         self.netlist: Optional[Netlist] = None
         self._project_path: Optional[str] = project_path
+        self._netlist_path: Optional[str] = None   # last successfully loaded .net file
 
         self._build_ui()
         self._bind_events()
@@ -68,6 +73,7 @@ class BreadboardWindow(wx.Frame):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        self._build_menu()
         self._build_toolbar()
 
         splitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE)
@@ -112,13 +118,20 @@ class BreadboardWindow(wx.Frame):
             'Hotkeys\n'
             'W  Wire\n'
             'D  Delete\n'
-            'R  Rotate DIP / TO-92 180°\n'
+            'R  Rotate / flip component\n'
             'Esc  Select / cancel\n'
             'Del  Delete selected\n'
             'R-click  Rotate component\n'
             '\n'
+            'File\n'
+            'Ctrl+O  Open netlist\n'
+            'Ctrl+S  Save session\n'
+            'Ctrl+L  Load session\n'
+            '\n'
             'View\n'
             'Scroll  Zoom in / out\n'
+            'Shift+Scroll  Pan vertical\n'
+            'Ctrl+Scroll  Pan horizontal\n'
             'Middle drag  Pan\n'
             'Ctrl+Home  Fit view\n'
             '+  /  \u2212  Zoom in / out\n'
@@ -129,7 +142,7 @@ class BreadboardWindow(wx.Frame):
         tray_sizer.Add(hotkey_label, 0, wx.ALL, 6)
 
         credit_label = wx.StaticText(tray_panel,
-                                     label='Made with \u2665 at Cosys-lab\ncosys.uantwerpen.be')
+                                     label='Made with \u2665 by Robin Kerstens\nwith the support of the\nUniversity of Antwerp, Belgium.')
         credit_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
                                      wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
         credit_label.SetForegroundColour('#444444')
@@ -150,11 +163,26 @@ class BreadboardWindow(wx.Frame):
         self.SetStatusText('Load a netlist, then click a component in the tray to place it.', 0)
         self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
 
+    def _build_menu(self) -> None:
+        menu_bar = wx.MenuBar()
+        file_menu = wx.Menu()
+        file_menu.Append(ID_OPEN,   'Open netlist…\tCtrl+O',
+                         'Load a KiCad .net file')
+        file_menu.Append(ID_UPDATE, 'Update from schematic',
+                         'Re-export and reload netlist via kicad-cli')
+        file_menu.AppendSeparator()
+        file_menu.Append(ID_SAVE,   'Save session…\tCtrl+S',
+                         'Save current placements and wires to a .kicad_bbrd file')
+        file_menu.Append(ID_LOAD,   'Load session…\tCtrl+L',
+                         'Restore placements and wires from a .kicad_bbrd file')
+        file_menu.AppendSeparator()
+        file_menu.Append(wx.ID_EXIT, 'Quit\tAlt+F4')
+        menu_bar.Append(file_menu, '&File')
+        self.SetMenuBar(menu_bar)
+
     def _build_toolbar(self) -> None:
         tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_TEXT | wx.TB_NOICONS)
 
-        tb.AddTool(ID_OPEN,   'Open netlist', wx.NullBitmap,
-                   shortHelp='Load KiCad netlist (.net)')
         tb.AddTool(ID_UPDATE, 'Update from schematic', wx.NullBitmap,
                    shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
         tb.AddSeparator()
@@ -171,6 +199,11 @@ class BreadboardWindow(wx.Frame):
         tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
                    shortHelp='Save the breadboard as a PNG image')
         tb.AddSeparator()
+        tb.AddTool(ID_NET_LABELS, 'Signal labels', wx.NullBitmap,
+                   shortHelp='Show / hide net signal labels on the breadboard',
+                   kind=wx.ITEM_CHECK)
+        tb.ToggleTool(ID_NET_LABELS, True)
+        tb.AddSeparator()
         tb.AddTool(ID_VALIDATE, 'Validate',   wx.NullBitmap,
                    shortHelp='Check if your circuit matches the schematic')
         tb.AddTool(ID_CLEAR_WARNINGS, 'Clear warnings', wx.NullBitmap,
@@ -181,12 +214,18 @@ class BreadboardWindow(wx.Frame):
         self.toolbar = tb
 
     def _bind_events(self) -> None:
+        self.Bind(wx.EVT_MENU, self._on_open,     id=ID_OPEN)
+        self.Bind(wx.EVT_MENU, self._on_update,   id=ID_UPDATE)
+        self.Bind(wx.EVT_MENU, self._on_save,     id=ID_SAVE)
+        self.Bind(wx.EVT_MENU, self._on_load,     id=ID_LOAD)
+        self.Bind(wx.EVT_MENU, lambda _: self.Close(), id=wx.ID_EXIT)
         self.Bind(wx.EVT_TOOL, self._on_open,     id=ID_OPEN)
         self.Bind(wx.EVT_TOOL, self._on_update,   id=ID_UPDATE)
         self.Bind(wx.EVT_TOOL, self._on_export,   id=ID_EXPORT)
         self.Bind(wx.EVT_TOOL, self._on_select,   id=ID_SELECT)
         self.Bind(wx.EVT_TOOL, self._on_wire,     id=ID_WIRE)
         self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
+        self.Bind(wx.EVT_TOOL, self._on_net_labels,     id=ID_NET_LABELS)
         self.Bind(wx.EVT_TOOL, self._on_validate,       id=ID_VALIDATE)
         self.Bind(wx.EVT_TOOL, self._on_clear_warnings, id=ID_CLEAR_WARNINGS)
         self.Bind(wx.EVT_TOOL, self._on_clear,          id=ID_CLEAR)
@@ -241,6 +280,7 @@ class BreadboardWindow(wx.Frame):
             if dlg.ShowModal() == wx.ID_OK:
                 path = dlg.GetPath()
                 self._project_path = str(Path(path).parent)
+                self._netlist_path = path
                 self._load_netlist(path)
 
     def _export_netlist(self, silent: bool = False) -> Optional[Path]:
@@ -349,6 +389,73 @@ class BreadboardWindow(wx.Frame):
             return
         self.SetStatusText(f'Image saved to {path}', 0)
 
+    def _on_save(self, _evt) -> None:
+        default = 'breadboard.kicad_bbrd'
+        if self._project_path:
+            from pathlib import Path as _Path
+            default = str(_Path(self._project_path) / 'breadboard.kicad_bbrd')
+        with wx.FileDialog(
+            self,
+            message='Save session',
+            defaultFile=default,
+            wildcard='Breadboard session (*.kicad_bbrd)|*.kicad_bbrd|All files (*)|*',
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+        try:
+            save_session(self.board, self._netlist_path, path)
+            self.SetStatusText(f'Session saved to {path}', 0)
+        except Exception as exc:
+            wx.MessageBox(f'Failed to save session:\n{exc}', 'Save session',
+                          wx.OK | wx.ICON_ERROR)
+
+    def _on_load(self, _evt) -> None:
+        default_dir = self._project_path or ''
+        with wx.FileDialog(
+            self,
+            message='Load session',
+            defaultDir=default_dir,
+            wildcard='Breadboard session (*.kicad_bbrd)|*.kicad_bbrd|All files (*)|*',
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+        try:
+            result = load_session(path)
+        except Exception as exc:
+            wx.MessageBox(f'Failed to load session:\n{exc}', 'Load session',
+                          wx.OK | wx.ICON_ERROR)
+            return
+
+        # Restore board state
+        self.board = result['board']
+        self.canvas.board = self.board
+        self.tray.board = self.board
+        self.canvas.clear_highlights()
+
+        # Reload the netlist from the saved path (if present and netlist not yet loaded)
+        saved_netlist = result.get('netlist_path')
+        if saved_netlist and self.netlist is None:
+            try:
+                self._load_netlist(saved_netlist)
+            except Exception:
+                pass  # carry on without netlist; user can open manually
+        elif self.netlist:
+            self.tray.refresh_placed()
+
+        # Always resync terminal dropdowns from the restored board state
+        self._refresh_terminal_choices()
+
+        self.canvas.Refresh()
+        self.SetStatusText(f'Session loaded from {path}', 0)
+
+    def _on_net_labels(self, _evt) -> None:
+        self.canvas.show_net_labels = self.toolbar.GetToolState(ID_NET_LABELS)
+        self.canvas.Refresh()
+
     def _on_validate(self, _evt) -> None:
         if self.netlist is None:
             self.SetStatusText('No netlist loaded.', 0)
@@ -429,6 +536,7 @@ class BreadboardWindow(wx.Frame):
             wx.MessageBox(f'Failed to load netlist:\n{exc}',
                           'Error', wx.OK | wx.ICON_ERROR)
             return
+        self._netlist_path = path
 
         self.canvas.netlist = self.netlist
         self.tray.load_netlist(self.netlist)
