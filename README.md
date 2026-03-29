@@ -1,4 +1,4 @@
-# ![icon](images/icon.png) KiCad Breadboard Builder
+# <img src="images/icon.png" height="32"> KiCad Breadboard Builder
 
 A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the University of Antwerp. Students draw a schematic in Eeschema, then use this plugin to wire up the same circuit on a virtual 830-point breadboard — placing components, drawing jumper wires, and validating their work against the schematic.
 
