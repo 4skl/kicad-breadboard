@@ -169,14 +169,15 @@ The **Function generator** and **Oscilloscope** sections let you place optional 
 ![schematic](images/schematic.png)
 
 - Go to the PCB editor (using the green button on the toolbar, or by using Tools → Switch to PCB editor)
+At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard editor.
 
 ![icon](images/pcbeditor.png)
 
-At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard editor.
+- The kicad-breadboard editor will open!
 
 ![breadboard](images/breadboard.png)
 
-Here, you can select which component you want to place and click "Validate" to check if your build contains errors. If it does, it will indicate missing connections and short circuits on the relevant pins as illustrated below.
+- Here, you can select which component you want to place and click "Validate" to check if your build contains errors. If it does, it will indicate missing connections and short circuits on the relevant pins as illustrated below.
 
 ![shortcircuit](images/shortcircuit.png)
 
