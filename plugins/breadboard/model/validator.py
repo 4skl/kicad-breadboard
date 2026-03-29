@@ -161,6 +161,15 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
     comp_pin_counts: Dict[str, int] = {}
     net_holes: Dict[str, List[Hole]] = {}
 
+    # Total schematic nodes per net (placed + unplaced); also track whether each net
+    # has any power_in pins — used to detect supply nets where the second endpoint is
+    # a SPICE source that isn't placed on the breadboard.
+    schematic_node_counts: Dict[str, int] = {net.name: len(net.pins) for net in netlist.nets}
+    power_in_nets: Set[str] = {
+        net.name for net in netlist.nets
+        if any(p.pintype == 'power_in' for p in net.pins)
+    }
+
     for net in netlist.nets:
         holes: List[Hole] = []
         for pin_node in net.pins:
@@ -189,9 +198,28 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
     # Step 3 — open nets
     # Require at least 2 total endpoints (placed component pins + assigned terminals);
     # single-endpoint label-only nets are intentionally exempt.
+    # Exception: if the schematic has ≥2 nodes for a net but only 1 is placed
+    # (e.g. a DIP power pin whose other endpoint is a SPICE source), flag it so
+    # the student knows they must assign a binding-post terminal for that net.
     for net_name, holes in net_holes.items():
-        total = comp_pin_counts.get(net_name, 0) + terminal_pin_counts.get(net_name, 0)
+        comp  = comp_pin_counts.get(net_name, 0)
+        term  = terminal_pin_counts.get(net_name, 0)
+        total = comp + term
         if total < 2:
+            if (comp >= 1 and term == 0
+                    and schematic_node_counts.get(net_name, 0) >= 2
+                    and net_name in power_in_nets):
+                # Supply net with unplaced second endpoint and no terminal assigned
+                result.issues.append(ValidationIssue(
+                    kind=IssueKind.OPEN_NET,
+                    net_name=net_name,
+                    description=(
+                        f"Net '{net_name}' has component pins but no supply terminal "
+                        f"assigned. Use the binding-post dropdown to assign a terminal "
+                        f"to this net, then connect it on the board."
+                    ),
+                    holes=holes,
+                ))
             continue
         roots = {uf.find(h) for h in holes}
         if len(roots) > 1:

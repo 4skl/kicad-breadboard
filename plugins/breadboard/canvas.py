@@ -323,6 +323,7 @@ class BreadboardCanvas(wx.Panel):
 
         self._selected_ref: Optional[str] = None     # selected placed component
         self._selected_wire: Optional[Wire] = None   # selected wire
+        self._selected_probe: Optional[str] = None   # selected probe label (for Delete key)
         self._hover_ref: Optional[str] = None         # hovered component (delete mode)
         self._hover_wire: Optional[Wire] = None       # hovered wire (delete mode)
         self._drag_comp: Optional[str] = None        # ref being repositioned on board
@@ -381,6 +382,7 @@ class BreadboardCanvas(wx.Panel):
         self._place_pin1 = None
         self._selected_wire = None
         self._selected_ref = None
+        self._selected_probe = None
         if mode != MODE_PROBE:
             self._placing_probe = None
             self._probe_drag = False
@@ -558,6 +560,12 @@ class BreadboardCanvas(wx.Panel):
                     self.on_placed(self._selected_ref)
                 self._selected_ref = None
                 self.Refresh()
+            elif self._selected_probe is not None:
+                self.board.remove_probe(self._selected_probe)
+                if self.on_placed:
+                    self.on_placed(self._selected_probe)
+                self._selected_probe = None
+                self.Refresh()
         elif key == wx.WXK_HOME and evt.ControlDown():
             self._fit_view()
         elif key in (ord('+'), ord('='), wx.WXK_NUMPAD_ADD):
@@ -626,6 +634,7 @@ class BreadboardCanvas(wx.Panel):
                 self._drag_label_start_offset = self.board.get_probe_label_offset(label_name)
                 self._selected_ref = None
                 self._selected_wire = None
+                self._selected_probe = label_name
                 # Do NOT call CaptureMouse here — on GTK it fires a synthetic
                 # motion event at (0,0) which causes a huge coordinate jump.
                 self.Refresh()
@@ -634,6 +643,7 @@ class BreadboardCanvas(wx.Panel):
             if ref:
                 self._selected_ref = ref
                 self._selected_wire = None
+                self._selected_probe = None
                 self._drag_comp = ref
                 p = self.board.get_placement(ref)
                 if p:
@@ -649,6 +659,7 @@ class BreadboardCanvas(wx.Panel):
                 wire = self._wire_at(px, py)
                 self._selected_wire = wire
                 self._selected_ref = None
+                self._selected_probe = None
                 if wire:
                     self.SetFocus()
                 self.Refresh()
@@ -1405,7 +1416,12 @@ class BreadboardCanvas(wx.Panel):
             hx, hy = int(xy[0]), int(xy[1])
             fcx, fcy = self._probe_flag_pos(name, hx, hy)
             meta = PROBE_META[name]
-            color = '#cc2222' if name == self._hover_probe_name else meta['color']
+            if name == self._hover_probe_name:
+                color = '#cc2222'
+            elif name == self._selected_probe:
+                color = '#ffffff'
+            else:
+                color = meta['color']
             self._draw_probe_flag(dc, hx, hy, fcx, fcy, meta['label'], color)
 
         # Placement preview
