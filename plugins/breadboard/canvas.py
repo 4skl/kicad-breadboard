@@ -626,7 +626,8 @@ class BreadboardCanvas(wx.Panel):
                 self._drag_label_start_offset = self.board.get_probe_label_offset(label_name)
                 self._selected_ref = None
                 self._selected_wire = None
-                self.CaptureMouse()
+                # Do NOT call CaptureMouse here — on GTK it fires a synthetic
+                # motion event at (0,0) which causes a huge coordinate jump.
                 self.Refresh()
                 return
             ref = self._comp_at(px, py)
@@ -669,8 +670,6 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
             return
         if self._dragging_probe_label:
-            if self.HasCapture():
-                self.ReleaseMouse()
             self._dragging_probe_label = None
             self.Refresh()
             return
@@ -743,10 +742,17 @@ class BreadboardCanvas(wx.Panel):
         px, py = self._board_pos(*evt.GetPosition())
 
         if self._dragging_probe_label:
+            if not evt.LeftIsDown():
+                # Button released without firing LEFT_UP (e.g. focus change)
+                self._dragging_probe_label = None
+                self.Refresh()
+                return
             mx0, my0 = self._drag_label_start_mouse
             ox, oy   = self._drag_label_start_offset
             self.board.set_probe_label_offset(
-                self._dragging_probe_label, ox + (px - mx0), oy + (py - my0))
+                self._dragging_probe_label,
+                int(round(ox + (px - mx0))),
+                int(round(oy + (py - my0))))
             self.Refresh()
             return
 

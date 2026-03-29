@@ -59,6 +59,7 @@ class BreadboardWindow(wx.Frame):
         self.netlist: Optional[Netlist] = None
         self._project_path: Optional[str] = project_path
         self._netlist_path: Optional[str] = None   # last successfully loaded .net file
+        self._refreshing_choices: bool = False     # suppress EVT_CHOICE during SetItems
 
         self._build_ui()
         self._bind_events()
@@ -556,6 +557,8 @@ class BreadboardWindow(wx.Frame):
             self.canvas.board = self.board
             self.tray.board = self.board
             self.tray.refresh_placed()
+            self._refresh_terminal_choices()
+            self._refresh_probe_choices()
             self._refresh_probe_buttons()
             self.canvas.clear_highlights()
             self.canvas.Refresh()
@@ -574,6 +577,8 @@ class BreadboardWindow(wx.Frame):
             self._load_netlist(str(net_path))
 
     def _on_term_choice(self, term_name: str, evt) -> None:
+        if self._refreshing_choices:
+            return
         ch = self._term_choices[term_name]
         sel = ch.GetSelection()
         # item 0 is "(unassigned)"; items 1..n are net names
@@ -587,19 +592,25 @@ class BreadboardWindow(wx.Frame):
             return
         net_names = sorted(net.name for net in self.netlist.nets if net.name)
         choices = ['(unassigned)'] + net_names
-        for name, ch in self._term_choices.items():
-            ch.SetItems(choices)
-            current = self.board.get_terminal_net(name)
-            if current in net_names:
-                ch.SetSelection(net_names.index(current) + 1)
-            else:
-                ch.SetSelection(0)
+        self._refreshing_choices = True
+        try:
+            for name, ch in self._term_choices.items():
+                ch.SetItems(choices)
+                current = self.board.get_terminal_net(name)
+                if current in net_names:
+                    ch.SetSelection(net_names.index(current) + 1)
+                else:
+                    ch.SetSelection(0)
+        finally:
+            self._refreshing_choices = False
 
     # ------------------------------------------------------------------
     # Instrument probe handlers
     # ------------------------------------------------------------------
 
     def _on_probe_choice(self, probe_name: str, _evt) -> None:
+        if self._refreshing_choices:
+            return
         ch = self._probe_choices[probe_name]
         sel = ch.GetSelection()
         net = ch.GetString(sel) if sel > 0 else ''
@@ -630,13 +641,17 @@ class BreadboardWindow(wx.Frame):
             return
         net_names = sorted(net.name for net in self.netlist.nets if net.name)
         choices = ['(unassigned)'] + net_names
-        for name, ch in self._probe_choices.items():
-            ch.SetItems(choices)
-            current = self.board.get_probe_net(name)
-            if current in net_names:
-                ch.SetSelection(net_names.index(current) + 1)
-            else:
-                ch.SetSelection(0)
+        self._refreshing_choices = True
+        try:
+            for name, ch in self._probe_choices.items():
+                ch.SetItems(choices)
+                current = self.board.get_probe_net(name)
+                if current in net_names:
+                    ch.SetSelection(net_names.index(current) + 1)
+                else:
+                    ch.SetSelection(0)
+        finally:
+            self._refreshing_choices = False
 
     def _load_netlist(self, path: str) -> None:
         try:
