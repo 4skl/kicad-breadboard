@@ -180,13 +180,39 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
             net_holes.setdefault(net_name, []).append(Terminal(term_name))
             terminal_pin_counts[net_name] = terminal_pin_counts.get(net_name, 0) + 1
 
+    # Collect all terminal holes for isolation check below
+    all_terminal_holes = [Terminal(n) for n in TERMINAL_NAMES
+                          if board.get_terminal_net(n)]
+
     # Step 3 — open nets
-    # Require at least 2 total endpoints (placed component pins + assigned terminals);
-    # single-endpoint label-only nets are intentionally exempt.
     for net_name, holes in net_holes.items():
-        total = comp_pin_counts.get(net_name, 0) + terminal_pin_counts.get(net_name, 0)
+        n_comp = comp_pin_counts.get(net_name, 0)
+        n_term = terminal_pin_counts.get(net_name, 0)
+        total  = n_comp + n_term
+
         if total < 2:
+            # Single placed pin, no terminal assigned for this net.
+            # Flag it if the pin is also not connected to any terminal at all
+            # (completely floating power/supply pin).
+            if n_comp == 1 and n_term == 0 and all_terminal_holes:
+                comp_holes = [h for h in holes if not isinstance(h, Terminal)]
+                if comp_holes:
+                    pin_hole = comp_holes[0]
+                    connected_to_any_terminal = any(
+                        uf.connected(pin_hole, th) for th in all_terminal_holes
+                    )
+                    if not connected_to_any_terminal:
+                        result.issues.append(ValidationIssue(
+                            kind=IssueKind.OPEN_NET,
+                            net_name=net_name,
+                            description=(
+                                f"Net '{net_name}' has a placed pin but is not "
+                                f"connected to any binding post."
+                            ),
+                            holes=comp_holes,
+                        ))
             continue
+
         roots = {uf.find(h) for h in holes}
         if len(roots) > 1:
             result.issues.append(ValidationIssue(

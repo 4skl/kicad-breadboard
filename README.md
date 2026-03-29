@@ -130,7 +130,7 @@ Example workflow:
 ![schematic](images/schematic.png)
 
 - Go to the PCB editor (using the green button on the toolbar, or by using Tools -> Switch to PCB editor)
-![icon](images/icon.png)
+![icon](images/pcbeditor.png)
 
 At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard editor.
 
