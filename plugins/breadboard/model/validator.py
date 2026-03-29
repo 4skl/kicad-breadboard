@@ -142,7 +142,7 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
     # type_id and are handled via terminal assignments instead.
     for ref, comp in netlist.components.items():
         if board.get_placement(ref) is None:
-            type_id = guess_type_id(ref, comp.value, comp.symbol)
+            type_id = guess_type_id(ref, comp.value, comp.symbol, comp.lib)
             if type_id is not None:
                 result.issues.append(ValidationIssue(
                     kind=IssueKind.UNPLACED,
@@ -172,17 +172,20 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
             comp_pin_counts[net.name] = len(holes)
             net_holes[net.name] = holes
 
-    # Add terminal holes for SHORT detection (not counted in comp_pin_counts)
+    # Add terminal holes — count them so power-supply nets are validated
+    terminal_pin_counts: Dict[str, int] = {}
     for term_name in TERMINAL_NAMES:
         net_name = board.get_terminal_net(term_name)
         if net_name:
             net_holes.setdefault(net_name, []).append(Terminal(term_name))
+            terminal_pin_counts[net_name] = terminal_pin_counts.get(net_name, 0) + 1
 
     # Step 3 — open nets
-    # Require at least 2 placed component pins; single-endpoint label-only nets
-    # (comp_pin_counts == 1) are intentionally exempt.
+    # Require at least 2 total endpoints (placed component pins + assigned terminals);
+    # single-endpoint label-only nets are intentionally exempt.
     for net_name, holes in net_holes.items():
-        if comp_pin_counts.get(net_name, 0) < 2:
+        total = comp_pin_counts.get(net_name, 0) + terminal_pin_counts.get(net_name, 0)
+        if total < 2:
             continue
         roots = {uf.find(h) for h in holes}
         if len(roots) > 1:

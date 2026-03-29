@@ -58,7 +58,7 @@ class ComponentTray(wx.ScrolledWindow):
         self._cards.clear()
 
         for ref, comp in sorted(netlist.components.items()):
-            type_id = guess_type_id(ref, comp.value, comp.symbol)
+            type_id = guess_type_id(ref, comp.value, comp.symbol, comp.lib)
             if type_id is None:
                 continue   # virtual/simulation component — only usable via binding posts
             comp_def = ALL_DEFS.get(type_id)
@@ -124,7 +124,8 @@ class _TrayCard(wx.Panel):
 
         dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_BOLD))
-        dc.DrawText(self.ref, text_x, 4)
+        type_suffix = f' - {self.comp_def.type_id}' if self.comp_def else ''
+        dc.DrawText(f'{self.ref}{type_suffix}', text_x, 4)
 
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL))

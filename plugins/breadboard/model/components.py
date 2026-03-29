@@ -313,6 +313,33 @@ TL084 = ComponentDef(
     is_dip=True,
 )
 
+# OPAMP_SPICE — KiCad Simulation_SPICE:OPAMP (kicad_builtin_opamp)
+# Logical 5-pin opamp symbol: 1=IN+, 2=IN-, 3=V+, 4=V-, 5=OUT.
+# Pins are placed at the standard DIP-8 positions matching their pin numbers.
+# Dummy pins 6-8 fill the remaining DIP-8 leg positions so the body draws
+# at the correct width and flipping works correctly.
+OPAMP_SPICE = ComponentDef(
+    type_id='OPAMP_SPICE',
+    display_name='OPAMP (SPICE)',
+    ref_prefix='U',
+    pin_offsets={
+        1: PinOffset(0, cross_gap=True),   # IN+  → row f, col+0  (DIP-8 pos 1)
+        2: PinOffset(1, cross_gap=True),   # IN-  → row f, col+1  (DIP-8 pos 2)
+        3: PinOffset(2, cross_gap=True),   # V+   → row f, col+2  (DIP-8 pos 3)
+        4: PinOffset(3, cross_gap=True),   # V-   → row f, col+3  (DIP-8 pos 4)
+        5: PinOffset(3, cross_gap=False),  # OUT  → row e, col+3  (DIP-8 pos 5)
+        # Unused legs — keep DIP-8 body width and flip calculation correct
+        6: PinOffset(2, cross_gap=False),  # NC   → row e, col+2  (DIP-8 pos 6)
+        7: PinOffset(1, cross_gap=False),  # NC   → row e, col+1  (DIP-8 pos 7)
+        8: PinOffset(0, cross_gap=False),  # NC   → row e, col+0  (DIP-8 pos 8)
+    },
+    pin_names={
+        1: 'IN+', 2: 'IN-', 3: 'V+', 4: 'V-', 5: 'OUT',
+    },
+    color='#303080',
+    is_dip=True,
+)
+
 # ---------------------------------------------------------------------------
 # Registry: map type_id → ComponentDef
 # Also provides heuristic lookup from KiCad symbol/value strings.
@@ -324,21 +351,23 @@ ALL_DEFS: Dict[str, ComponentDef] = {
         DIODE, ZENER, LED,
         POTENTIOMETER,
         NPN_BJT, PNP_BJT, JFET_N, JFET_P, BS170,
-        TL081, RC4558, TL084,
+        TL081, RC4558, TL084, OPAMP_SPICE,
     ]
 }
 
 
-def guess_type_id(ref: str, value: str, symbol: str) -> Optional[str]:
+def guess_type_id(ref: str, value: str, symbol: str, lib: str = '') -> Optional[str]:
     """
     Heuristically map a KiCad component to a ComponentDef type_id.
 
     ref    : schematic reference, e.g. 'R1', 'Q3', 'U1'
     value  : component value, e.g. '10k', 'BC547', 'TL081'
     symbol : KiCad symbol name from the netlist libsource, e.g. 'R', 'NPN', 'TL081'
+    lib    : KiCad library name from the netlist libsource, e.g. 'Device', 'Simulation_SPICE'
     """
     v = value.upper()
     s = symbol.upper()
+    l = lib.upper()
 
     # Exact value/symbol matches first
     for key in ('TL084', 'RC4558', 'TL081', 'BS170'):
@@ -387,6 +416,10 @@ def guess_type_id(ref: str, value: str, symbol: str) -> Optional[str]:
             if key in v or key in s:
                 return 'TL081'
         if 'OPAMP' in s or 'OP_AMP' in s or 'AMPLIFIER' in s:
+            # Simulation_SPICE:OPAMP uses logical pin numbers (1=IN+,2=IN-,3=V+,4=V-,5=OUT)
+            # rather than physical DIP-8 numbers — needs its own mapping.
+            if 'SPICE' in l or 'SIMULATION' in l:
+                return 'OPAMP_SPICE'
             return 'TL081'
 
     return None

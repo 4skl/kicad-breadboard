@@ -141,6 +141,12 @@ class BreadboardWindow(wx.Frame):
         hotkey_label.SetForegroundColour('#000000')
         tray_sizer.Add(hotkey_label, 0, wx.ALL, 6)
 
+        version_label = wx.StaticText(tray_panel, label='Release: Zwieback')
+        version_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        version_label.SetForegroundColour('#444444')
+        tray_sizer.Add(version_label, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.ALIGN_CENTRE_HORIZONTAL, 8)
+
         credit_label = wx.StaticText(tray_panel,
                                      label='Made with \u2665 by Robin Kerstens\nwith the support of the\nUniversity of Antwerp, Belgium.')
         credit_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
@@ -352,19 +358,30 @@ class BreadboardWindow(wx.Frame):
         # Reload the freshly-written netlist, keeping existing placements
         self._load_netlist(str(net_path))
 
-        # Remove placements for refs that no longer exist in the new netlist
+        # Remove placements for refs that no longer exist, or whose type changed
         if self.netlist:
             removed = []
+            type_changed = []
             for ref in list(self.board.placements):
-                if ref not in self.netlist.components:
+                comp = self.netlist.components.get(ref)
+                if comp is None:
                     self.board.remove(ref)
                     removed.append(ref)
+                else:
+                    new_type = guess_type_id(ref, comp.value, comp.symbol, comp.lib)
+                    old_type = self.board.get_placement(ref).type_id
+                    if new_type != old_type:
+                        self.board.remove(ref)
+                        type_changed.append(ref)
+            msgs = []
             if removed:
+                msgs.append(f'removed orphaned: {", ".join(removed)}')
+            if type_changed:
+                msgs.append(f'type changed — re-place: {", ".join(type_changed)}')
+            if msgs:
                 self.tray.refresh_placed()
                 self.canvas.Refresh()
-                self.SetStatusText(
-                    f'Netlist updated. Removed orphaned placement(s): '
-                    f'{", ".join(removed)}.', 0)
+                self.SetStatusText(f'Netlist updated. {"; ".join(msgs).capitalize()}.', 0)
 
     def _on_export(self, _evt) -> None:
         default = 'breadboard.png'
