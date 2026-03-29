@@ -35,7 +35,7 @@ A KiCad 9 Action Plugin for introductory analog electronics courses at the Unive
 ### Step 1 — Clone the repository
 
 ```bash
-git clone https://cosysgit.uantwerpen.be/rkerstens/kicad-breadboard.git
+git clone https://github.com/kerstensrobin/kicad-breadboard.git
 ```
 
 ### Step 2 — Link the plugin into KiCad's scripting folder

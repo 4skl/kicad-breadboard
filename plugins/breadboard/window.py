@@ -27,6 +27,7 @@ from .model import (
     validate, IssueKind,
     ALL_DEFS, guess_type_id,
     save_session, load_session,
+    PROBE_NAMES, PROBE_META,
 )
 
 # Toolbar button IDs
@@ -106,6 +107,48 @@ class BreadboardWindow(wx.Frame):
         tray_sizer.Add(term_grid, 0, wx.EXPAND | wx.ALL, 6)
         tray_sizer.Add(wx.StaticLine(tray_panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
+        # --- Instruments section ---
+        instr_label = wx.StaticText(tray_panel, label='Instruments')
+        instr_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                    wx.FONTWEIGHT_BOLD))
+        tray_sizer.Add(instr_label, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
+
+        self._probe_choices: dict = {}
+        self._probe_place_btns: dict = {}
+
+        _INSTRUMENT_GROUPS = [
+            ('Function generator', ('FG+', 'FG_GND')),
+            ('Oscilloscope',       ('CH1', 'CH2', 'SCOPE_GND')),
+        ]
+        for group_label, probe_list in _INSTRUMENT_GROUPS:
+            sub = wx.StaticText(tray_panel, label=group_label)
+            sub.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                                wx.FONTWEIGHT_NORMAL))
+            sub.SetForegroundColour('#555555')
+            tray_sizer.Add(sub, 0, wx.LEFT | wx.TOP, 8)
+
+            grid = wx.FlexGridSizer(rows=len(probe_list), cols=3, vgap=3, hgap=4)
+            grid.AddGrowableCol(2)
+            for name in probe_list:
+                meta = PROBE_META[name]
+                lbl = wx.StaticText(tray_panel, label=meta['label'])
+                lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                    wx.FONTWEIGHT_BOLD))
+                lbl.SetForegroundColour(meta['color'])
+                btn = wx.Button(tray_panel, label='Place', size=(54, -1))
+                ch = wx.Choice(tray_panel, choices=['(unassigned)'])
+                ch.SetSelection(0)
+                self._probe_place_btns[name] = btn
+                self._probe_choices[name] = ch
+                grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(btn, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(ch,  1, wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL)
+                btn.Bind(wx.EVT_BUTTON, lambda e, n=name: self._on_probe_place_btn(n))
+                ch.Bind(wx.EVT_CHOICE,  lambda e, n=name: self._on_probe_choice(n, e))
+            tray_sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        tray_sizer.Add(wx.StaticLine(tray_panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
         # --- Component tray ---
         label = wx.StaticText(tray_panel, label='Components')
         label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -156,12 +199,13 @@ class BreadboardWindow(wx.Frame):
 
         tray_panel.SetSizer(tray_sizer)
 
-        splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-140)
+        splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
         splitter.SetMinimumPaneSize(200)
 
         # Connect tray → canvas placement flow
         self.tray.on_pick = lambda comp_def, ref: self.canvas.begin_place(comp_def, ref)
         self.canvas.on_placed = lambda ref: self.tray.refresh_placed()
+        self.canvas.on_probe_placed = lambda name: self._refresh_probe_buttons()
 
         self.SetStatusBar(wx.StatusBar(self))
         self.GetStatusBar().SetFieldsCount(2)
@@ -463,8 +507,10 @@ class BreadboardWindow(wx.Frame):
         elif self.netlist:
             self.tray.refresh_placed()
 
-        # Always resync terminal dropdowns from the restored board state
+        # Always resync terminal and probe dropdowns from the restored board state
         self._refresh_terminal_choices()
+        self._refresh_probe_choices()
+        self._refresh_probe_buttons()
 
         self.canvas.Refresh()
         self.SetStatusText(f'Session loaded from {path}', 0)
@@ -502,12 +548,15 @@ class BreadboardWindow(wx.Frame):
             wx.YES_NO | wx.ICON_QUESTION
         ) == wx.YES:
             self.board = Breadboard()
-            # Re-apply GND assignment
+            # Re-apply GND assignments
             if self.netlist and self.netlist.net_by_name('0'):
                 self.board.assign_terminal('GND', '0')
+                self.board.assign_probe_net('FG_GND', '0')
+                self.board.assign_probe_net('SCOPE_GND', '0')
             self.canvas.board = self.board
             self.tray.board = self.board
             self.tray.refresh_placed()
+            self._refresh_probe_buttons()
             self.canvas.clear_highlights()
             self.canvas.Refresh()
             self.SetStatusText('Board cleared.', 0)
@@ -546,6 +595,49 @@ class BreadboardWindow(wx.Frame):
             else:
                 ch.SetSelection(0)
 
+    # ------------------------------------------------------------------
+    # Instrument probe handlers
+    # ------------------------------------------------------------------
+
+    def _on_probe_choice(self, probe_name: str, _evt) -> None:
+        ch = self._probe_choices[probe_name]
+        sel = ch.GetSelection()
+        net = ch.GetString(sel) if sel > 0 else ''
+        self.board.assign_probe_net(probe_name, net)
+        self.canvas.Refresh()
+
+    def _on_probe_place_btn(self, probe_name: str) -> None:
+        if self.board.get_probe_hole(probe_name) is not None:
+            # Already placed — remove it
+            self.board.remove_probe(probe_name)
+            self._refresh_probe_buttons()
+            self.canvas.Refresh()
+        else:
+            # Start placement mode
+            self.canvas.begin_probe_place(probe_name)
+            self.SetStatusText(
+                f'Click a hole to place {PROBE_META[probe_name]["label"]} probe. '
+                'Esc to cancel.', 0)
+
+    def _refresh_probe_buttons(self) -> None:
+        for name, btn in self._probe_place_btns.items():
+            placed = self.board.get_probe_hole(name) is not None
+            btn.SetLabel('Remove' if placed else 'Place')
+
+    def _refresh_probe_choices(self) -> None:
+        """Repopulate probe net dropdowns from the loaded netlist."""
+        if self.netlist is None:
+            return
+        net_names = sorted(net.name for net in self.netlist.nets if net.name)
+        choices = ['(unassigned)'] + net_names
+        for name, ch in self._probe_choices.items():
+            ch.SetItems(choices)
+            current = self.board.get_probe_net(name)
+            if current in net_names:
+                ch.SetSelection(net_names.index(current) + 1)
+            else:
+                ch.SetSelection(0)
+
     def _load_netlist(self, path: str) -> None:
         try:
             self.netlist = parse_netlist(path)
@@ -558,11 +650,14 @@ class BreadboardWindow(wx.Frame):
         self.canvas.netlist = self.netlist
         self.tray.load_netlist(self.netlist)
 
-        # Auto-assign GND terminal to the simulation ground net ("0")
+        # Auto-assign GND terminal and instrument grounds to the simulation ground net ("0")
         if self.netlist.net_by_name('0'):
             self.board.assign_terminal('GND', '0')
+            self.board.assign_probe_net('FG_GND', '0')
+            self.board.assign_probe_net('SCOPE_GND', '0')
 
         self._refresh_terminal_choices()
+        self._refresh_probe_choices()
 
         n = len(self.netlist.components)
         self.SetStatusText(

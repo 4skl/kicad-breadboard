@@ -29,6 +29,16 @@ RAIL_LEN = 50
 RAIL_SPLIT = 25     # rails are split into two electrically separate halves here
 TERMINAL_NAMES = ('GND', 'V1', 'V2')
 
+# Instrument probe points — placed by the student on arbitrary holes
+PROBE_NAMES = ('FG+', 'FG_GND', 'CH1', 'CH2', 'SCOPE_GND')
+PROBE_META = {
+    'FG+':       {'label': 'FG+',  'color': '#c87000'},
+    'FG_GND':    {'label': 'FG⏚',  'color': '#444444'},
+    'CH1':       {'label': 'CH1',  'color': '#b09800'},
+    'CH2':       {'label': 'CH2',  'color': '#1050b0'},
+    'SCOPE_GND': {'label': 'SC⏚',  'color': '#444444'},
+}
+
 
 @dataclass(frozen=True)
 class TieHole:
@@ -136,6 +146,9 @@ class Breadboard:
         self._wires: List[Wire] = []
         self._static: List[Tuple[Hole, Hole]] = list(self._build_static())
         self._terminal_nets: Dict[str, str] = {}            # terminal_name → net_name
+        self._probe_holes:   Dict[str, Optional[Hole]]       = {n: None for n in PROBE_NAMES}
+        self._probe_nets:    Dict[str, str]                  = {n: ''   for n in PROBE_NAMES}
+        self._probe_offsets: Dict[str, Tuple[int, int]]      = {n: (0, 0) for n in PROBE_NAMES}
 
     # ------------------------------------------------------------------
     # Static breadboard topology
@@ -231,6 +244,46 @@ class Breadboard:
     @property
     def terminal_nets(self) -> Dict[str, str]:
         return dict(self._terminal_nets)
+
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Instrument probes
+    # ------------------------------------------------------------------
+
+    def place_probe(self, name: str, hole: Hole) -> None:
+        if name in PROBE_NAMES:
+            self._probe_holes[name] = hole
+
+    def remove_probe(self, name: str) -> None:
+        if name in self._probe_holes:
+            self._probe_holes[name] = None
+            self._probe_offsets[name] = (0, 0)
+
+    def get_probe_hole(self, name: str) -> Optional[Hole]:
+        return self._probe_holes.get(name)
+
+    def assign_probe_net(self, name: str, net: str) -> None:
+        if name in PROBE_NAMES:
+            self._probe_nets[name] = net
+
+    def get_probe_net(self, name: str) -> str:
+        return self._probe_nets.get(name, '')
+
+    def set_probe_label_offset(self, name: str, dx: int, dy: int) -> None:
+        if name in PROBE_NAMES:
+            self._probe_offsets[name] = (dx, dy)
+
+    def get_probe_label_offset(self, name: str) -> Tuple[int, int]:
+        return self._probe_offsets.get(name, (0, 0))
+
+    @property
+    def probe_holes(self) -> Dict[str, Optional[Hole]]:
+        return dict(self._probe_holes)
+
+    @property
+    def probe_nets(self) -> Dict[str, str]:
+        return dict(self._probe_nets)
 
     # ------------------------------------------------------------------
 

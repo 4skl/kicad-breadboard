@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
-from .breadboard import Breadboard, Hole, TieHole, Terminal, TERMINAL_NAMES, UnionFind
+from .breadboard import Breadboard, Hole, TieHole, Terminal, TERMINAL_NAMES, PROBE_NAMES, UnionFind
 from .components import guess_type_id, ALL_DEFS
 from .netlist import Net, Netlist
 
@@ -172,47 +172,27 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
             comp_pin_counts[net.name] = len(holes)
             net_holes[net.name] = holes
 
-    # Add terminal holes — count them so power-supply nets are validated
+    # Add terminal and probe holes — count them so power-supply nets are validated
     terminal_pin_counts: Dict[str, int] = {}
     for term_name in TERMINAL_NAMES:
         net_name = board.get_terminal_net(term_name)
         if net_name:
             net_holes.setdefault(net_name, []).append(Terminal(term_name))
             terminal_pin_counts[net_name] = terminal_pin_counts.get(net_name, 0) + 1
-
-    # Collect all terminal holes for isolation check below
-    all_terminal_holes = [Terminal(n) for n in TERMINAL_NAMES
-                          if board.get_terminal_net(n)]
+    for probe_name in PROBE_NAMES:
+        hole    = board.get_probe_hole(probe_name)
+        net_name = board.get_probe_net(probe_name)
+        if hole is not None and net_name:
+            net_holes.setdefault(net_name, []).append(hole)
+            terminal_pin_counts[net_name] = terminal_pin_counts.get(net_name, 0) + 1
 
     # Step 3 — open nets
+    # Require at least 2 total endpoints (placed component pins + assigned terminals);
+    # single-endpoint label-only nets are intentionally exempt.
     for net_name, holes in net_holes.items():
-        n_comp = comp_pin_counts.get(net_name, 0)
-        n_term = terminal_pin_counts.get(net_name, 0)
-        total  = n_comp + n_term
-
+        total = comp_pin_counts.get(net_name, 0) + terminal_pin_counts.get(net_name, 0)
         if total < 2:
-            # Single placed pin, no terminal assigned for this net.
-            # Flag it if the pin is also not connected to any terminal at all
-            # (completely floating power/supply pin).
-            if n_comp == 1 and n_term == 0 and all_terminal_holes:
-                comp_holes = [h for h in holes if not isinstance(h, Terminal)]
-                if comp_holes:
-                    pin_hole = comp_holes[0]
-                    connected_to_any_terminal = any(
-                        uf.connected(pin_hole, th) for th in all_terminal_holes
-                    )
-                    if not connected_to_any_terminal:
-                        result.issues.append(ValidationIssue(
-                            kind=IssueKind.OPEN_NET,
-                            net_name=net_name,
-                            description=(
-                                f"Net '{net_name}' has a placed pin but is not "
-                                f"connected to any binding post."
-                            ),
-                            holes=comp_holes,
-                        ))
             continue
-
         roots = {uf.find(h) for h in holes}
         if len(roots) > 1:
             result.issues.append(ValidationIssue(

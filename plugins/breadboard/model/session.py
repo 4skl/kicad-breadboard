@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 from .breadboard import (
     Breadboard, PlacedComponent, Wire,
     TieHole, RailHole, Terminal, Hole,
-    TERMINAL_NAMES,
+    TERMINAL_NAMES, PROBE_NAMES,
 )
 
 SESSION_VERSION = 1
@@ -92,6 +92,20 @@ def save_session(board: Breadboard, netlist_path: Optional[str], path: str) -> N
             'color': wire.color,
         })
 
+    probes = {}
+    for name in PROBE_NAMES:
+        hole   = board.get_probe_hole(name)
+        net    = board.get_probe_net(name)
+        offset = board.get_probe_label_offset(name)
+        if hole is not None or net:
+            probes[name] = {
+                'hole':   _hole_to_json(hole) if hole is not None else None,
+                'net':    net,
+                'offset': list(offset),
+            }
+    if probes:
+        doc['probes'] = probes
+
     Path(path).write_text(json.dumps(doc, indent=2), encoding='utf-8')
 
 
@@ -127,6 +141,16 @@ def load_session(path: str) -> Dict[str, Any]:
 
     for w in raw.get('wires', []):
         board.add_wire(_hole_from_json(w['h1']), _hole_from_json(w['h2']), w.get('color', '#e8c020'))
+
+    for name, info in raw.get('probes', {}).items():
+        if name in PROBE_NAMES:
+            if info.get('hole'):
+                board.place_probe(name, _hole_from_json(info['hole']))
+            if info.get('net'):
+                board.assign_probe_net(name, info['net'])
+            off = info.get('offset')
+            if off and len(off) == 2:
+                board.set_probe_label_offset(name, int(off[0]), int(off[1]))
 
     return {
         'netlist_path': raw.get('netlist', '') or None,

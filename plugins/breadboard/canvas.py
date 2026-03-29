@@ -46,6 +46,7 @@ from .model import (
     TieHole, RailHole, Terminal, Hole,
     COLUMNS, TOP_ROWS, BOT_ROWS, ALL_ROWS,
     RAIL_NAMES, RAIL_LEN, RAIL_SPLIT, TERMINAL_NAMES,
+    PROBE_NAMES, PROBE_META,
     ComponentDef, ALL_DEFS,
     Netlist, guess_type_id,
     validate, IssueKind,
@@ -84,8 +85,9 @@ WIRE_COLORS = [
 ]
 
 MODE_SELECT = 'select'
-MODE_WIRE = 'wire'
+MODE_WIRE   = 'wire'
 MODE_DELETE = 'delete'
+MODE_PROBE  = 'probe'
 
 
 # ---------------------------------------------------------------------------
@@ -333,8 +335,17 @@ class BreadboardCanvas(wx.Panel):
 
         self.show_net_labels: bool = True   # toggled by toolbar checkbox
 
-        # Called with ref after a component is successfully placed
+        self._placing_probe: Optional[str] = None   # probe name pending placement
+        self._probe_drag: bool = False              # True = drag-to-place (release to commit)
+        self._probe_hover: Optional[Hole] = None    # hovered hole in probe mode
+        self._hover_probe_name: Optional[str] = None  # hovered placed probe (delete mode)
+        self._dragging_probe_label: Optional[str] = None   # probe whose flag is being dragged
+        self._drag_label_start_mouse: Tuple[int, int] = (0, 0)
+        self._drag_label_start_offset: Tuple[int, int] = (0, 0)
+
+        # Callbacks
         self.on_placed: Optional[callable] = None
+        self.on_probe_placed: Optional[callable] = None  # called with probe name
 
         # Zoom / pan state
         self._zoom: float = 1.0
@@ -370,7 +381,29 @@ class BreadboardCanvas(wx.Panel):
         self._place_pin1 = None
         self._selected_wire = None
         self._selected_ref = None
+        if mode != MODE_PROBE:
+            self._placing_probe = None
+            self._probe_drag = False
+            self._probe_hover = None
+        if mode != MODE_DELETE:
+            self._hover_probe_name = None
         self.Refresh()
+
+    def begin_probe_place(self, probe_name: str) -> None:
+        """Start probe placement mode — next hole click places the probe."""
+        self.set_mode(MODE_PROBE)
+        self._placing_probe = probe_name
+        self._probe_drag = False
+        self.SetFocus()
+
+    def begin_probe_drag(self, probe_name: str) -> None:
+        """Start probe placement via drag — release over a hole to place."""
+        self.board.remove_probe(probe_name)   # allow re-placing an already placed probe
+        self.set_mode(MODE_PROBE)
+        self._placing_probe = probe_name
+        self._probe_drag = True
+        self.CaptureMouse()
+        self.SetFocus()
 
     def begin_place(self, comp_def: ComponentDef, ref: str) -> None:
         """Called from the tray when a component card is clicked."""
@@ -569,11 +602,33 @@ class BreadboardCanvas(wx.Panel):
                     self.Refresh()
             return
 
+        if self.mode == MODE_PROBE and self._placing_probe:
+            hole = self.layout.nearest_hole(px, py)
+            if hole is not None and not isinstance(hole, Terminal):
+                self.board.place_probe(self._placing_probe, hole)
+                name = self._placing_probe
+                self._placing_probe = None
+                self.set_mode(MODE_SELECT)
+                if self.on_probe_placed:
+                    self.on_probe_placed(name)
+                self.Refresh()
+            return
+
         if self.mode == MODE_DELETE:
             self._try_delete(px, py)
             return
 
         if self.mode == MODE_SELECT:
+            label_name = self._probe_label_at(px, py)
+            if label_name:
+                self._dragging_probe_label = label_name
+                self._drag_label_start_mouse = (px, py)
+                self._drag_label_start_offset = self.board.get_probe_label_offset(label_name)
+                self._selected_ref = None
+                self._selected_wire = None
+                self.CaptureMouse()
+                self.Refresh()
+                return
             ref = self._comp_at(px, py)
             if ref:
                 self._selected_ref = ref
@@ -598,6 +653,27 @@ class BreadboardCanvas(wx.Panel):
                 self.Refresh()
 
     def _on_left_up(self, evt: wx.MouseEvent) -> None:
+        if self.mode == MODE_PROBE and self._probe_drag and self._placing_probe:
+            if self.HasCapture():
+                self.ReleaseMouse()
+            px, py = self._board_pos(*evt.GetPosition())
+            hole = self.layout.nearest_hole(px, py)
+            if hole is not None and not isinstance(hole, Terminal):
+                self.board.place_probe(self._placing_probe, hole)
+                if self.on_probe_placed:
+                    self.on_probe_placed(self._placing_probe)
+            self._placing_probe = None
+            self._probe_drag = False
+            self._probe_hover = None
+            self.set_mode(MODE_SELECT)
+            self.Refresh()
+            return
+        if self._dragging_probe_label:
+            if self.HasCapture():
+                self.ReleaseMouse()
+            self._dragging_probe_label = None
+            self.Refresh()
+            return
         if self.HasCapture():
             self.ReleaseMouse()
         if self._drag_comp:
@@ -665,6 +741,15 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
             return
         px, py = self._board_pos(*evt.GetPosition())
+
+        if self._dragging_probe_label:
+            mx0, my0 = self._drag_label_start_mouse
+            ox, oy   = self._drag_label_start_offset
+            self.board.set_probe_label_offset(
+                self._dragging_probe_label, ox + (px - mx0), oy + (py - my0))
+            self.Refresh()
+            return
+
         self._ghost_pos = (px, py)
         if self._ghost:
             anchor = self.layout.nearest_hole(px, py)
@@ -673,12 +758,19 @@ class BreadboardCanvas(wx.Panel):
                 self._ghost.anchor = anchor  # accept tie strip or power rail
             else:
                 self._ghost.anchor = anchor if isinstance(anchor, TieHole) else None
+        if self.mode == MODE_PROBE:
+            h = self.layout.nearest_hole(px, py)
+            self._probe_hover = h if h is not None and not isinstance(h, Terminal) else None
         if self.mode == MODE_DELETE:
             self._hover_ref = self._comp_at(px, py)
             self._hover_wire = self._wire_at(px, py) if not self._hover_ref else None
+            self._hover_probe_name = None
+            if not self._hover_ref and not self._hover_wire:
+                self._hover_probe_name = self._probe_label_at(px, py)
         else:
             self._hover_ref = None
             self._hover_wire = None
+            self._hover_probe_name = None
         self.Refresh()
 
     def _on_right_down(self, evt: wx.MouseEvent) -> None:
@@ -770,12 +862,36 @@ class BreadboardCanvas(wx.Panel):
                 best_wire = w
         return best_wire
 
+    def _probe_label_at(self, px: int, py: int) -> Optional[str]:
+        """Return the name of the placed probe whose flag rect contains (px, py)."""
+        flag_w, flag_h = 24, 14
+        for name in PROBE_NAMES:
+            hole = self.board.get_probe_hole(name)
+            if hole is None:
+                continue
+            xy = self.layout.hole_xy(hole)
+            if xy is None:
+                continue
+            fcx, fcy = self._probe_flag_pos(name, int(xy[0]), int(xy[1]))
+            if (fcx - flag_w // 2 <= px <= fcx + flag_w // 2 and
+                    fcy <= py <= fcy + flag_h):
+                return name
+        return None
+
     def _try_delete(self, px: int, py: int) -> None:
         ref = self._comp_at(px, py)
         if ref:
             self.board.remove(ref)
             if self._selected_ref == ref:
                 self._selected_ref = None
+            self.Refresh()
+            return
+        # Check for probe markers
+        name = self._probe_label_at(px, py)
+        if name:
+            self.board.remove_probe(name)
+            if self.on_probe_placed:
+                self.on_probe_placed(name)
             self.Refresh()
             return
         w = self._wire_at(px, py)
@@ -830,6 +946,7 @@ class BreadboardCanvas(wx.Panel):
         self._draw_wires(dc)
         self._draw_components(dc)
         self._draw_terminals(dc)
+        self._draw_probes(dc)
 
         if self._ghost:
             self._draw_ghost(dc)
@@ -1241,6 +1358,66 @@ class BreadboardCanvas(wx.Panel):
                 gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#cccccc'))))
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#cccccc')).Width(1)))
                 gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
+
+    def _draw_probe_flag(self, dc: wx.DC,
+                          hx: int, hy: int,
+                          fcx: int, fcy_top: int,
+                          label: str, color: str) -> None:
+        """Draw a coloured flag at (fcx, fcy_top) with a leaderline back to (hx, hy)."""
+        flag_w, flag_h = 24, 14
+        fx = fcx - flag_w // 2
+
+        c = wx.Colour(color)
+        # Leaderline from hole edge to flag bottom-centre
+        dc.SetPen(wx.Pen(c, 2))
+        dc.DrawLine(hx, hy - HOLE_R, fcx, fcy_top + flag_h)
+
+        dc.SetBrush(wx.Brush(c))
+        dc.SetPen(wx.Pen('#222222', 1))
+        dc.DrawRoundedRectangle(fx, fcy_top, flag_w, flag_h, 3)
+
+        dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                           wx.FONTWEIGHT_BOLD))
+        dc.SetTextForeground('#ffffff')
+        tw, th = dc.GetTextExtent(label)
+        dc.DrawText(label, fcx - tw // 2, fcy_top + (flag_h - th) // 2)
+
+    def _probe_flag_pos(self, name: str, hx: int, hy: int) -> Tuple[int, int]:
+        """Return (flag_center_x, flag_top_y) for the given probe, applying its offset."""
+        flag_h = 14
+        dx, dy = self.board.get_probe_label_offset(name)
+        return hx + dx, hy - flag_h - 12 + dy
+
+    def _draw_probes(self, dc: wx.DC) -> None:
+        for name in PROBE_NAMES:
+            hole = self.board.get_probe_hole(name)
+            if hole is None:
+                continue
+            xy = self.layout.hole_xy(hole)
+            if xy is None:
+                continue
+            hx, hy = int(xy[0]), int(xy[1])
+            fcx, fcy = self._probe_flag_pos(name, hx, hy)
+            meta = PROBE_META[name]
+            color = '#cc2222' if name == self._hover_probe_name else meta['color']
+            self._draw_probe_flag(dc, hx, hy, fcx, fcy, meta['label'], color)
+
+        # Placement preview
+        if self.mode == MODE_PROBE and self._placing_probe and self._probe_hover:
+            xy = self.layout.hole_xy(self._probe_hover)
+            if xy:
+                meta = PROBE_META[self._placing_probe]
+                # Draw a faint preview
+                c = wx.Colour(meta['color'])
+                dc.SetPen(wx.Pen(wx.Colour(c.Red(), c.Green(), c.Blue(), 140), 2,
+                                 wx.PENSTYLE_DOT))
+                hx, hy = int(xy[0]), int(xy[1])
+                flag_h = 14
+                fy = hy - flag_h - 12
+                dc.DrawLine(hx, hy - HOLE_R, hx, fy + flag_h)
+                dc.SetBrush(wx.Brush(wx.Colour(c.Red(), c.Green(), c.Blue(), 140)))
+                dc.SetPen(wx.Pen('#444444', 1, wx.PENSTYLE_DOT))
+                dc.DrawRoundedRectangle(hx - 12, fy, 24, flag_h, 3)
 
     def _draw_terminals(self, dc: wx.DC) -> None:
         lay = self.layout
