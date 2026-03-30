@@ -41,7 +41,21 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 git clone https://github.com/kerstensrobin/kicad-breadboard.git
 ```
 
-### Step 2 — Link the plugin into KiCad's scripting folder
+### Step 2 — Run the install script
+
+An install script is provided that handles the rest automatically.
+
+**Linux / macOS:**
+```bash
+cd kicad-breadboard
+bash install.sh
+```
+
+**Windows:** double-click `install.bat`.
+
+The script detects your KiCad version, creates the plugin link, and prints what to do next. If it cannot find KiCad it will tell you what to do manually.
+
+### Manual installation — Link the plugin into KiCad's scripting folder
 
 The scripting plugin directory depends on your KiCad version and operating system.
 Replace `<version>` with `9.0` or `10.0` to match your installation.
