@@ -1,4 +1,4 @@
-# KiCad Breadboard Builder <img src="images/icon.png" height="45"> 
+# KiCad Breadboard Builder <img src="images/icon.png" height="45">
 
 A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the University of Antwerp. Students draw a schematic in Eeschema, then use this plugin to wire up the same circuit on a virtual 830-point breadboard — placing components, drawing jumper wires, and validating their work against the schematic.
 
@@ -43,8 +43,6 @@ git clone https://github.com/kerstensrobin/kicad-breadboard.git
 
 ### Step 2 — Run the install script
 
-An install script is provided that handles the rest automatically.
-
 **Linux / macOS:**
 ```bash
 cd kicad-breadboard
@@ -53,40 +51,7 @@ bash install.sh
 
 **Windows:** double-click `install.bat`.
 
-The script detects your KiCad version, creates the plugin link, and prints what to do next. If it cannot find KiCad it will tell you what to do manually.
-
-### Manual installation — Link the plugin into KiCad's scripting folder
-
-The scripting plugin directory depends on your KiCad version and operating system.
-Replace `<version>` with `9.0` or `10.0` to match your installation.
-
-| Platform | KiCad 9 | KiCad 10 |
-|---|---|---|
-| Linux | `~/.local/share/kicad/9.0/scripting/plugins/` | `~/.config/kicad/10.0/scripting/plugins/` |
-| macOS | `~/Library/Preferences/kicad/9.0/scripting/plugins/` | `~/Library/Preferences/kicad/10.0/scripting/plugins/` |
-| Windows | `%APPDATA%\kicad\9.0\scripting\plugins\` | `%APPDATA%\kicad\10.0\scripting\plugins\` |
-
-> If you are unsure of the exact path, open KiCad and go to **Preferences → Configure Paths…** — the scripting plugin directory is listed there.
-
-**Linux / macOS (adjust path for your version):**
-```bash
-# KiCad 9
-ln -s /path/to/kicad-breadboard/plugins/breadboard \
-      ~/.local/share/kicad/9.0/scripting/plugins/breadboard
-
-# KiCad 10
-ln -s /path/to/kicad-breadboard/plugins/breadboard \
-      ~/.config/kicad/10.0/scripting/plugins/breadboard
-```
-
-**Windows** (run PowerShell as Administrator, adjust version number):
-```powershell
-New-Item -ItemType Junction `
-  -Path  "$env:APPDATA\kicad\10.0\scripting\plugins\breadboard" `
-  -Target "C:\path\to\kicad-breadboard\plugins\breadboard"
-```
-
-Or simply **copy** the `plugins/breadboard/` folder into the scripting plugins directory if you do not want a symlink.
+The script detects your KiCad version, creates the plugin link, and tells you what to do next. If something goes wrong, see [Manual installation](#manual-installation) below.
 
 ### Step 3 — Refresh plugins in KiCad
 
@@ -94,27 +59,13 @@ Or simply **copy** the `plugins/breadboard/` folder into the scripting plugins d
 2. In the menu: **Tools → External Plugins → Refresh Plugins**.
 3. A breadboard icon appears in the right-hand toolbar (or under **Tools → External Plugins → Breadboard Builder**).
 
-> The plugin registers as an Action Plugin and only appears inside the PCB Editor, not the schematic editor — this is a KiCad limitation for Python plugins.
+> The plugin only appears inside the PCB Editor, not the schematic editor — this is a KiCad limitation for Python plugins.
 
 ### Step 4 — Open your project
 
 Click the toolbar button (or menu entry). The plugin will automatically find the netlist (`.net`) in the same folder as the open PCB file.
 
-If you have not exported a netlist yet, use **"Update from schematic"** in the toolbar — this calls `kicad-cli` to export one automatically. `kicad-cli` ships with KiCad 9 and 10 and is on the PATH when KiCad is installed normally.
-
----
-
-## Standalone mode (development / no KiCad needed)
-
-> **Note:** Standalone mode is intended for UI development only.
-> The **"Update from schematic"** feature requires `kicad-cli` (part of a KiCad 9 installation) and will not work in standalone mode.
-> For the full workflow — drawing a schematic, exporting a netlist, and validating a breadboard build — use the plugin inside KiCad as described above.
-
-```bash
-pip install wxPython
-cd /path/to/kicad-breadboard
-python -m plugins.breadboard.standalone path/to/circuit.net
-```
+If you have not exported a netlist yet, use **"Update from schematic"** in the toolbar — this calls `kicad-cli` to export one automatically.
 
 ---
 
@@ -198,3 +149,51 @@ At the top, a new breadboard icon appeared (in the toolbar, next to the CLI inpu
 That's it! Have fun!
 
 Robin
+
+---
+
+## Manual installation
+
+If the install script doesn't work, you can link or copy the plugin folder manually.
+
+The scripting plugin directory depends on your KiCad version and OS:
+
+| Platform | KiCad 9 | KiCad 10 |
+|---|---|---|
+| Linux | `~/.local/share/kicad/9.0/scripting/plugins/` | `~/.config/kicad/10.0/scripting/plugins/` |
+| macOS | `~/Library/Preferences/kicad/9.0/scripting/plugins/` | `~/Library/Preferences/kicad/10.0/scripting/plugins/` |
+| Windows | `%APPDATA%\kicad\9.0\scripting\plugins\` | `%APPDATA%\kicad\10.0\scripting\plugins\` |
+
+> If you are unsure of the exact path, open KiCad and go to **Preferences → Configure Paths…**.
+
+**Linux / macOS:**
+```bash
+# KiCad 9
+ln -s /path/to/kicad-breadboard/plugins/breadboard \
+      ~/.local/share/kicad/9.0/scripting/plugins/breadboard
+
+# KiCad 10
+ln -s /path/to/kicad-breadboard/plugins/breadboard \
+      ~/.config/kicad/10.0/scripting/plugins/breadboard
+```
+
+**Windows** (PowerShell, adjust version number):
+```powershell
+New-Item -ItemType Junction `
+  -Path  "$env:APPDATA\kicad\10.0\scripting\plugins\breadboard" `
+  -Target "C:\path\to\kicad-breadboard\plugins\breadboard"
+```
+
+Or simply **copy** the `plugins/breadboard/` folder into the scripting plugins directory.
+
+---
+
+## Standalone mode (development / no KiCad needed)
+
+> Standalone mode is intended for UI development only. For the full workflow use the plugin inside KiCad as described above.
+
+```bash
+pip install wxPython
+cd /path/to/kicad-breadboard
+python -m plugins.breadboard.standalone path/to/circuit.net
+```
