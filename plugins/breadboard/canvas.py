@@ -549,8 +549,10 @@ class BreadboardCanvas(wx.Panel):
             self._selected_wire = None
             self.Refresh()
         elif key in (ord('R'), ord('r')):
-            # Rotate DIP / 3-pin 180° during placement, or rotate selected component
-            if self._ghost is not None and self._ghost.comp_def.pin_count != 2:
+            # Rotate 180° during placement, or rotate selected component.
+            # 2-pin: only before pin1 is locked (flips the step-1 preview direction).
+            if self._ghost is not None and (
+                    self._ghost.comp_def.pin_count != 2 or self._place_pin1 is None):
                 self._ghost.flipped = not self._ghost.flipped
                 self.Refresh()
             elif self._selected_ref is not None:
@@ -1245,8 +1247,8 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
                 dc.DrawRectangle(body_rect)
 
-                # Golden trim-screw: circle inside the right end of the body
-                screw_cx = body_rect.GetRight() - 6
+                # Golden trim-screw: right end normally, left end when flipped
+                screw_cx = body_rect.GetLeft() + 6 if placed.flipped else body_rect.GetRight() - 6
                 screw_cy = y_min
                 screw_r  = 5
                 dc.SetBrush(wx.Brush('#d4a520'))
@@ -1256,6 +1258,19 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetPen(wx.Pen('#553300', 1))
                 dc.DrawLine(screw_cx - 3, screw_cy, screw_cx + 3, screw_cy)
                 dc.DrawLine(screw_cx, screw_cy - 3, screw_cx, screw_cy + 3)
+
+                # Pin labels (1, W, 3) below the body
+                dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.SetTextForeground('#cccccc')
+                for pin_num in sorted(placed.pin_holes):
+                    hole = placed.pin_holes[pin_num]
+                    pin_name = comp_def.pin_names.get(pin_num, str(pin_num))
+                    xy = lay.hole_xy(hole)
+                    if xy is None:
+                        continue
+                    tw, th = dc.GetTextExtent(pin_name)
+                    dc.DrawText(pin_name, xy[0] - tw // 2, body_rect.GetBottom() + 2)
 
         # Reference label
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -1555,8 +1570,8 @@ class BreadboardCanvas(wx.Panel):
                 p1_xy = lay.hole_xy(ghost.anchor)
                 if p1_xy is None:
                     return
-                # Show preview with pin 1 at the hovered hole, body extending right
-                px_off = PITCH * 4
+                # Show preview with pin 1 at the hovered hole; R flips direction
+                px_off = PITCH * 4 * (-1 if ghost.flipped else 1)
                 self._draw_ghost_2pin(dc, comp_def,
                                       p1_xy,
                                       (p1_xy[0] + px_off, p1_xy[1]))
@@ -1641,17 +1656,20 @@ class BreadboardCanvas(wx.Panel):
             dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
             dc.DrawRoundedRectangle(body_rect, 4)
 
-            if comp_def.is_dip:
-                p1_hole = pin_holes.get(1)
-                p1_xy = lay.hole_xy(p1_hole) if p1_hole else None
-                if p1_xy:
-                    dc.SetBrush(wx.Brush('#ffffff88'))
-                    dc.SetPen(wx.Pen('#aaaaaa88', 1))
+            # Pin-1 orientation marker (DIP: dot on body edge; POT: dot on top edge)
+            p1_hole = pin_holes.get(1)
+            p1_xy = lay.hole_xy(p1_hole) if p1_hole else None
+            if p1_xy:
+                dc.SetBrush(wx.Brush('#ffffff88'))
+                dc.SetPen(wx.Pen('#aaaaaa88', 1))
+                if comp_def.is_dip:
                     if isinstance(p1_hole, TieHole) and p1_hole.row in TOP_ROWS:
                         dot_y = body_rect.GetY() + 6
                     else:
                         dot_y = body_rect.GetBottom() - 6
-                    dc.DrawCircle(p1_xy[0], dot_y, 3)
+                else:
+                    dot_y = body_rect.GetTop() + 3
+                dc.DrawCircle(p1_xy[0], dot_y, 3)
 
     def _draw_ghost_2pin(self, dc: wx.DC, comp_def: ComponentDef,
                          p1_xy: Tuple[int, int], p2_xy: Tuple[int, int]) -> None:

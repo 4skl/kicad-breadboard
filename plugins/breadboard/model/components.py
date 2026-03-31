@@ -39,10 +39,13 @@ class PinOffset:
     cross_gap: bool = False
     row_delta: int = 0
 
-    def resolve(self, anchor: TieHole, flipped: bool = False) -> TieHole:
+    def resolve(self, anchor: TieHole, flipped: bool = False,
+                cross_flip: bool = True) -> TieHole:
         col = anchor.col + (-self.col_delta if flipped else self.col_delta)
-        # 180° rotation also swaps top↔bottom rows (cross_gap inverted)
-        cross = (not self.cross_gap) if flipped else self.cross_gap
+        # cross_gap inversion on flip only applies to DIP ICs (top↔bottom side swap).
+        # Single-row components (POT, TO-92, axial) pass cross_flip=False so their
+        # pins stay in the anchor row instead of jumping to row 'f'.
+        cross = (not self.cross_gap) if (flipped and cross_flip) else self.cross_gap
         if cross:
             row = 'f'   # DIP bottom side always in row f (closest to gap)
         else:
@@ -77,7 +80,8 @@ class ComponentDef:
         """
         if self.is_dip:
             anchor = TieHole(anchor.col, 'e')
-        return {pin: offset.resolve(anchor, flipped) for pin, offset in self.pin_offsets.items()}
+        return {pin: offset.resolve(anchor, flipped, cross_flip=self.is_dip)
+                for pin, offset in self.pin_offsets.items()}
 
     def footprint_cols(self) -> int:
         """Number of breadboard columns the component occupies."""
@@ -176,7 +180,7 @@ POTENTIOMETER = ComponentDef(
     display_name='Potentiometer',
     ref_prefix='RV',
     pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
-    pin_names={1: '1', 2: '2', 3: '3'},
+    pin_names={1: '1', 2: 'W', 3: '3'},
     color='#2255bb',
 )
 

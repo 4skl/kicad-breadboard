@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 import wx
+import wx.lib.stattext
 
 from .canvas import BreadboardCanvas, MODE_SELECT, MODE_WIRE, MODE_DELETE
 from .tray import ComponentTray
@@ -203,13 +204,13 @@ class BreadboardWindow(wx.Frame):
         r = hk_head('View', right_grid, r)
         r = hk_row('Scroll', 'Zoom', right_grid, r)
         r = hk_row('Sh+Scroll', 'Pan V', right_grid, r)
-        r = hk_row('Ct+Scroll', 'Pan H', right_grid, r)
+        r = hk_row('Ctrl+Scroll', 'Pan H', right_grid, r)
         r = hk_row('Mid drag', 'Pan', right_grid, r)
         r = hk_row('Ctrl+Home', 'Fit', right_grid, r)
         r = hk_row('+/\u2212', 'Zoom', right_grid, r)
 
-        info_lbl = wx.StaticText(tray_panel,
-                                 label='Release: Zwieback\nMade with \u2665 by Robin Kerstens\nUniversity of Antwerp, Belgium.')
+        info_lbl = wx.lib.stattext.GenStaticText(tray_panel,
+                                 label='\nRelease: baking...\n\nMade with \u2665 by\nRobin Kerstens\nUniversity of Antwerp,\nBelgium.')
         info_lbl.SetFont(info_font)
         info_lbl.SetForegroundColour('#666666')
 
@@ -218,8 +219,8 @@ class BreadboardWindow(wx.Frame):
         right_sizer.Add(info_lbl, 0, wx.TOP, 6)
 
         hotkey_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        hotkey_sizer.Add(left_grid, 0, wx.RIGHT, 12)
-        hotkey_sizer.Add(right_sizer, 0)
+        hotkey_sizer.Add(left_grid, 0, wx.RIGHT | wx.ALIGN_BOTTOM, 12)
+        hotkey_sizer.Add(right_sizer, 0, wx.ALIGN_BOTTOM)
 
         tray_sizer.Add(hotkey_sizer, 0, wx.ALL, 6)
 
