@@ -353,6 +353,7 @@ class BreadboardCanvas(wx.Panel):
         self._pan_x: float = 0.0
         self._pan_y: float = 0.0
         self._pan_initialized: bool = False
+        self._user_interacted: bool = False
         self._mid_drag: bool = False
         self._mid_drag_start: Tuple[int, int] = (0, 0)
         self._pan_at_drag_start: Tuple[float, float] = (0.0, 0.0)
@@ -369,7 +370,7 @@ class BreadboardCanvas(wx.Panel):
         self.Bind(wx.EVT_MOUSEWHEEL, self._on_mousewheel)
         self.Bind(wx.EVT_MIDDLE_DOWN, self._on_middle_down)
         self.Bind(wx.EVT_MIDDLE_UP, self._on_middle_up)
-        self.Bind(wx.EVT_SIZE, lambda e: self.Refresh())
+        self.Bind(wx.EVT_SIZE, self._on_size)
 
     # ------------------------------------------------------------------
     # Public API (called from window / tray)
@@ -527,6 +528,11 @@ class BreadboardCanvas(wx.Panel):
         self._zoom = min(cw / bw, ch / bh, 1.0)
         self._pan_x = (cw - bw * self._zoom) / 2
         self._pan_y = (ch - bh * self._zoom) / 2
+        self.Refresh()
+
+    def _on_size(self, _evt) -> None:
+        if not self._user_interacted:
+            self._pan_initialized = False
         self.Refresh()
 
     # ------------------------------------------------------------------
@@ -705,6 +711,7 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
 
     def _on_mousewheel(self, evt: wx.MouseEvent) -> None:
+        self._user_interacted = True
         rotation = evt.GetWheelRotation()
         # KiCad-style controls:
         #   Scroll alone      → zoom (cursor-centred)
@@ -726,6 +733,7 @@ class BreadboardCanvas(wx.Panel):
         self.Refresh()
 
     def _on_middle_down(self, evt: wx.MouseEvent) -> None:
+        self._user_interacted = True
         self._mid_drag = True
         pos = evt.GetPosition()
         self._mid_drag_start = (pos.x, pos.y)
