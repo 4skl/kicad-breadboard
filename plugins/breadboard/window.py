@@ -227,6 +227,7 @@ class BreadboardWindow(wx.Frame):
 
         splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
         splitter.SetMinimumPaneSize(200)
+        splitter.SetSashGravity(1.0)
 
         # Connect tray → canvas placement flow
         self.tray.on_pick = lambda comp_def, ref: self.canvas.begin_place(comp_def, ref)
