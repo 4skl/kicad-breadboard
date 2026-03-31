@@ -374,7 +374,7 @@ class BreadboardWindow(wx.Frame):
             if silent:
                 self.SetStatusText(msg, 0)
             else:
-                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR, self)
             return None
 
         net_path = sch.with_suffix('.net')
@@ -393,14 +393,14 @@ class BreadboardWindow(wx.Frame):
             if silent:
                 self.SetStatusText(msg.replace('\n', ' '), 0)
             else:
-                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR, self)
             return None
         except subprocess.TimeoutExpired:
             msg = 'kicad-cli timed out.'
             if silent:
                 self.SetStatusText(msg, 0)
             else:
-                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR, self)
             return None
 
         if result.returncode != 0:
@@ -408,7 +408,7 @@ class BreadboardWindow(wx.Frame):
             if silent:
                 self.SetStatusText(msg.replace('\n', ' '), 0)
             else:
-                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR)
+                wx.MessageBox(msg, 'Update from schematic', wx.OK | wx.ICON_ERROR, self)
             return None
 
         return net_path
@@ -419,7 +419,7 @@ class BreadboardWindow(wx.Frame):
             wx.MessageBox(
                 'No project loaded yet.\n'
                 'Use "Open netlist" first, or launch the plugin from KiCad.',
-                'Update from schematic', wx.OK | wx.ICON_INFORMATION)
+                'Update from schematic', wx.OK | wx.ICON_INFORMATION, self)
             return
 
         net_path = self._export_netlist(silent=False)
@@ -473,7 +473,7 @@ class BreadboardWindow(wx.Frame):
         bmp = self.canvas.render_to_bitmap()
         if not bmp.SaveFile(path, wx.BITMAP_TYPE_PNG):
             wx.MessageBox(f'Failed to save image to:\n{path}',
-                          'Export image', wx.OK | wx.ICON_ERROR)
+                          'Export image', wx.OK | wx.ICON_ERROR, self)
             return
         self.SetStatusText(f'Image saved to {path}', 0)
 
@@ -497,7 +497,7 @@ class BreadboardWindow(wx.Frame):
             self.SetStatusText(f'Session saved to {path}', 0)
         except Exception as exc:
             wx.MessageBox(f'Failed to save session:\n{exc}', 'Save session',
-                          wx.OK | wx.ICON_ERROR)
+                          wx.OK | wx.ICON_ERROR, self)
 
     def _on_load(self, _evt) -> None:
         default_dir = self._project_path or ''
@@ -515,7 +515,7 @@ class BreadboardWindow(wx.Frame):
             result = load_session(path)
         except Exception as exc:
             wx.MessageBox(f'Failed to load session:\n{exc}', 'Load session',
-                          wx.OK | wx.ICON_ERROR)
+                          wx.OK | wx.ICON_ERROR, self)
             return
 
         # Restore board state
@@ -556,14 +556,14 @@ class BreadboardWindow(wx.Frame):
         if result.ok:
             self.canvas.clear_highlights()
             self.SetStatusText('Circuit OK — all nets match the schematic.', 0)
-            wx.MessageBox('Circuit is correct!', 'Validation', wx.OK | wx.ICON_INFORMATION)
+            wx.MessageBox('Circuit is correct!', 'Validation', wx.OK | wx.ICON_INFORMATION, self)
         else:
             self.canvas.set_validation_result(result)
             lines = [str(i) for i in result.issues]
             summary = f"{len(result.issues)} issue(s) found."
             self.SetStatusText(summary, 0)
             wx.MessageBox('\n'.join(lines), 'Validation issues',
-                          wx.OK | wx.ICON_WARNING)
+                          wx.OK | wx.ICON_WARNING, self)
 
     def _on_clear_warnings(self, _evt) -> None:
         self.canvas.clear_highlights()
@@ -572,7 +572,7 @@ class BreadboardWindow(wx.Frame):
     def _on_clear(self, _evt) -> None:
         if wx.MessageBox(
             'Clear all placed components and wires?', 'Confirm',
-            wx.YES_NO | wx.ICON_QUESTION
+            wx.YES_NO | wx.ICON_QUESTION, self
         ) == wx.YES:
             self.board = Breadboard()
             # Re-apply GND assignments
@@ -684,7 +684,7 @@ class BreadboardWindow(wx.Frame):
             self.netlist = parse_netlist(path)
         except Exception as exc:
             wx.MessageBox(f'Failed to load netlist:\n{exc}',
-                          'Error', wx.OK | wx.ICON_ERROR)
+                          'Error', wx.OK | wx.ICON_ERROR, self)
             return
         self._netlist_path = path
 
