@@ -158,45 +158,70 @@ class BreadboardWindow(wx.Frame):
         tray_sizer.Add(label, 0, wx.ALL, 6)
         tray_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
-        hotkey_label = wx.StaticText(tray_panel, label=(
-            'Hotkeys\n'
-            'W  Wire\n'
-            'D  Delete\n'
-            'R  Rotate / flip component\n'
-            'Esc  Select / cancel\n'
-            'Del  Delete selected\n'
-            'R-click  Rotate component\n'
-            '\n'
-            'File\n'
-            'Ctrl+O  Open netlist\n'
-            'Ctrl+S  Save session\n'
-            'Ctrl+L  Load session\n'
-            '\n'
-            'View\n'
-            'Scroll  Zoom in / out\n'
-            'Shift+Scroll  Pan vertical\n'
-            'Ctrl+Scroll  Pan horizontal\n'
-            'Middle drag  Pan\n'
-            'Ctrl+Home  Fit view\n'
-            '+  /  \u2212  Zoom in / out\n'
-        ))
-        hotkey_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
-                                     wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        hotkey_label.SetForegroundColour('#000000')
-        tray_sizer.Add(hotkey_label, 0, wx.ALL, 6)
+        hk_font = wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                          wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        hk_bold = wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                          wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        info_font = wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                            wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
 
-        version_label = wx.StaticText(tray_panel, label='Release: Zwieback')
-        version_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
-                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        version_label.SetForegroundColour('#444444')
-        tray_sizer.Add(version_label, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.ALIGN_CENTRE_HORIZONTAL, 8)
+        # Left grid: Edit + File
+        left_grid = wx.GridBagSizer(hgap=4, vgap=1)
 
-        credit_label = wx.StaticText(tray_panel,
-                                     label='Made with \u2665 by Robin Kerstens\nwith the support of the\nUniversity of Antwerp, Belgium.')
-        credit_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
-                                     wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
-        credit_label.SetForegroundColour('#444444')
-        tray_sizer.Add(credit_label, 0, wx.ALL | wx.ALIGN_CENTRE_HORIZONTAL, 8)
+        def hk_head(text, grid, row):
+            lbl = wx.StaticText(tray_panel, label=text)
+            lbl.SetFont(hk_bold)
+            grid.Add(lbl, pos=(row, 0), span=(1, 2), flag=wx.TOP, border=4)
+            return row + 1
+
+        def hk_row(key, desc, grid, row):
+            k = wx.StaticText(tray_panel, label=key)
+            k.SetFont(hk_font)
+            d = wx.StaticText(tray_panel, label=desc)
+            d.SetFont(hk_font)
+            d.SetForegroundColour('#444444')
+            grid.Add(k, pos=(row, 0), flag=wx.ALIGN_RIGHT)
+            grid.Add(d, pos=(row, 1))
+            return row + 1
+
+        r = 0
+        r = hk_head('Edit', left_grid, r)
+        r = hk_row('W', 'Wire', left_grid, r)
+        r = hk_row('D', 'Delete', left_grid, r)
+        r = hk_row('R', 'Rotate', left_grid, r)
+        r = hk_row('Esc', 'Select', left_grid, r)
+        r = hk_row('Del', 'Delete sel.', left_grid, r)
+        r = hk_row('R-click', 'Rotate', left_grid, r)
+        r = hk_head('File', left_grid, r)
+        r = hk_row('Ctrl+O', 'Open', left_grid, r)
+        r = hk_row('Ctrl+S', 'Save', left_grid, r)
+        r = hk_row('Ctrl+L', 'Load', left_grid, r)
+
+        # Right sizer: View grid + info text directly below it
+        right_grid = wx.GridBagSizer(hgap=4, vgap=1)
+        r = 0
+        r = hk_head('View', right_grid, r)
+        r = hk_row('Scroll', 'Zoom', right_grid, r)
+        r = hk_row('Sh+Scroll', 'Pan V', right_grid, r)
+        r = hk_row('Ct+Scroll', 'Pan H', right_grid, r)
+        r = hk_row('Mid drag', 'Pan', right_grid, r)
+        r = hk_row('Ctrl+Home', 'Fit', right_grid, r)
+        r = hk_row('+/\u2212', 'Zoom', right_grid, r)
+
+        info_lbl = wx.StaticText(tray_panel,
+                                 label='Release: Zwieback\nMade with \u2665 by Robin Kerstens\nUniversity of Antwerp, Belgium.')
+        info_lbl.SetFont(info_font)
+        info_lbl.SetForegroundColour('#666666')
+
+        right_sizer = wx.BoxSizer(wx.VERTICAL)
+        right_sizer.Add(right_grid, 0)
+        right_sizer.Add(info_lbl, 0, wx.TOP, 6)
+
+        hotkey_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        hotkey_sizer.Add(left_grid, 0, wx.RIGHT, 12)
+        hotkey_sizer.Add(right_sizer, 0)
+
+        tray_sizer.Add(hotkey_sizer, 0, wx.ALL, 6)
 
         tray_panel.SetSizer(tray_sizer)
 
@@ -675,8 +700,14 @@ class BreadboardWindow(wx.Frame):
         self._refresh_probe_choices()
 
         n = len(self.netlist.components)
-        self.SetStatusText(
-            f'Loaded {n} component(s) from {Path(path).name}.  '
-            'Click a component in the tray to place it.  '
-            'Right-click a binding post to assign it to a net.', 0
-        )
+        if n == 0:
+            self.SetStatusText(
+                f'No components found in {Path(path).name} — '
+                'save your schematic in Eeschema first, then use "Update from schematic".', 0
+            )
+        else:
+            self.SetStatusText(
+                f'Loaded {n} component(s) from {Path(path).name}.  '
+                'Click a component in the tray to place it.  '
+                'Right-click a binding post to assign it to a net.', 0
+            )

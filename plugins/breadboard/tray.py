@@ -47,6 +47,7 @@ class ComponentTray(wx.ScrolledWindow):
     def refresh_placed(self) -> None:
         """Re-check which components are placed and redraw all cards."""
         for card in self._cards:
+            card.board = self.board  # keep in sync after any board swap
             card.Refresh()
         self.Refresh()
 
@@ -75,6 +76,7 @@ class ComponentTray(wx.ScrolledWindow):
             card.SetSize((CARD_W, CARD_H))
             y += CARD_H + CARD_PAD
         self.SetVirtualSize(CARD_W + CARD_PAD * 2, y)
+        self.Scroll(0, 0)
 
 
 class _TrayCard(wx.Panel):

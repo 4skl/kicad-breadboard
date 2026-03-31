@@ -177,7 +177,7 @@ POTENTIOMETER = ComponentDef(
     ref_prefix='RV',
     pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
     pin_names={1: '1', 2: '2', 3: '3'},
-    color='#a06830',
+    color='#2255bb',
 )
 
 # ---------------------------------------------------------------------------
@@ -373,6 +373,11 @@ def guess_type_id(ref: str, value: str, symbol: str, lib: str = '') -> Optional[
     for key in ('TL084', 'RC4558', 'TL081', 'BS170'):
         if key in v or key in s:
             return key
+
+    # Potentiometer — must precede transistor checks (Simulation_SPICE:Potentiometer
+    # has ref prefix 'R' and would otherwise be misidentified as a resistor)
+    if 'POTENTIOMETER' in v or 'POTENTIOMETER' in s:
+        return 'POT'
 
     # Transistor types from symbol library name
     if 'NPN' in s:

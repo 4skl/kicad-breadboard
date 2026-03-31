@@ -1231,14 +1231,28 @@ class BreadboardCanvas(wx.Panel):
                 dc.DrawText(ref, lx, ly)
                 return
             else:
-                # POT: simple rectangle
-                body_rect = wx.Rect(x_min - 3, y_min - 7, x_max - x_min + 6, 14)
-                dc.DrawRoundedRectangle(body_rect, 3)
+                # POT: Bourns-style trimpot — flat blue rectangle + golden side screw
+                body_rect = wx.Rect(x_min - 3, y_min - 6, x_max - x_min + 6, 12)
+                dc.SetBrush(wx.Brush(body_color))
+                dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
+                dc.DrawRectangle(body_rect)
+
+                # Golden trim-screw: circle inside the right end of the body
+                screw_cx = body_rect.GetRight() - 6
+                screw_cy = y_min
+                screw_r  = 5
+                dc.SetBrush(wx.Brush('#d4a520'))
+                dc.SetPen(wx.Pen('#886600', 1))
+                dc.DrawCircle(screw_cx, screw_cy, screw_r)
+                # Screw slot (crosshair)
+                dc.SetPen(wx.Pen('#553300', 1))
+                dc.DrawLine(screw_cx - 3, screw_cy, screw_cx + 3, screw_cy)
+                dc.DrawLine(screw_cx, screw_cy - 3, screw_cx, screw_cy + 3)
 
         # Reference label
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL))
-        dc.SetTextForeground('#ffffff' if comp_def.is_dip else '#222222')
+        dc.SetTextForeground('#ffffff' if (comp_def.is_dip or placed.type_id == 'POT') else '#222222')
         label_x = (x_min + x_max) // 2
         label_y = (y_min + y_max) // 2 - 5
         dc.DrawText(ref, label_x - dc.GetTextExtent(ref).Width // 2, label_y)
