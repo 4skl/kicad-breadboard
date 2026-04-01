@@ -1211,16 +1211,12 @@ class BreadboardCanvas(wx.Panel):
                     dc.DrawLine(px, pin_y, int(ax), int(flat_y))
 
                 # D-shaped body via GraphicsContext path
+                dome_up = in_top != placed.flipped
                 gc = wx.GraphicsContext.Create(dc)
                 path = gc.CreatePath()
-                if in_top:
-                    path.MoveToPoint(cx_mid - body_half, flat_y)
-                    path.AddLineToPoint(cx_mid + body_half, flat_y)
-                    path.AddArc(cx_mid, flat_y, r_body, 0.0, math.pi, False)
-                else:
-                    path.MoveToPoint(cx_mid - body_half, flat_y)
-                    path.AddLineToPoint(cx_mid + body_half, flat_y)
-                    path.AddArc(cx_mid, flat_y, r_body, 0.0, math.pi, True)
+                path.MoveToPoint(cx_mid - body_half, flat_y)
+                path.AddLineToPoint(cx_mid + body_half, flat_y)
+                path.AddArc(cx_mid, flat_y, r_body, 0.0, math.pi, not dome_up)
                 path.CloseSubpath()
 
                 gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(comp_def.color))))
@@ -1234,7 +1230,7 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetTextForeground('#eeeeee')
                 tw, th = dc.GetTextExtent(ref)
                 lx = int(cx_mid) - tw // 2
-                if in_top:
+                if dome_up:
                     ly = int(flat_y - r_body * 0.55) - th // 2
                 else:
                     ly = int(flat_y + r_body * 0.55) - th // 2
@@ -1618,16 +1614,12 @@ class BreadboardCanvas(wx.Panel):
             for px_g, ax_g in zip(pin_xs_g, attach_xs_g):
                 dc.DrawLine(int(px_g), pin_y_g, int(ax_g), int(flat_y_g))
 
+            dome_up_g = in_top != ghost.flipped
             gc = wx.GraphicsContext.Create(dc)
             path = gc.CreatePath()
-            if in_top:
-                path.MoveToPoint(cx_mid_g - body_half_g, flat_y_g)
-                path.AddLineToPoint(cx_mid_g + body_half_g, flat_y_g)
-                path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, False)
-            else:
-                path.MoveToPoint(cx_mid_g - body_half_g, flat_y_g)
-                path.AddLineToPoint(cx_mid_g + body_half_g, flat_y_g)
-                path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, True)
+            path.MoveToPoint(cx_mid_g - body_half_g, flat_y_g)
+            path.AddLineToPoint(cx_mid_g + body_half_g, flat_y_g)
+            path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, not dome_up_g)
             path.CloseSubpath()
             gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
             gc.SetPen(gc.CreatePen(
