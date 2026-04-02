@@ -216,7 +216,7 @@ class BreadboardWindow(wx.Frame):
         r = hk_row('+/\u2212', 'Zoom', right_grid, r)
 
         info_lbl = wx.lib.stattext.GenStaticText(tray_panel,
-                                 label='\nRelease: baking...\n\nMade with \u2665 by\nRobin Kerstens\nUniversity of Antwerp,\nBelgium.')
+                                 label='\nRelease: zopf\n\nMade with \u2665 by\nRobin Kerstens\nUniversity of Antwerp,\nBelgium.')
         info_lbl.SetFont(info_font)
         info_lbl.SetForegroundColour('#666666')
 
