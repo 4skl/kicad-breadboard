@@ -90,7 +90,7 @@ class _TrayCard(wx.Panel):
         self.board = board
 
         self.SetSize((CARD_W, CARD_H))
-        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_ERASE_BACKGROUND, lambda e: None)
         self.Bind(wx.EVT_PAINT, self._on_paint)
         self.Bind(wx.EVT_LEFT_DOWN, self._on_drag_start)
 
@@ -107,7 +107,7 @@ class _TrayCard(wx.Panel):
         self.Refresh()
 
     def _on_paint(self, _evt) -> None:
-        dc = wx.AutoBufferedPaintDC(self)
+        dc = wx.BufferedPaintDC(self)
         placed = self.placed
         bg = '#b8b8b8' if placed else '#f8f8f8'
         dc.SetBackground(wx.Brush(bg))

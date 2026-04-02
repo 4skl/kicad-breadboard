@@ -79,11 +79,24 @@ class BreadboardWindow(wx.Frame):
         self._build_menu()
         self._build_toolbar()
 
-        splitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE)
+        outer_splitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE)
+        inner_splitter = wx.SplitterWindow(outer_splitter, style=wx.SP_LIVE_UPDATE)
 
-        self.canvas = BreadboardCanvas(splitter, self.board, self.netlist)
+        self.canvas = BreadboardCanvas(inner_splitter, self.board, self.netlist)
 
-        tray_panel = wx.Panel(splitter)
+        # --- Left panel: component tray only ---
+        left_panel = wx.Panel(outer_splitter)
+        left_sizer = wx.BoxSizer(wx.VERTICAL)
+        comp_label = wx.StaticText(left_panel, label='Components')
+        comp_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_BOLD))
+        self.tray = ComponentTray(left_panel, self.board, self.netlist)
+        left_sizer.Add(comp_label, 0, wx.ALL, 6)
+        left_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+        left_panel.SetSizer(left_sizer)
+
+        # --- Right panel: binding posts, instruments, hotkeys ---
+        tray_panel = wx.Panel(inner_splitter)
         tray_sizer = wx.BoxSizer(wx.VERTICAL)
 
         # --- Binding-post assignment section ---
@@ -121,6 +134,7 @@ class BreadboardWindow(wx.Frame):
         _INSTRUMENT_GROUPS = [
             ('Function generator', ('FG+', 'FG_GND')),
             ('Oscilloscope',       ('CH1', 'CH2', 'SCOPE_GND')),
+            ('Power supply (PSU)', ('PSU1+', 'PSU2+', 'PSU5V', 'PSU_GND')),
         ]
         for group_label, probe_list in _INSTRUMENT_GROUPS:
             sub = wx.StaticText(tray_panel, label=group_label)
@@ -150,14 +164,6 @@ class BreadboardWindow(wx.Frame):
             tray_sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         tray_sizer.Add(wx.StaticLine(tray_panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
-
-        # --- Component tray ---
-        label = wx.StaticText(tray_panel, label='Components')
-        label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                              wx.FONTWEIGHT_BOLD))
-        self.tray = ComponentTray(tray_panel, self.board, self.netlist)
-        tray_sizer.Add(label, 0, wx.ALL, 6)
-        tray_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         hk_font = wx.Font(8, wx.FONTFAMILY_DEFAULT,
                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
@@ -230,9 +236,13 @@ class BreadboardWindow(wx.Frame):
 
         tray_panel.SetSizer(tray_sizer)
 
-        splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
-        splitter.SetMinimumPaneSize(200)
-        splitter.SetSashGravity(1.0)
+        inner_splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
+        inner_splitter.SetMinimumPaneSize(150)
+        inner_splitter.SetSashGravity(1.0)
+
+        outer_splitter.SplitVertically(left_panel, inner_splitter, sashPosition=130)
+        outer_splitter.SetMinimumPaneSize(100)
+        outer_splitter.SetSashGravity(0.0)
 
         # Connect tray → canvas placement flow
         self.tray.on_pick = lambda comp_def, ref: self.canvas.begin_place(comp_def, ref)
@@ -585,6 +595,7 @@ class BreadboardWindow(wx.Frame):
                 self.board.assign_terminal('GND', '0')
                 self.board.assign_probe_net('FG_GND', '0')
                 self.board.assign_probe_net('SCOPE_GND', '0')
+                self.board.assign_probe_net('PSU_GND', '0')
             self.canvas.board = self.board
             self.tray.board = self.board
             self.tray.refresh_placed()
@@ -701,6 +712,7 @@ class BreadboardWindow(wx.Frame):
             self.board.assign_terminal('GND', '0')
             self.board.assign_probe_net('FG_GND', '0')
             self.board.assign_probe_net('SCOPE_GND', '0')
+            self.board.assign_probe_net('PSU_GND', '0')
 
         self._refresh_terminal_choices()
         self._refresh_probe_choices()

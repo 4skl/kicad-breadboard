@@ -30,13 +30,18 @@ RAIL_SPLIT = 25     # rails are split into two electrically separate halves here
 TERMINAL_NAMES = ('GND', 'V1', 'V2')
 
 # Instrument probe points — placed by the student on arbitrary holes
-PROBE_NAMES = ('FG+', 'FG_GND', 'CH1', 'CH2', 'SCOPE_GND')
+PROBE_NAMES = ('FG+', 'FG_GND', 'CH1', 'CH2', 'SCOPE_GND',
+               'PSU1+', 'PSU2+', 'PSU5V', 'PSU_GND')
 PROBE_META = {
     'FG+':       {'label': 'FG+',  'color': '#c87000'},
     'FG_GND':    {'label': 'FG⏚',  'color': '#444444'},
     'CH1':       {'label': 'CH1',  'color': '#b09800'},
     'CH2':       {'label': 'CH2',  'color': '#1050b0'},
     'SCOPE_GND': {'label': 'SC⏚',  'color': '#444444'},
+    'PSU1+':     {'label': 'P1+',  'color': '#c02020'},
+    'PSU2+':     {'label': 'P2+',  'color': '#1060c0'},
+    'PSU5V':     {'label': '5V+',  'color': '#208030'},
+    'PSU_GND':   {'label': 'PS⏚',  'color': '#444444'},
 }
 
 
