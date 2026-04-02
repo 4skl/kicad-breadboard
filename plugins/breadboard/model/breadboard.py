@@ -38,12 +38,12 @@ PROBE_META = {
     'CH1':       {'label': 'CH1',  'color': '#b09800'},
     'CH2':       {'label': 'CH2',  'color': '#1050b0'},
     'SCOPE_GND': {'label': 'SC⏚',  'color': '#444444'},
-    'PSU1+':     {'label': '1+',   'color': '#cc2020'},
-    'PSU1-':     {'label': '1-',   'color': '#882020'},
-    'PSU2+':     {'label': '2+',   'color': '#1060c0'},
-    'PSU2-':     {'label': '2-',   'color': '#104080'},
-    'PSU3+':     {'label': '3+',   'color': '#208030'},
-    'PSU3-':     {'label': '3-',   'color': '#155020'},
+    'PSU1+':     {'label': 'PSU1+', 'color': '#cc2020'},
+    'PSU1-':     {'label': 'PSU1-', 'color': '#882020'},
+    'PSU2+':     {'label': 'PSU2+', 'color': '#1060c0'},
+    'PSU2-':     {'label': 'PSU2-', 'color': '#104080'},
+    'PSU3+':     {'label': 'PSU3+', 'color': '#208030'},
+    'PSU3-':     {'label': 'PSU3-', 'color': '#155020'},
 }
 
 
