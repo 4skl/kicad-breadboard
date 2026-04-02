@@ -232,6 +232,7 @@ class BreadboardWindow(wx.Frame):
         hotkey_sizer.Add(left_col, 0, wx.RIGHT | wx.EXPAND, 12)
         hotkey_sizer.Add(right_sizer, 0)
 
+        tray_sizer.AddStretchSpacer(1)
         tray_sizer.Add(hotkey_sizer, 0, wx.ALL, 6)
 
         tray_panel.SetSizer(tray_sizer)

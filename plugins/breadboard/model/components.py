@@ -203,7 +203,7 @@ NPN_BJT = ComponentDef(
     # Physical: C(pin1)–B(pin2)–E(pin3), left to right
     pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
     pin_names={1: 'C', 2: 'B', 3: 'E'},
-    color='#a0a0c0',
+    color='#404040',
 )
 
 PNP_BJT = ComponentDef(
@@ -212,7 +212,7 @@ PNP_BJT = ComponentDef(
     ref_prefix='Q',
     pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
     pin_names={1: 'C', 2: 'B', 3: 'E'},
-    color='#c0a0a0',
+    color='#404040',
 )
 
 JFET_N = ComponentDef(
@@ -222,7 +222,7 @@ JFET_N = ComponentDef(
     # Physical (BF245 / 2N5457): S(pin1)–G(pin2)–D(pin3)
     pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
     pin_names={1: 'S', 2: 'G', 3: 'D'},
-    color='#80c0a0',
+    color='#404040',
 )
 
 JFET_P = ComponentDef(
@@ -231,7 +231,7 @@ JFET_P = ComponentDef(
     ref_prefix='Q',
     pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
     pin_names={1: 'S', 2: 'G', 3: 'D'},
-    color='#c0a080',
+    color='#404040',
 )
 
 BS170 = ComponentDef(
@@ -241,7 +241,7 @@ BS170 = ComponentDef(
     # Physical (BS170 TO-92): S(pin1)–G(pin2)–D(pin3)
     pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
     pin_names={1: 'S', 2: 'G', 3: 'D'},
-    color='#70b0c0',
+    color='#404040',
 )
 
 # ---------------------------------------------------------------------------

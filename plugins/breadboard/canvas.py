@@ -958,9 +958,9 @@ class BreadboardCanvas(wx.Panel):
 
         # Board body
         board_rect = wx.Rect(
-            lay.board_left - MARGIN // 2,
+            lay.board_left - PITCH - MARGIN // 2,
             MARGIN // 2,
-            COLUMNS * PITCH + MARGIN,
+            (COLUMNS + 1) * PITCH + MARGIN,
             lay.total_height - MARGIN,
         )
         dc.SetBrush(wx.Brush('#e8e0c8'))
@@ -1030,9 +1030,9 @@ class BreadboardCanvas(wx.Panel):
         gap_y_top = lay._row_y['e'] + PITCH // 2
         gap_y_bot = lay._row_y['f'] - PITCH // 2
         gap_rect = wx.Rect(
-            lay.board_left - MARGIN // 4,
+            lay.board_left - PITCH - MARGIN // 4,
             gap_y_top,
-            COLUMNS * PITCH + MARGIN // 2,
+            (COLUMNS + 1) * PITCH + MARGIN // 2,
             gap_y_bot - gap_y_top,
         )
         dc.SetBrush(wx.Brush('#c0b898'))

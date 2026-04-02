@@ -97,18 +97,25 @@ class ComponentTray(wx.ScrolledWindow):
 
     def _on_paint(self, _evt) -> None:
         dc = wx.AutoBufferedPaintDC(self)
-        self.PrepareDC(dc)
-        dc.SetBackgroundMode(wx.TRANSPARENT)
-
         dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
         dc.Clear()
+        dc.SetBackgroundMode(wx.TRANSPARENT)
+
+        # Compute scroll offset in pixels (no PrepareDC — same approach as canvas)
+        _, y_unit  = self.GetScrollPixelsPerUnit()
+        _, y_start = self.GetViewStart()
+        scroll_y   = y_start * y_unit
+        client_h   = self.GetClientSize().height
 
         font_bold   = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         font_normal = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
 
         for card in self._cards:
             placed = self.board.get_placement(card.ref) is not None
-            x, y   = CARD_PAD, card.y
+            x = CARD_PAD
+            y = card.y - scroll_y   # virtual → screen coordinates
+            if y + CARD_H < 0 or y > client_h:
+                continue            # outside visible area
             bg     = '#b8b8b8' if placed else '#f8f8f8'
 
             # Background
