@@ -112,6 +112,7 @@ class _TrayCard(wx.Panel):
         bg = '#b8b8b8' if placed else '#f8f8f8'
         dc.SetBackground(wx.Brush(bg))
         dc.Clear()
+        dc.SetBackgroundMode(wx.TRANSPARENT)
 
         # Swatch
         color = self.comp_def.color if self.comp_def else '#aaaaaa'

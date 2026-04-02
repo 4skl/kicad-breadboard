@@ -218,9 +218,13 @@ class BreadboardWindow(wx.Frame):
         right_sizer.Add(right_grid, 0)
         right_sizer.Add(info_lbl, 0, wx.TOP, 6)
 
+        left_col = wx.BoxSizer(wx.VERTICAL)
+        left_col.Add(left_grid, 0)
+        left_col.AddStretchSpacer(1)
+
         hotkey_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        hotkey_sizer.Add(left_grid, 0, wx.RIGHT | wx.ALIGN_BOTTOM, 12)
-        hotkey_sizer.Add(right_sizer, 0, wx.ALIGN_BOTTOM)
+        hotkey_sizer.Add(left_col, 0, wx.RIGHT | wx.EXPAND, 12)
+        hotkey_sizer.Add(right_sizer, 0)
 
         tray_sizer.Add(hotkey_sizer, 0, wx.ALL, 6)
 
@@ -701,15 +705,22 @@ class BreadboardWindow(wx.Frame):
         self._refresh_terminal_choices()
         self._refresh_probe_choices()
 
-        n = len(self.netlist.components)
-        if n == 0:
+        n_total = len(self.netlist.components)
+        n_shown = sum(
+            1 for ref, comp in self.netlist.components.items()
+            if guess_type_id(ref, comp.value, comp.symbol, comp.lib) is not None
+        )
+        if n_total == 0:
             self.SetStatusText(
                 f'No components found in {Path(path).name} — '
                 'save your schematic in Eeschema first, then use "Update from schematic".', 0
             )
         else:
+            note = ''
+            if n_total > n_shown:
+                note = (f'  ({n_total - n_shown} power/virtual component(s) '
+                        'not shown — assign via binding posts.)')
             self.SetStatusText(
-                f'Loaded {n} component(s) from {Path(path).name}.  '
-                'Click a component in the tray to place it.  '
-                'Right-click a binding post to assign it to a net.', 0
+                f'Loaded {n_shown} component(s) from {Path(path).name}.{note}  '
+                'Click a component in the tray to place it.', 0
             )

@@ -1490,9 +1490,9 @@ class BreadboardCanvas(wx.Panel):
             dc.SetPen(wx.Pen('#888888', 0))
             dc.DrawCircle(cx + 2, cy + 2, TERM_R)
 
-            # Outer body (hex-nut-like ring effect via two filled circles)
+            # Outer body — bright white border when assigned, dark border otherwise
             dc.SetBrush(wx.Brush(body_color))
-            dc.SetPen(wx.Pen('#111111', 2))
+            dc.SetPen(wx.Pen('#ffffff' if assigned else '#111111', 3 if assigned else 2))
             dc.DrawCircle(cx, cy, TERM_R)
 
             # Threaded-shaft ring (lighter, inner circle)
@@ -1509,12 +1509,6 @@ class BreadboardCanvas(wx.Panel):
             dc.SetBrush(wx.Brush('#e0e0e0'))
             dc.SetPen(wx.Pen('#aaaaaa', 0))
             dc.DrawCircle(cx, cy, 3)
-
-            # Glow ring if assigned
-            if assigned:
-                dc.SetBrush(wx.TRANSPARENT_BRUSH)
-                dc.SetPen(wx.Pen('#ffffff', 1, wx.PENSTYLE_DOT))
-                dc.DrawCircle(cx, cy, TERM_R + 3)
 
             # Name label (below the circle)
             dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
