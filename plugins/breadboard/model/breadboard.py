@@ -31,17 +31,19 @@ TERMINAL_NAMES = ('GND', 'V1', 'V2')
 
 # Instrument probe points — placed by the student on arbitrary holes
 PROBE_NAMES = ('FG+', 'FG_GND', 'CH1', 'CH2', 'SCOPE_GND',
-               'PSU1+', 'PSU2+', 'PSU5V', 'PSU_GND')
+               'PSU1+', 'PSU1-', 'PSU2+', 'PSU2-', 'PSU3+', 'PSU3-')
 PROBE_META = {
     'FG+':       {'label': 'FG+',  'color': '#c87000'},
     'FG_GND':    {'label': 'FG⏚',  'color': '#444444'},
     'CH1':       {'label': 'CH1',  'color': '#b09800'},
     'CH2':       {'label': 'CH2',  'color': '#1050b0'},
     'SCOPE_GND': {'label': 'SC⏚',  'color': '#444444'},
-    'PSU1+':     {'label': 'P1+',  'color': '#c02020'},
-    'PSU2+':     {'label': 'P2+',  'color': '#1060c0'},
-    'PSU5V':     {'label': '5V+',  'color': '#208030'},
-    'PSU_GND':   {'label': 'PS⏚',  'color': '#444444'},
+    'PSU1+':     {'label': '1+',   'color': '#cc2020'},
+    'PSU1-':     {'label': '1-',   'color': '#882020'},
+    'PSU2+':     {'label': '2+',   'color': '#1060c0'},
+    'PSU2-':     {'label': '2-',   'color': '#104080'},
+    'PSU3+':     {'label': '3+',   'color': '#208030'},
+    'PSU3-':     {'label': '3-',   'color': '#155020'},
 }
 
 

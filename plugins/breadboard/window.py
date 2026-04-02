@@ -134,7 +134,7 @@ class BreadboardWindow(wx.Frame):
         _INSTRUMENT_GROUPS = [
             ('Function generator', ('FG+', 'FG_GND')),
             ('Oscilloscope',       ('CH1', 'CH2', 'SCOPE_GND')),
-            ('Power supply (PSU)', ('PSU1+', 'PSU2+', 'PSU5V', 'PSU_GND')),
+            ('Power supply (PSU)', ('PSU1+', 'PSU1-', 'PSU2+', 'PSU2-', 'PSU3+', 'PSU3-')),
         ]
         for group_label, probe_list in _INSTRUMENT_GROUPS:
             sub = wx.StaticText(tray_panel, label=group_label)
@@ -595,7 +595,6 @@ class BreadboardWindow(wx.Frame):
                 self.board.assign_terminal('GND', '0')
                 self.board.assign_probe_net('FG_GND', '0')
                 self.board.assign_probe_net('SCOPE_GND', '0')
-                self.board.assign_probe_net('PSU_GND', '0')
             self.canvas.board = self.board
             self.tray.board = self.board
             self.tray.refresh_placed()
@@ -712,7 +711,6 @@ class BreadboardWindow(wx.Frame):
             self.board.assign_terminal('GND', '0')
             self.board.assign_probe_net('FG_GND', '0')
             self.board.assign_probe_net('SCOPE_GND', '0')
-            self.board.assign_probe_net('PSU_GND', '0')
 
         self._refresh_terminal_choices()
         self._refresh_probe_choices()
