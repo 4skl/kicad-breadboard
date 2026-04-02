@@ -1021,7 +1021,7 @@ class BreadboardCanvas(wx.Panel):
             symbol = '+' if 'plus' in rail else '−'
             dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_BOLD))
-            dc.SetTextForeground('#ffffff')
+            dc.SetTextForeground('#444444')
             dc.DrawText(symbol, lay.rail_x(1) - PITCH + 1, ry - 7)
             dc.DrawText(symbol, lay.rail_x(RAIL_LEN) + 4, ry - 7)
 
