@@ -114,7 +114,14 @@ def _symmetric_pin_overrides(
         h1_on_net2 = bool(net2_other) and any(uf.connected(h1, h) for h in net2_other)
         h2_on_net2 = bool(net2_other) and any(uf.connected(h2, h) for h in net2_other)
 
-        swap = (not h1_on_net1 and h2_on_net1) or (h1_on_net2 and not h2_on_net2)
+        # Condition 2 is only a fallback for single-endpoint nets (net1 has no
+        # other placed components so condition 1 cannot fire).  When net1_other
+        # is non-empty, condition 1 is authoritative; applying condition 2 as
+        # well causes false-positive swaps on correctly-placed components whose
+        # tie-strip neighbours happen to be occupied by a misplaced peer.
+        swap = (not h1_on_net1 and h2_on_net1) or (
+            not net1_other and h1_on_net2 and not h2_on_net2
+        )
         if swap:
             override[(ref, 1)] = h2
             override[(ref, 2)] = h1
