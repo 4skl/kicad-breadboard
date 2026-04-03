@@ -5,8 +5,13 @@ Each component is shown as a small card with its reference, value, and a
 colour swatch.  The student clicks a card to begin placing it on the canvas.
 Once placed, the card is greyed out but stays visible.
 
-Cards are native wx.Panel widgets with SetBackgroundColour + StaticText so
-that all rendering is handled by the platform — no custom paint handlers.
+Cards are drawn entirely in the ScrolledWindow's EVT_PAINT handler using
+wx.AutoBufferedPaintDC.  No native child wx.Panel widgets are used, which
+avoids a GTK/Linux issue where native sub-windows overflow their parent's
+clip region and bleed into adjacent panels.
+
+Scroll offset is computed manually (GetScrollPixelsPerUnit + GetViewStart)
+rather than via PrepareDC, which is the reliable cross-platform pattern.
 """
 from __future__ import annotations
 
@@ -25,64 +30,16 @@ CARD_PAD = 4
 SWATCH_W = 12
 
 
-class _TrayCard(wx.Panel):
+class _Card:
+    """Pure data — no wx widget."""
+    __slots__ = ('ref', 'comp', 'comp_def', 'y')
 
-    def __init__(self, parent, ref: str, comp: NetlistComponent,
-                 comp_def: Optional[ComponentDef], board: Breadboard):
-        super().__init__(parent, size=(CARD_W, CARD_H))
+    def __init__(self, ref: str, comp: NetlistComponent,
+                 comp_def: Optional[ComponentDef], y: int):
         self.ref      = ref
         self.comp     = comp
         self.comp_def = comp_def
-        self.board    = board
-        self._swatch_color = comp_def.color if comp_def else '#aaaaaa'
-
-        # Swatch: a child panel whose background IS its colour
-        self._swatch = wx.Panel(self, pos=(4, 4), size=(SWATCH_W, CARD_H - 8))
-
-        type_suffix = f' - {comp_def.type_id}' if comp_def else ''
-        self._ref_lbl = wx.StaticText(self, label=f'{ref}{type_suffix}',
-                                      pos=(SWATCH_W + 8, 3))
-        self._ref_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
-                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-
-        self._val_lbl = wx.StaticText(self, label=comp.value[:14],
-                                      pos=(SWATCH_W + 8, 18))
-        self._val_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
-                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-
-        self._apply_colors()
-
-        for widget in (self, self._swatch, self._ref_lbl, self._val_lbl):
-            widget.Bind(wx.EVT_LEFT_DOWN, self._on_click)
-
-    def _apply_colors(self) -> None:
-        placed = self.board.get_placement(self.ref) is not None
-        bg  = '#b8b8b8' if placed else '#f8f8f8'
-        fg  = '#888888' if placed else '#222222'
-        sw  = '#888888' if placed else self._swatch_color
-
-        self.SetBackgroundColour(bg)
-        self._ref_lbl.SetBackgroundColour(bg)
-        self._ref_lbl.SetForegroundColour(fg)
-        self._val_lbl.SetBackgroundColour(bg)
-        self._val_lbl.SetForegroundColour(fg)
-        self._swatch.SetBackgroundColour(sw)
-
-        self.Refresh()
-        self._swatch.Refresh()
-        self._ref_lbl.Refresh()
-        self._val_lbl.Refresh()
-
-    def update(self, board: Breadboard) -> None:
-        self.board = board
-        self._apply_colors()
-
-    def _on_click(self, _evt) -> None:
-        if self.board.get_placement(self.ref) is not None or self.comp_def is None:
-            return
-        tray = self.GetParent()
-        if hasattr(tray, 'on_pick') and tray.on_pick is not None:
-            tray.on_pick(self.comp_def, self.ref)
+        self.y        = y   # top-left y in virtual (unscrolled) coordinates
 
 
 class ComponentTray(wx.ScrolledWindow):
@@ -91,11 +48,15 @@ class ComponentTray(wx.ScrolledWindow):
         super().__init__(parent, style=wx.VSCROLL | wx.BORDER_SUNKEN)
         self.board   = board
         self.netlist = netlist
-        self._cards: List[_TrayCard] = []
+        self._cards: List[_Card] = []
         self.on_pick = None
 
         self.SetScrollRate(0, CARD_H + CARD_PAD)
         self.SetBackgroundColour('#d8d8d8')
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+
+        self.Bind(wx.EVT_PAINT,     self._on_paint)
+        self.Bind(wx.EVT_LEFT_DOWN, self._on_left_down)
 
         if netlist:
             self._build_cards(netlist)
@@ -105,25 +66,100 @@ class ComponentTray(wx.ScrolledWindow):
         self._build_cards(netlist)
 
     def refresh_placed(self) -> None:
-        for card in self._cards:
-            card.update(self.board)
+        """Re-check which components are placed and redraw."""
+        self.Refresh()
+
+    # ------------------------------------------------------------------
 
     def _build_cards(self, netlist: Netlist) -> None:
-        for child in self.GetChildren():
-            child.Destroy()
         self._cards.clear()
-
         y = CARD_PAD
         for ref, comp in sorted(netlist.components.items()):
             type_id  = guess_type_id(ref, comp.value, comp.symbol, comp.lib)
             if type_id is None:
                 continue
             comp_def = ALL_DEFS.get(type_id)
-            card = _TrayCard(self, ref=ref, comp=comp, comp_def=comp_def,
-                             board=self.board)
-            card.SetPosition((CARD_PAD, y))
-            self._cards.append(card)
+            self._cards.append(_Card(ref=ref, comp=comp, comp_def=comp_def, y=y))
             y += CARD_H + CARD_PAD
 
-        self.SetVirtualSize(CARD_W + CARD_PAD * 2, y if self._cards else CARD_PAD)
+        total_h = y if self._cards else CARD_PAD
+        self.SetVirtualSize(CARD_W + CARD_PAD * 2, total_h)
         self.Scroll(0, 0)
+        self.Refresh()
+
+    def _card_at(self, virt_y: int) -> Optional[_Card]:
+        """Return the card whose bounding box contains virtual y-coordinate virt_y."""
+        for card in self._cards:
+            if card.y <= virt_y < card.y + CARD_H:
+                return card
+        return None
+
+    # ------------------------------------------------------------------
+    # Paint
+    # ------------------------------------------------------------------
+
+    def _on_paint(self, _evt) -> None:
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+        dc.Clear()
+        dc.SetBackgroundMode(wx.TRANSPARENT)
+
+        # Compute scroll offset in pixels (no PrepareDC — same approach as canvas)
+        _, y_unit  = self.GetScrollPixelsPerUnit()
+        _, y_start = self.GetViewStart()
+        scroll_y   = y_start * y_unit
+        client_h   = self.GetClientSize().height
+
+        font_bold   = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        font_normal = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+
+        for card in self._cards:
+            placed = self.board.get_placement(card.ref) is not None
+            x = CARD_PAD
+            y = card.y - scroll_y   # virtual → screen coordinates
+            if y + CARD_H < 0 or y > client_h:
+                continue            # outside visible area
+            bg = '#b8b8b8' if placed else '#f8f8f8'
+
+            # Background
+            dc.SetBrush(wx.Brush(bg))
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.DrawRectangle(x, y, CARD_W, CARD_H)
+
+            # Colour swatch
+            color = card.comp_def.color if card.comp_def else '#aaaaaa'
+            dc.SetBrush(wx.Brush(color if not placed else '#888888'))
+            dc.SetPen(wx.Pen('#666666', 1))
+            dc.DrawRectangle(x + 4, y + 4, SWATCH_W, CARD_H - 8)
+
+            # Text
+            fg = '#888888' if placed else '#222222'
+            dc.SetTextForeground(fg)
+
+            type_suffix = f' - {card.comp_def.type_id}' if card.comp_def else ''
+            dc.SetFont(font_bold)
+            dc.DrawText(f'{card.ref}{type_suffix}', x + SWATCH_W + 8, y + 4)
+
+            dc.SetFont(font_normal)
+            dc.DrawText(card.comp.value[:14], x + SWATCH_W + 8, y + 18)
+
+            # Border
+            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            dc.SetPen(wx.Pen('#aaaaaa' if placed else '#888888', 1))
+            dc.DrawRectangle(x, y, CARD_W, CARD_H)
+
+    # ------------------------------------------------------------------
+    # Mouse
+    # ------------------------------------------------------------------
+
+    def _on_left_down(self, evt: wx.MouseEvent) -> None:
+        # Convert click position to virtual (unscrolled) coordinates
+        _, virt_y = self.CalcUnscrolledPosition(evt.GetX(), evt.GetY())
+        card = self._card_at(virt_y)
+        if card is None:
+            return
+        placed = self.board.get_placement(card.ref) is not None
+        if placed or card.comp_def is None:
+            return
+        if self.on_pick is not None:
+            self.on_pick(card.comp_def, card.ref)
