@@ -1700,10 +1700,17 @@ class BreadboardCanvas(wx.Panel):
             dc.SetBrush(wx.Brush(wx.Colour(255, 200, 0, 180)))
             dc.SetPen(wx.Pen('#ffcc00', 2))
             dc.DrawCircle(xy[0], xy[1], HOLE_R + 5)
-            # Line to current mouse
+            # Dashed preview line to current mouse position.
+            # wx.PENSTYLE_DOT on a scaled wx.DC does not render on GTK/Linux,
+            # so use a GraphicsContext (Cairo) which handles dash patterns correctly.
             mx, my = self._ghost_pos
-            dc.SetPen(wx.Pen('#ffcc00', 2, wx.PENSTYLE_DOT))
-            dc.DrawLine(xy[0], xy[1], mx, my)
+            gc = wx.GraphicsContext.Create(dc)
+            gc.SetPen(gc.CreatePen(
+                wx.GraphicsPenInfo(wx.Colour(0xff, 0xcc, 0x00))
+                .Width(2)
+                .Style(wx.PENSTYLE_SHORT_DASH)
+            ))
+            gc.StrokeLine(xy[0], xy[1], mx, my)
 
     def _draw_validation_icons(self, dc: wx.DC) -> None:
         """Draw ⚡ / ? icons at the centroid of each validation issue's holes."""

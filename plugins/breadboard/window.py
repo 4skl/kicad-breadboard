@@ -79,13 +79,20 @@ class BreadboardWindow(wx.Frame):
         self._build_menu()
         self._build_toolbar()
 
-        outer_splitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE)
-        inner_splitter = wx.SplitterWindow(outer_splitter, style=wx.SP_LIVE_UPDATE)
+        # Outer layout: fixed-width left panel + resizable canvas/right area.
+        # Use a plain BoxSizer rather than a SplitterWindow so that GTK does
+        # not re-composite the left panel at a wrong position during rapid
+        # canvas repaints (a wx.SplitterWindow rendering artefact on GTK).
+        main_panel = wx.Panel(self)
+        main_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        inner_splitter = wx.SplitterWindow(main_panel, style=wx.SP_LIVE_UPDATE)
 
         self.canvas = BreadboardCanvas(inner_splitter, self.board, self.netlist)
 
         # --- Left panel: component tray only ---
-        left_panel = wx.Panel(outer_splitter)
+        left_panel = wx.Panel(main_panel)
+        left_panel.SetMinSize((130, -1))
         left_sizer = wx.BoxSizer(wx.VERTICAL)
         comp_label = wx.StaticText(left_panel, label='Components')
         comp_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -94,6 +101,10 @@ class BreadboardWindow(wx.Frame):
         left_sizer.Add(comp_label, 0, wx.ALL, 6)
         left_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
         left_panel.SetSizer(left_sizer)
+
+        main_sizer.Add(left_panel, 0, wx.EXPAND)
+        main_sizer.Add(inner_splitter, 1, wx.EXPAND)
+        main_panel.SetSizer(main_sizer)
 
         # --- Right panel: binding posts, instruments, hotkeys ---
         tray_panel = wx.Panel(inner_splitter)
@@ -240,10 +251,6 @@ class BreadboardWindow(wx.Frame):
         inner_splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
         inner_splitter.SetMinimumPaneSize(150)
         inner_splitter.SetSashGravity(1.0)
-
-        outer_splitter.SplitVertically(left_panel, inner_splitter, sashPosition=130)
-        outer_splitter.SetMinimumPaneSize(100)
-        outer_splitter.SetSashGravity(0.0)
 
         # Connect tray → canvas placement flow
         self.tray.on_pick = lambda comp_def, ref: self.canvas.begin_place(comp_def, ref)
