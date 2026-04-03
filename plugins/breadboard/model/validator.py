@@ -63,12 +63,21 @@ def _symmetric_pin_overrides(
     placed the component in reversed orientation and, if so, return a mapping
     that swaps pin 1 ↔ pin 2 so the circuit still validates.
 
-    A swap is applied when either:
-      (a) h2 connects to other placed pins on net1 but h1 does not, OR
-      (b) h1 connects to placed pins on net2 but h2 does not —
-          which catches the case where net1 is a single-endpoint net (e.g. a
-          schematic signal label with no other placed component) but the
-          component is clearly wired into net2's side.
+    Three phases:
+
+    1. Seed a physical-bus → schematic-net map from reliable fixed anchors:
+       terminal assignments (GND/V1/V2) and non-symmetric component pins.
+
+    2. Constraint propagation: each symmetric component whose buses include at
+       least one mapped bus can be resolved immediately, which may map its
+       other bus and unlock further components.  Repeats until stable — O(n)
+       for typical topologies.
+
+    3. Exhaustive search over isolated sub-problems that have no anchor
+       reachable by propagation.  Components are grouped by shared physical
+       bus; each group of ≤ 20 is searched in full (2^k combos).  The combo
+       minimising open-net count wins.  Groups larger than 20 are left as-is
+       and the validator reports the resulting errors normally.
     """
     override: Dict[Tuple[str, int], Hole] = {}
 
@@ -78,19 +87,8 @@ def _symmetric_pin_overrides(
         for pn in net.pins:
             comp_pin_nets.setdefault(pn.ref, {})[pn.pin] = net.name
 
-    # net_name → placed holes (excluding terminals handled separately)
-    def placed_holes_for_net(net_name: str, exclude_ref: str) -> List[Hole]:
-        holes: List[Hole] = []
-        for net in netlist.nets:
-            if net.name == net_name:
-                for pn in net.pins:
-                    if pn.ref != exclude_ref:
-                        h = board.hole_for_pin(pn.ref, pn.pin)
-                        if h is not None:
-                            holes.append(h)
-                break
-        return holes
-
+    # Collect symmetric 2-pin placed components: (ref, h1, h2, net1, net2)
+    sym: List[Tuple[str, Hole, Hole, str, Optional[str]]] = []
     for ref, placed in board.placements.items():
         comp_def = ALL_DEFS.get(placed.type_id)
         if not (comp_def and comp_def.symmetric and comp_def.pin_count == 2):
@@ -99,32 +97,149 @@ def _symmetric_pin_overrides(
         h2 = placed.pin_holes.get(2)
         if h1 is None or h2 is None:
             continue
-
         pin_nets = comp_pin_nets.get(ref, {})
         net1 = pin_nets.get(1)
-        net2 = pin_nets.get(2)
         if not net1:
             continue
+        sym.append((ref, h1, h2, net1, pin_nets.get(2)))
 
-        net1_other = placed_holes_for_net(net1, ref)
-        net2_other = placed_holes_for_net(net2, ref) if net2 else []
+    if not sym:
+        return override
 
-        h1_on_net1 = bool(net1_other) and any(uf.connected(h1, h) for h in net1_other)
-        h2_on_net1 = bool(net1_other) and any(uf.connected(h2, h) for h in net1_other)
-        h1_on_net2 = bool(net2_other) and any(uf.connected(h1, h) for h in net2_other)
-        h2_on_net2 = bool(net2_other) and any(uf.connected(h2, h) for h in net2_other)
+    # ── Phase 1: seed bus→net from fixed anchors ─────────────────────────────
+    bus_net: Dict[object, str] = {}   # uf.find(hole) → schematic net name
 
-        # Condition 2 is only a fallback for single-endpoint nets (net1 has no
-        # other placed components so condition 1 cannot fire).  When net1_other
-        # is non-empty, condition 1 is authoritative; applying condition 2 as
-        # well causes false-positive swaps on correctly-placed components whose
-        # tie-strip neighbours happen to be occupied by a misplaced peer.
-        swap = (not h1_on_net1 and h2_on_net1) or (
-            not net1_other and h1_on_net2 and not h2_on_net2
-        )
+    def seed(hole: Hole, net_name: str) -> None:
+        bus = uf.find(hole)
+        if bus not in bus_net:
+            bus_net[bus] = net_name
+
+    for term_name in TERMINAL_NAMES:
+        net_name = board.get_terminal_net(term_name)
+        if net_name:
+            seed(Terminal(term_name), net_name)
+
+    for ref, placed in board.placements.items():
+        comp_def = ALL_DEFS.get(placed.type_id)
+        if comp_def and comp_def.symmetric and comp_def.pin_count == 2:
+            continue  # these are what we're resolving
+        for pin_num, net_name in comp_pin_nets.get(ref, {}).items():
+            h = placed.pin_holes.get(pin_num)
+            if h is not None:
+                seed(h, net_name)
+
+    # ── Phase 2: constraint propagation ──────────────────────────────────────
+    resolved: Set[int] = set()
+
+    def try_resolve(idx: int) -> bool:
+        ref, h1, h2, net1, net2 = sym[idx]
+        bus1, bus2 = uf.find(h1), uf.find(h2)
+        m1, m2 = bus_net.get(bus1), bus_net.get(bus2)
+        if m1 is None and m2 is None:
+            return False
+
+        if m1 is not None:
+            if m1 == net1:
+                swap = False
+                if net2 and bus2 not in bus_net:
+                    bus_net[bus2] = net2
+            elif m1 == net2:
+                swap = True
+                if bus2 not in bus_net:
+                    bus_net[bus2] = net1
+            else:
+                return False  # bus is on an unrelated net — wiring error, skip
+        else:
+            if m2 == net2:
+                swap = False
+                if bus1 not in bus_net:
+                    bus_net[bus1] = net1
+            elif m2 == net1:
+                swap = True
+                if bus1 not in bus_net:
+                    bus_net[bus1] = net2
+            else:
+                return False
+
+        resolved.add(idx)
         if swap:
             override[(ref, 1)] = h2
             override[(ref, 2)] = h1
+        return True
+
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(sym)):
+            if i not in resolved and try_resolve(i):
+                changed = True
+
+    # ── Phase 3: exhaustive search for isolated unresolved groups ─────────────
+    unresolved = [i for i in range(len(sym)) if i not in resolved]
+    if not unresolved:
+        return override
+
+    # Group unresolved components by shared physical buses (union-find on indices)
+    parent = list(range(len(unresolved)))
+
+    def sg_find(x: int) -> int:
+        r = x
+        while parent[r] != r:
+            r = parent[r]
+        while parent[x] != r:
+            parent[x], x = r, parent[x]
+        return r
+
+    bus_to_first: Dict[object, int] = {}
+    for ui, i in enumerate(unresolved):
+        _, h1, h2, _, _ = sym[i]
+        for h in (h1, h2):
+            bus = uf.find(h)
+            if bus in bus_to_first:
+                a, b = sg_find(ui), sg_find(bus_to_first[bus])
+                if a != b:
+                    parent[a] = b
+            else:
+                bus_to_first[bus] = ui
+
+    groups: Dict[int, List[int]] = {}
+    for ui, i in enumerate(unresolved):
+        groups.setdefault(sg_find(ui), []).append(i)
+
+    def net_split_count(trial: Dict) -> int:
+        """Count nets whose placed pins don't all share one physical bus."""
+        net_buses: Dict[str, Set] = {}
+        for net in netlist.nets:
+            for pn in net.pins:
+                key = (pn.ref, pn.pin)
+                hole = trial.get(key) or board.hole_for_pin(pn.ref, pn.pin)
+                if hole is not None:
+                    net_buses.setdefault(net.name, set()).add(uf.find(hole))
+        return sum(1 for buses in net_buses.values() if len(buses) > 1)
+
+    MAX_EXHAUSTIVE = 20   # 2^20 ≈ 1 M combos — completes in milliseconds
+    for group in groups.values():
+        k = len(group)
+        if k > MAX_EXHAUSTIVE:
+            continue  # leave as-is; validator will report errors normally
+
+        best_score, best_combo = float('inf'), 0
+        for combo in range(1 << k):
+            trial = dict(override)
+            for bit, idx in enumerate(group):
+                ref, h1, h2, _, _ = sym[idx]
+                if combo & (1 << bit):
+                    trial[(ref, 1)] = h2
+                    trial[(ref, 2)] = h1
+            score = net_split_count(trial)
+            if score < best_score:
+                best_score, best_combo = score, combo
+
+        for bit, idx in enumerate(group):
+            ref, h1, h2, _, _ = sym[idx]
+            if best_combo & (1 << bit):
+                override[(ref, 1)] = h2
+                override[(ref, 2)] = h1
 
     return override
 
