@@ -370,11 +370,27 @@ class BreadboardWindow(wx.Frame):
             wildcard='KiCad netlist (*.net)|*.net|All files (*)|*',
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
         ) as dlg:
-            if dlg.ShowModal() == wx.ID_OK:
-                path = dlg.GetPath()
-                self._project_path = str(Path(path).parent)
-                self._netlist_path = path
-                self._load_netlist(path)
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+
+        # Loading a different netlist while the board has content → clear first
+        if path != self._netlist_path and (self.board.placements or self.board.wires):
+            if wx.MessageBox(
+                'Loading a different netlist will clear the current board.\nContinue?',
+                'Clear board?',
+                wx.YES_NO | wx.ICON_QUESTION, self,
+            ) != wx.YES:
+                return
+            self.board = Breadboard()
+            self.canvas.board = self.board
+            self.tray.board = self.board
+            self.tray.refresh_placed()
+            self.canvas.clear_highlights()
+
+        self._project_path = str(Path(path).parent)
+        self._netlist_path = path
+        self._load_netlist(path)
 
     def _export_netlist(self, silent: bool = False) -> Optional[Path]:
         """
