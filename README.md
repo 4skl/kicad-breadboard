@@ -136,7 +136,7 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 | Binding posts side | Position of the GND / V1 / V2 binding posts: `Left` (default), `Right`, `Top`, or `Bottom` |
 | Show baseboard | Draw a coloured panel behind the breadboard(s) |
 | Baseboard colour | Fill colour of the baseboard |
-| Include branding | Display a logo image in the strip between the board body and the binding posts |
+| Include branding | Display a logo image alongside the binding posts (on the outer side, away from the board) |
 | Branding image | Path to a custom PNG/SVG/JPG image; leave blank to use the built-in default |
 | Show binding posts on board | Toggle the circular binding-post terminals on the canvas |
 
@@ -176,11 +176,11 @@ The **Function generator**, **Oscilloscope**, and **Power supply (PSU)** section
 ![schematic](images/schematic.png)
 
 - Go to the PCB editor (using the green button on the toolbar, or by using Tools → Switch to PCB editor)
-At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard editor.
+At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard Builder.
 
 ![icon](images/pcbeditor.png)
 
-- The kicad-breadboard editor will open!
+- The Breadboard Builder will open!
 
 ![breadboard](images/breadboard.png)
 

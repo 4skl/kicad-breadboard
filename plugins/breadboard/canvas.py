@@ -36,16 +36,21 @@ Placement flow (replaces drag-drop)
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
 import wx
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_BRAND_IMAGE = os.path.join(_HERE, 'resources', 'BBBLDR.png')
+
 from .model import (
     Breadboard, PlacedComponent, Wire,
     TieHole, RailHole, Terminal, Hole,
-    COLUMNS, TOP_ROWS, BOT_ROWS, ALL_ROWS,
-    RAIL_NAMES, RAIL_LEN, RAIL_SPLIT, TERMINAL_NAMES,
+    COLUMNS, HALF_COLUMNS, MINI_COLUMNS, TOP_ROWS, BOT_ROWS, ALL_ROWS,
+    RAIL_NAMES, VERT_RAIL_NAMES, RAIL_LEN, VERT_RAIL_LEN, RAIL_SPLIT, TERMINAL_NAMES,
+    RAILLESS_LAYOUTS,
     PROBE_NAMES, PROBE_META,
     ComponentDef, ALL_DEFS,
     Netlist, guess_type_id,
@@ -63,9 +68,12 @@ CENTER_GAP = 28     # gap between top and bottom tie-strip banks
 MARGIN = 20         # outer margin
 RAIL_BREAK_PX = 58  # extra pixel gap at the mid-board split (wider than group gaps)
 RAIL_GROUP_GAP = 22 # extra gap inserted between each group of 5 rail holes
+SECTION_GAP = 0     # stacked board sections touch — no gap between them
+VERT_STRIP_X = 54   # x-width allocated for the two vertical rails (triple layout)
+BRAND_STRIP = 80    # extra space (px) added on the binding-post side for the brand image
 
 # Binding posts (circular)
-TERM_R = 18         # radius of binding-post circle
+TERM_R = 36         # radius of binding-post circle
 TERM_CX = TERM_R + 8   # x-centre of all binding posts (from canvas left edge)
 TERM_COLORS = {
     'GND': ('#3a3a3a', '#707070'),   # (body colour, highlight ring colour)
@@ -174,62 +182,201 @@ def _resistor_bands(ohms: float) -> Optional[Tuple[str, str, str, str]]:
 # ---------------------------------------------------------------------------
 
 class CanvasLayout:
-    """Maps breadboard addresses to canvas pixel coordinates."""
+    """
+    Maps breadboard addresses to canvas pixel coordinates.
 
-    def __init__(self):
-        # --- y-coordinates ---
-        top_minus_y = MARGIN
-        top_plus_y  = top_minus_y + RAIL_H + 2
+    Supports all four board layouts (half / full / double / triple) and
+    all four binding-post positions (left / right / top / bottom).
+    """
 
-        tie_top_start_y = top_plus_y + RAIL_H + RAIL_GAP
+    def __init__(self, board_layout: str = 'full', binding_post_side: str = 'left',
+                 show_branding: bool = False):
+        self.board_layout    = board_layout
+        self.binding_post_side = binding_post_side
+        _col_map = {'mini': MINI_COLUMNS, 'half': HALF_COLUMNS}
+        self.columns  = _col_map.get(board_layout, COLUMNS)
+        self.sections = {'half': 1, 'full': 1, 'double': 2, 'triple': 3}.get(board_layout, 1)
+        self.has_rails = board_layout not in RAILLESS_LAYOUTS
+        self.rail_len  = min(RAIL_LEN, self.columns) if self.has_rails else 0
 
-        self._row_y: Dict[str, int] = {}
-        for i, row in enumerate(TOP_ROWS):
-            self._row_y[row] = tie_top_start_y + i * PITCH
+        # --- Relative y layout for one section (relative to section top = 0) ---
+        self._row_rel: Dict[str, int] = {}
+        self._rail_rel: Dict[str, int] = {}
 
-        tie_bot_start_y = self._row_y['e'] + PITCH + CENTER_GAP
-        for i, row in enumerate(BOT_ROWS):
-            self._row_y[row] = tie_bot_start_y + i * PITCH
+        if self.has_rails:
+            top_minus_rel = 0
+            top_plus_rel  = top_minus_rel + RAIL_H + 2
+            tie_top_rel   = top_plus_rel  + RAIL_H + RAIL_GAP
+            for i, row in enumerate(TOP_ROWS):
+                self._row_rel[row] = tie_top_rel + i * PITCH
+            tie_bot_rel = self._row_rel['e'] + PITCH + CENTER_GAP
+            for i, row in enumerate(BOT_ROWS):
+                self._row_rel[row] = tie_bot_rel + i * PITCH
+            bot_plus_rel  = self._row_rel['j'] + RAIL_GAP
+            bot_minus_rel = bot_plus_rel + RAIL_H + 2
+            self._rail_rel = {
+                'top_plus':  top_plus_rel  + RAIL_H // 2,
+                'top_minus': top_minus_rel + RAIL_H // 2,
+                'bot_plus':  bot_plus_rel  + RAIL_H // 2,
+                'bot_minus': bot_minus_rel + RAIL_H // 2,
+            }
+            self._section_body_h = bot_minus_rel + RAIL_H + MARGIN
+        else:
+            # Mini: no rails — just tie strips with margins
+            tie_top_rel = 0
+            for i, row in enumerate(TOP_ROWS):
+                self._row_rel[row] = tie_top_rel + i * PITCH
+            tie_bot_rel = self._row_rel['e'] + PITCH + CENTER_GAP
+            for i, row in enumerate(BOT_ROWS):
+                self._row_rel[row] = tie_bot_rel + i * PITCH
+            self._section_body_h = self._row_rel['j'] + MARGIN // 2 + 4
 
-        bot_plus_y  = self._row_y['j'] + RAIL_GAP
-        bot_minus_y = bot_plus_y + RAIL_H + 2
+        # --- Section vertical offsets ---
+        # Extra space reserved above/below when binding posts are on top/bottom
+        _post_extra = TERM_R * 2 + MARGIN
+        top_extra = _post_extra if binding_post_side == 'top'    else 0
+        bot_extra = _post_extra if binding_post_side == 'bottom' else 0
+        self._section_top = [
+            MARGIN + top_extra + s * (self._section_body_h + SECTION_GAP)
+            for s in range(self.sections)
+        ]
+        self.total_height = self._section_top[-1] + self._section_body_h + MARGIN + bot_extra
 
-        self._rail_y = {
-            'top_plus':  top_plus_y  + RAIL_H // 2,
-            'top_minus': top_minus_y + RAIL_H // 2,
-            'bot_plus':  bot_plus_y  + RAIL_H // 2,
-            'bot_minus': bot_minus_y + RAIL_H // 2,
-        }
+        # Backward-compat aliases (section 0)
+        self._row_y  = {row:  self._section_top[0] + off for row, off in self._row_rel.items()}
+        self._rail_y = {rail: self._section_top[0] + off for rail, off in self._rail_rel.items()}
 
-        self.total_height = bot_minus_y + RAIL_H + MARGIN
+        # --- x layout ---
+        vert_space = VERT_STRIP_X if board_layout == 'triple' else 0
+        _brand = BRAND_STRIP if show_branding else 0
+        _brand_gap = 8   # gap between branding strip and the nearest post edge
+        _post_gap  = 20  # gap between board body edge and post centre
 
-        # --- x-coordinates ---
-        # Binding posts sit on the left; board starts well to the right of them
-        self.board_left = TERM_CX + TERM_R + 36   # x of tie-strip column 1
+        # Binding-post x-centre — computed before board_left so the left-side
+        # case can push the board right by the correct amount.
+        # Layout for left:  [MARGIN] [brand?+gap?] [post] [gap] [board…]
+        # Layout for right: [board…] [gap] [post] [gap?+brand?] [MARGIN]
+        if binding_post_side == 'left':
+            term_cx = MARGIN + (_brand + _brand_gap if _brand else 0) + TERM_R
+            self.board_left = term_cx + TERM_R + PITCH + MARGIN + vert_space
+        else:
+            self.board_left = MARGIN + vert_space
 
-        # Binding post y-positions: evenly distributed across the board height
+        board_right = self.board_left + (self.columns - 1) * PITCH
+
+        if binding_post_side == 'right':
+            term_cx = board_right + TERM_R + _post_gap
+
+        # --- Binding post positions ---
         n = len(TERMINAL_NAMES)
-        v_margin = int(self.total_height * 0.18)
-        spacing = (self.total_height - 2 * v_margin) // (n - 1)
-        self._term_y = {
-            name: v_margin + i * spacing
-            for i, name in enumerate(TERMINAL_NAMES)
-        }
+        if binding_post_side in ('left', 'right'):
+            v_margin = int(self.total_height * 0.18)
+            spacing  = (self.total_height - 2 * v_margin) // max(1, n - 1)
+            self._term_pos = {
+                name: (term_cx, v_margin + i * spacing)
+                for i, name in enumerate(TERMINAL_NAMES)
+            }
+        else:
+            # Posts are right-aligned within the board width
+            h_spacing = TERM_R * 3 + 12
+            start_x   = board_right - (n - 1) * h_spacing - TERM_R
+            term_y    = (MARGIN // 2 + TERM_R + 4) if binding_post_side == 'top' \
+                        else (self.total_height - bot_extra + MARGIN // 2 + TERM_R + 4)
+            self._term_pos = {
+                name: (start_x + i * h_spacing, term_y)
+                for i, name in enumerate(TERMINAL_NAMES)
+            }
+
+        # Legacy _term_y for any code still using it
+        self._term_y = {name: pos[1] for name, pos in self._term_pos.items()}
+
+        # --- Vertical rails (triple layout only) ---
+        if board_layout == 'triple':
+            # Rails sit between binding posts (left) and board, or at left margin
+            if binding_post_side == 'left':
+                vrl = term_cx + TERM_R + 8
+            else:
+                vrl = MARGIN
+            self._vert_rail_cx: Dict[str, int] = {
+                'vert_plus':  vrl + PITCH,
+                'vert_minus': vrl + PITCH * 2,
+            }
+            # Evenly distribute VERT_RAIL_LEN holes across full board height
+            span = self.total_height - 2 * MARGIN
+            step = span // max(1, VERT_RAIL_LEN - 1)
+            self._vert_hole_y: List[int] = [MARGIN + i * step for i in range(VERT_RAIL_LEN)]
+        else:
+            self._vert_rail_cx = {}
+            self._vert_hole_y  = []
+
+        # --- Total width ---
+        right_edge = board_right + PITCH + MARGIN // 2
+        if binding_post_side == 'right':
+            # posts sit right of board; brand (if any) sits right of posts
+            right_edge = term_cx + TERM_R + (_brand_gap + _brand if _brand else 0)
+        self._total_width = right_edge + MARGIN
+
+        # --- Branding rect (only when show_branding=True) ---
+        # Always placed on the outer side of the binding posts:
+        #   left  → brand is left of posts  (between left canvas edge and post)
+        #   right → brand is right of posts (between post and right canvas edge)
+        #   top/bottom → brand is left of posts within the same margin strip
+        _max_brand = TERM_R * 12
+        if show_branding:
+            if binding_post_side == 'left':
+                bx = MARGIN
+                bw = term_cx - TERM_R - _brand_gap - MARGIN
+                bh = min(_max_brand, self.total_height - 2 * MARGIN)
+                by = (self.total_height - bh) // 2
+                self.branding_rect = wx.Rect(bx, by, max(4, bw), bh)
+                self.branding_rotated = True
+            elif binding_post_side == 'right':
+                bx = term_cx + TERM_R + _brand_gap
+                bw = _brand - _brand_gap
+                bh = min(_max_brand, self.total_height - 2 * MARGIN)
+                by = (self.total_height - bh) // 2
+                self.branding_rect = wx.Rect(bx, by, max(4, bw), bh)
+                self.branding_rotated = True
+            elif binding_post_side == 'top':
+                # Branding left of posts within the top margin strip
+                posts_left = min(pos[0] for pos in self._term_pos.values()) - TERM_R
+                bx = self.board_left - PITCH // 2
+                bw = min(_max_brand, posts_left - bx - 8)
+                bh = top_extra - MARGIN // 2 - 4
+                by = MARGIN // 2 + 2
+                self.branding_rect = wx.Rect(bx, by, max(4, bw), max(4, bh))
+                self.branding_rotated = False
+            else:  # bottom
+                posts_left = min(pos[0] for pos in self._term_pos.values()) - TERM_R
+                bx = self.board_left - PITCH // 2
+                bw = min(_max_brand, posts_left - bx - 8)
+                bh = bot_extra - MARGIN // 2 - 4
+                by = self.total_height - bot_extra + MARGIN // 2 + 2
+                self.branding_rect = wx.Rect(bx, by, max(4, bw), max(4, bh))
+                self.branding_rotated = False
+        else:
+            self.branding_rect: Optional[wx.Rect] = None
+            self.branding_rotated = False
+
+    # ------------------------------------------------------------------
+    # Coordinate helpers
+    # ------------------------------------------------------------------
+
+    def section_row_y(self, row: str, section: int) -> int:
+        return self._section_top[section] + self._row_rel[row]
+
+    def section_rail_y(self, rail: str, section: int) -> int:
+        return self._section_top[section] + self._rail_rel[rail]
 
     def col_x(self, col: int) -> int:
         """x pixel of tie-strip column col (1-based)."""
         return self.board_left + (col - 1) * PITCH
 
     def rail_x(self, index: int) -> int:
-        """x pixel of rail hole index (1-based), with group-of-5 and mid-board gaps.
-
-        Groups of 5 holes have RAIL_GROUP_GAP between them so that the rails
-        span the same visual width as the 63-column tie strip.  The mid-board
-        split (at RAIL_SPLIT) uses RAIL_BREAK_PX instead of RAIL_GROUP_GAP.
-        """
+        """x pixel of rail hole index (1-based), with group-of-5 and mid-board gaps."""
         n_gaps = (index - 1) // 5
         if index > RAIL_SPLIT:
-            n_gaps -= 1   # split boundary is accounted for by RAIL_BREAK_PX below
+            n_gaps -= 1
         x = self.board_left + (index - 1) * PITCH + n_gaps * RAIL_GROUP_GAP
         if index > RAIL_SPLIT:
             x += RAIL_BREAK_PX
@@ -238,40 +385,67 @@ class CanvasLayout:
     def hole_xy(self, hole: Hole) -> Optional[Tuple[int, int]]:
         """Return (x, y) centre of a hole, or None if not renderable."""
         if isinstance(hole, TieHole):
-            return self.col_x(hole.col), self._row_y[hole.row]
+            s = hole.section
+            if s >= self.sections:
+                return None
+            return self.col_x(hole.col), self.section_row_y(hole.row, s)
         if isinstance(hole, RailHole):
-            return self.rail_x(hole.index), self._rail_y[hole.rail]
+            if hole.rail in VERT_RAIL_NAMES:
+                cx = self._vert_rail_cx.get(hole.rail)
+                if cx is None or hole.index < 1 or hole.index > len(self._vert_hole_y):
+                    return None
+                return cx, self._vert_hole_y[hole.index - 1]
+            if not self.has_rails:
+                return None
+            s = hole.section
+            if s >= self.sections:
+                return None
+            return self.rail_x(hole.index), self.section_rail_y(hole.rail, s)
         if isinstance(hole, Terminal):
-            return TERM_CX, self._term_y[hole.name]
+            return self._term_pos.get(hole.name)
         return None
 
     def total_width(self) -> int:
-        return self.board_left + COLUMNS * PITCH + MARGIN
+        return self._total_width
 
     def nearest_hole(self, px: int, py: int) -> Optional[Hole]:
         """Return the hole closest to canvas pixel (px, py), within snap radius."""
         best: Optional[Hole] = None
-        best_d = PITCH  # snap radius = one hole pitch
+        best_d = PITCH
 
-        # Tie strip holes
-        for col in range(1, COLUMNS + 1):
-            cx = self.col_x(col)
+        # Tie strip holes — all sections
+        for section in range(self.sections):
+            for col in range(1, self.columns + 1):
+                cx = self.col_x(col)
+                if abs(cx - px) > best_d:
+                    continue
+                for row in ALL_ROWS:
+                    ry = self.section_row_y(row, section)
+                    d = math.hypot(cx - px, ry - py)
+                    if d < best_d:
+                        best_d = d
+                        best = TieHole(col, row, section)
+
+        # Rail holes — all sections (not present on mini)
+        if self.has_rails:
+            for section in range(self.sections):
+                for rail in RAIL_NAMES:
+                    ry = self.section_rail_y(rail, section)
+                    if abs(ry - py) > best_d:
+                        continue
+                    for idx in range(1, RAIL_LEN + 1):
+                        rx = self.rail_x(idx)
+                        d = math.hypot(rx - px, ry - py)
+                        if d < best_d:
+                            best_d = d
+                            best = RailHole(rail, idx, section)
+
+        # Vertical rails (triple only)
+        for rail, cx in self._vert_rail_cx.items():
             if abs(cx - px) > best_d:
                 continue
-            for row in ALL_ROWS:
-                ry = self._row_y[row]
+            for idx, ry in enumerate(self._vert_hole_y, 1):
                 d = math.hypot(cx - px, ry - py)
-                if d < best_d:
-                    best_d = d
-                    best = TieHole(col, row)
-
-        # Rail holes
-        for rail, ry in self._rail_y.items():
-            if abs(ry - py) > best_d:
-                continue
-            for idx in range(1, RAIL_LEN + 1):
-                rx = self.rail_x(idx)
-                d = math.hypot(rx - px, ry - py)
                 if d < best_d:
                     best_d = d
                     best = RailHole(rail, idx)
@@ -311,7 +485,7 @@ class BreadboardCanvas(wx.Panel):
         super().__init__(parent, style=wx.WANTS_CHARS)
         self.board = board
         self.netlist = netlist
-        self.layout = CanvasLayout()
+        self.layout = CanvasLayout(board.layout, 'left')
 
         self.mode = MODE_SELECT
         self._wire_start: Optional[Hole] = None
@@ -334,7 +508,12 @@ class BreadboardCanvas(wx.Panel):
         # (x, y, IssueKind) for each validation issue with locatable holes
         self._validation_icons: List[Tuple[int, int, IssueKind]] = []
 
-        self.show_net_labels: bool = True   # toggled by toolbar checkbox
+        self.show_net_labels: bool = True    # toggled via preferences
+        self.show_binding_posts: bool = True # toggled via preferences
+        self.show_baseboard: bool = False    # toggled via preferences
+        self.show_branding: bool = False
+        self.baseboard_color: str = '#3d6fa8'
+        self.branding_image: str = ''
 
         self._placing_probe: Optional[str] = None   # probe name pending placement
         self._probe_drag: bool = False              # True = drag-to-place (release to commit)
@@ -375,6 +554,13 @@ class BreadboardCanvas(wx.Panel):
     # ------------------------------------------------------------------
     # Public API (called from window / tray)
     # ------------------------------------------------------------------
+
+    def rebuild_layout(self) -> None:
+        """Rebuild CanvasLayout from current board.layout and stored prefs."""
+        self.layout = CanvasLayout(self.board.layout, self.layout.binding_post_side,
+                                   self.show_branding)
+        self._pan_initialized = False   # trigger re-fit on next paint
+        self.Refresh()
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -831,10 +1017,10 @@ class BreadboardCanvas(wx.Panel):
         new_flipped = not placed.flipped
         if comp_def.is_dip:
             n = comp_def.footprint_cols() - 1
-            new_anchor = TieHole(pin1.col + (n if new_flipped else -n), 'e')
+            new_anchor = TieHole(pin1.col + (n if new_flipped else -n), 'e', pin1.section)
         elif comp_def.pin_count == 3:
             n = 2   # span = pin_count - 1
-            new_anchor = TieHole(pin1.col + (n if new_flipped else -n), pin1.row)
+            new_anchor = TieHole(pin1.col + (n if new_flipped else -n), pin1.row, pin1.section)
         elif comp_def.pin_count == 2:
             # For 2-pin axial: use pin2 as new anchor and toggle flipped.
             # place(pin2, flipped=True)  → pin1 at pin2.col, pin2 at pin2.col-span
@@ -931,7 +1117,7 @@ class BreadboardCanvas(wx.Panel):
     # ------------------------------------------------------------------
 
     def render_to_bitmap(self) -> 'wx.Bitmap':
-        """Render the full board to an off-screen bitmap (for export)."""
+        """Render the full board to an off-screen bitmap (for PNG export)."""
         w = self.layout.total_width()
         h = self.layout.total_height
         bmp = wx.Bitmap(w, h)
@@ -941,6 +1127,14 @@ class BreadboardCanvas(wx.Panel):
         self._draw_board(mdc)
         mdc.SelectObject(wx.NullBitmap)
         return bmp
+
+    def render_to_svg(self, path: str) -> None:
+        """Render the full board to an SVG file."""
+        w = self.layout.total_width()
+        h = self.layout.total_height
+        svg_dc = wx.SVGFileDC(path, w, h)
+        self._draw_board(svg_dc)
+        del svg_dc   # flushes and closes the file
 
     def _on_paint(self, _evt) -> None:
         dc = wx.AutoBufferedPaintDC(self)
@@ -956,23 +1150,24 @@ class BreadboardCanvas(wx.Panel):
     def _draw_board(self, dc: wx.DC) -> None:
         lay = self.layout
 
-        # Board body
-        board_rect = wx.Rect(
-            lay.board_left - PITCH - MARGIN // 2,
-            MARGIN // 2,
-            (COLUMNS + 1) * PITCH + MARGIN,
-            lay.total_height - MARGIN,
-        )
-        dc.SetBrush(wx.Brush('#e8e0c8'))
-        dc.SetPen(wx.Pen('#b0a090', 1))
-        dc.DrawRoundedRectangle(board_rect, 8)
+        if self.show_baseboard:
+            self._draw_baseboard(dc)
 
-        self._draw_rails(dc)
-        self._draw_center_gap(dc)
-        self._draw_holes(dc)
+        # Per-section board bodies, rails, holes
+        for section in range(lay.sections):
+            self._draw_section_body(dc, section)
+            if lay.has_rails:
+                self._draw_rails(dc, section)
+            self._draw_center_gap(dc, section)
+            self._draw_holes(dc, section)
+
+        if lay.board_layout == 'triple':
+            self._draw_vert_rails(dc)
+
         self._draw_wires(dc)
         self._draw_components(dc)
-        self._draw_terminals(dc)
+        if self.show_binding_posts:
+            self._draw_terminals(dc)
         self._draw_probes(dc)
 
         if self._ghost:
@@ -989,7 +1184,118 @@ class BreadboardCanvas(wx.Panel):
         dc.SetDeviceOrigin(0, 0)
         self._draw_net_labels(dc)
 
-    def _draw_rails(self, dc: wx.DC) -> None:
+    def _draw_baseboard(self, dc: wx.DC) -> None:
+        lay = self.layout
+        pad = 24
+        # Ensure all binding posts are inside the baseboard by extending pad on post side
+        post_xs = [pos[0] for pos in lay._term_pos.values()] if lay._term_pos else []
+        post_ys = [pos[1] for pos in lay._term_pos.values()] if lay._term_pos else []
+        bs_left = min(lay.board_left - PITCH - MARGIN - pad,
+                      (min(post_xs) - TERM_R - 8) if post_xs else 9999)
+        bs_top  = min(MARGIN - pad // 2,
+                      (min(post_ys) - TERM_R - 8) if post_ys else 9999)
+        bs_right  = max(lay.total_width() - MARGIN + pad,
+                        (max(post_xs) + TERM_R + 8) if post_xs else 0)
+        bs_bottom = max(lay.total_height + pad // 2,
+                        (max(post_ys) + TERM_R + 8) if post_ys else 0)
+        base_rect = wx.Rect(bs_left, bs_top, bs_right - bs_left, bs_bottom - bs_top)
+
+        color = self.baseboard_color
+        try:
+            c = wx.Colour(color)
+            if not c.IsOk():
+                c = wx.Colour('#1a3a6a')
+        except Exception:
+            c = wx.Colour('#1a3a6a')
+        border_c = wx.Colour(
+            min(255, c.Red()   + 30),
+            min(255, c.Green() + 30),
+            min(255, c.Blue()  + 30),
+        )
+        dc.SetBrush(wx.Brush(c))
+        dc.SetPen(wx.Pen(border_c, 2))
+        dc.DrawRoundedRectangle(base_rect, 12)
+
+        if self.show_branding and lay.branding_rect is not None:
+            self._draw_branding(dc, lay.branding_rect)
+
+    def _draw_branding(self, dc: wx.DC, rect: wx.Rect) -> None:
+        """Draw the branding image inside rect.
+        For left/right posts the rect is a vertical strip; the image is rotated 90° CCW."""
+        img_path = self.branding_image or (
+            _DEFAULT_BRAND_IMAGE if os.path.isfile(_DEFAULT_BRAND_IMAGE) else '')
+        if not img_path:
+            return
+        try:
+            img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)
+            if not img.IsOk():
+                return
+            if self.layout.branding_rotated:
+                img = img.Rotate90(clockwise=False)
+            iw, ih = img.GetWidth(), img.GetHeight()
+            scale = min(rect.width / iw, rect.height / ih) if iw and ih else 1.0
+            nw = max(1, int(iw * scale))
+            nh = max(1, int(ih * scale))
+            img = img.Scale(nw, nh, wx.IMAGE_QUALITY_HIGH)
+            dc.DrawBitmap(wx.Bitmap(img),
+                          rect.x + (rect.width  - nw) // 2,
+                          rect.y + (rect.height - nh) // 2,
+                          True)
+        except Exception:
+            pass
+
+    def _draw_section_body(self, dc: wx.DC, section: int) -> None:
+        lay = self.layout
+        top = lay._section_top[section]
+        board_rect = wx.Rect(
+            lay.board_left - PITCH - MARGIN // 2,
+            top - MARGIN // 2,
+            lay.columns * PITCH + MARGIN,
+            lay._section_body_h + MARGIN // 2,
+        )
+        dc.SetBrush(wx.Brush('#e8e0c8'))
+        dc.SetPen(wx.Pen('#b0a090', 1))
+        dc.DrawRoundedRectangle(board_rect, 8)
+
+    def _draw_vert_rails(self, dc: wx.DC) -> None:
+        lay = self.layout
+        rail_colors = {'vert_plus': '#cc2222', 'vert_minus': '#2244cc'}
+
+        # Cream background panel behind both vertical rails
+        if lay._vert_rail_cx:
+            xs = list(lay._vert_rail_cx.values())
+            bg_x = min(xs) - PITCH // 2 - 4
+            bg_w = max(xs) - min(xs) + PITCH + 8
+            bg_rect = wx.Rect(bg_x, MARGIN // 2, bg_w, lay.total_height - MARGIN)
+            dc.SetBrush(wx.Brush('#e8e0c8'))
+            dc.SetPen(wx.Pen('#b0a090', 1))
+            dc.DrawRoundedRectangle(bg_rect, 6)
+
+        for rail, cx in lay._vert_rail_cx.items():
+            color = rail_colors[rail]
+            # Strip background spanning full height
+            strip_rect = wx.Rect(
+                cx - PITCH // 2,
+                MARGIN,
+                PITCH,
+                lay.total_height - 2 * MARGIN,
+            )
+            dc.SetBrush(wx.Brush(color))
+            dc.SetPen(wx.Pen(color, 0))
+            dc.DrawRoundedRectangle(strip_rect, 4)
+            # Holes
+            for idx, ry in enumerate(lay._vert_hole_y, 1):
+                self._draw_hole_dot(dc, cx, ry, RailHole(rail, idx))
+            # + / − symbols at top and bottom
+            symbol = '+' if 'plus' in rail else '−'
+            dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_BOLD))
+            dc.SetTextForeground('#ffffff')
+            tw, th = dc.GetTextExtent(symbol)
+            dc.DrawText(symbol, cx - tw // 2, MARGIN + 2)
+            dc.DrawText(symbol, cx - tw // 2, lay.total_height - MARGIN - th - 2)
+
+    def _draw_rails(self, dc: wx.DC, section: int = 0) -> None:
         lay = self.layout
         rail_colors = {
             'top_plus': '#cc2222', 'top_minus': '#2244cc',
@@ -997,14 +1303,16 @@ class BreadboardCanvas(wx.Panel):
         }
         strip_h = RAIL_H - 4   # coloured stripe height
 
-        for rail, ry in lay._rail_y.items():
+        rl = lay.rail_len
+        for rail in RAIL_NAMES:
+            ry = lay.section_rail_y(rail, section)
             color = rail_colors[rail]
 
-            # Draw one stripe per group of 5 holes — the gaps between groups
-            # are naturally visible as breaks in the stripe.
-            for group in range(10):
+            # Draw one stripe per group of 5 holes
+            n_groups = (rl + 4) // 5
+            for group in range(n_groups):
                 first = group * 5 + 1
-                last  = group * 5 + 5
+                last  = min(group * 5 + 5, rl)
                 x_left  = lay.rail_x(first) - PITCH // 2
                 x_right = lay.rail_x(last)  + PITCH // 2
                 stripe = wx.Rect(x_left, ry - strip_h // 2, x_right - x_left, strip_h)
@@ -1013,9 +1321,9 @@ class BreadboardCanvas(wx.Panel):
                 dc.DrawRoundedRectangle(stripe, 3)
 
             # Holes
-            for idx in range(1, RAIL_LEN + 1):
+            for idx in range(1, rl + 1):
                 rx = lay.rail_x(idx)
-                self._draw_hole_dot(dc, rx, ry, RailHole(rail, idx))
+                self._draw_hole_dot(dc, rx, ry, RailHole(rail, idx, section))
 
             # + / − symbol at both ends
             symbol = '+' if 'plus' in rail else '−'
@@ -1023,29 +1331,29 @@ class BreadboardCanvas(wx.Panel):
                                wx.FONTWEIGHT_BOLD))
             dc.SetTextForeground('#444444')
             dc.DrawText(symbol, lay.rail_x(1) - PITCH + 1, ry - 7)
-            dc.DrawText(symbol, lay.rail_x(RAIL_LEN) + 4, ry - 7)
+            dc.DrawText(symbol, lay.rail_x(rl) + 4, ry - 7)
 
-    def _draw_center_gap(self, dc: wx.DC) -> None:
+    def _draw_center_gap(self, dc: wx.DC, section: int = 0) -> None:
         lay = self.layout
-        gap_y_top = lay._row_y['e'] + PITCH // 2
-        gap_y_bot = lay._row_y['f'] - PITCH // 2
+        gap_y_top = lay.section_row_y('e', section) + PITCH // 2
+        gap_y_bot = lay.section_row_y('f', section) - PITCH // 2
         gap_rect = wx.Rect(
             lay.board_left - PITCH - MARGIN // 4,
             gap_y_top,
-            (COLUMNS + 1) * PITCH + MARGIN // 2,
+            lay.columns * PITCH + MARGIN // 2,
             gap_y_bot - gap_y_top,
         )
         dc.SetBrush(wx.Brush('#c0b898'))
         dc.SetPen(wx.Pen('#a09080', 1))
         dc.DrawRectangle(gap_rect)
 
-    def _draw_holes(self, dc: wx.DC) -> None:
+    def _draw_holes(self, dc: wx.DC, section: int = 0) -> None:
         lay = self.layout
-        for col in range(1, COLUMNS + 1):
+        for col in range(1, lay.columns + 1):
             cx = lay.col_x(col)
             for row in ALL_ROWS:
-                ry = lay._row_y[row]
-                h = TieHole(col, row)
+                ry = lay.section_row_y(row, section)
+                h = TieHole(col, row, section)
                 self._draw_hole_dot(dc, cx, ry, h)
 
     def _draw_hole_dot(self, dc: wx.DC, cx: int, cy: int, hole: Hole) -> None:
@@ -1178,6 +1486,31 @@ class BreadboardCanvas(wx.Panel):
                 elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
                     # Bottom-side pin: label just inside the bottom edge of the body
                     dc.DrawText(label, hx - tw // 2, body_rect.GetBottom() - th - 2)
+
+            # Ref + value label centered in the IC body
+            cx = body_rect.GetX() + body_rect.GetWidth() // 2
+            cy = body_rect.GetY() + body_rect.GetHeight() // 2
+            comp_nl = self.netlist.components.get(ref) if self.netlist else None
+            value_str = comp_nl.value if comp_nl else ''
+            dc.SetTextForeground('#ffffff')
+            dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_BOLD))
+            rw, rh = dc.GetTextExtent(ref)
+            if value_str:
+                dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                vw, vh = dc.GetTextExtent(value_str)
+                gap = 1
+                total_h = rh + gap + vh
+                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_BOLD))
+                dc.DrawText(ref, cx - rw // 2, cy - total_h // 2)
+                dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.DrawText(value_str, cx - vw // 2, cy - total_h // 2 + rh + gap)
+            else:
+                dc.DrawText(ref, cx - rw // 2, cy - rh // 2)
+
         elif comp_def.pin_count == 2:
             p1 = lay.hole_xy(placed.pin_holes[1])
             p2 = lay.hole_xy(placed.pin_holes[2])
@@ -1235,6 +1568,22 @@ class BreadboardCanvas(wx.Panel):
                 else:
                     ly = int(flat_y + r_body * 0.55) - th // 2
                 dc.DrawText(ref, lx, ly)
+
+                # Pin name labels on the side away from the body
+                dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.SetTextForeground('#222222')
+                label_gap = 4
+                for pin_num, hole in placed.pin_holes.items():
+                    pxy = lay.hole_xy(hole)
+                    if pxy is None:
+                        continue
+                    name = comp_def.pin_names.get(pin_num, str(pin_num))
+                    ptw, pth = dc.GetTextExtent(name)
+                    if in_top:
+                        dc.DrawText(name, pxy[0] - ptw // 2, pin_y + label_gap)
+                    else:
+                        dc.DrawText(name, pxy[0] - ptw // 2, pin_y - pth - label_gap)
                 return
             else:
                 # POT: Bourns-style trimpot — flat blue rectangle + golden side screw
@@ -1258,7 +1607,7 @@ class BreadboardCanvas(wx.Panel):
                 # Pin labels (1, W, 3) below the body
                 dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                    wx.FONTWEIGHT_NORMAL))
-                dc.SetTextForeground('#cccccc')
+                dc.SetTextForeground('#222222')
                 for pin_num in sorted(placed.pin_holes):
                     hole = placed.pin_holes[pin_num]
                     pin_name = comp_def.pin_names.get(pin_num, str(pin_num))
@@ -1266,15 +1615,16 @@ class BreadboardCanvas(wx.Panel):
                     if xy is None:
                         continue
                     tw, th = dc.GetTextExtent(pin_name)
-                    dc.DrawText(pin_name, xy[0] - tw // 2, body_rect.GetBottom() + 2)
+                    dc.DrawText(pin_name, xy[0] - tw // 2, body_rect.GetBottom() + 1)
 
-        # Reference label
-        dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                           wx.FONTWEIGHT_NORMAL))
-        dc.SetTextForeground('#ffffff' if (comp_def.is_dip or placed.type_id == 'POT') else '#222222')
-        label_x = (x_min + x_max) // 2
-        label_y = (y_min + y_max) // 2 - 5
-        dc.DrawText(ref, label_x - dc.GetTextExtent(ref).Width // 2, label_y)
+        # Reference label (skipped for DIP ICs — they draw ref+value inside the body above)
+        if not comp_def.is_dip:
+            dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#ffffff' if placed.type_id == 'POT' else '#222222')
+            label_x = (x_min + x_max) // 2
+            label_y = (y_min + y_max) // 2 - 5
+            dc.DrawText(ref, label_x - dc.GetTextExtent(ref).Width // 2, label_y)
 
     def _draw_axial_component(self, dc: wx.DC, comp_def: ComponentDef,
                               placed: PlacedComponent, ref: str,
@@ -1510,24 +1860,30 @@ class BreadboardCanvas(wx.Panel):
             dc.SetPen(wx.Pen('#aaaaaa', 0))
             dc.DrawCircle(cx, cy, 3)
 
-            # Name label (below the circle)
+            # Name label and net assignment — direction depends on binding post side
+            label_below = lay.binding_post_side != 'bottom'
             dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_BOLD))
             dc.SetTextForeground('#222222')
-            tw = dc.GetTextExtent(name).Width
-            dc.DrawText(name, cx - tw // 2, cy + TERM_R + 3)
+            tw, th = dc.GetTextExtent(name)
+            if label_below:
+                lbl_y  = cy + TERM_R + 3
+                net_y  = cy + TERM_R + 15
+            else:
+                lbl_y  = cy - TERM_R - th - 3
+                net_y  = cy - TERM_R - th - 15
+            dc.DrawText(name, cx - tw // 2, lbl_y)
 
-            # Net assignment (small, below name)
+            # Net assignment (small)
             net_label = assigned if assigned else ''
             dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
             dc.SetTextForeground('#446644' if assigned else '#999999')
-            # Truncate if too wide
             max_w = TERM_R * 2 + 8
             while dc.GetTextExtent(net_label).Width > max_w and len(net_label) > 4:
                 net_label = net_label[:-2] + '…'
             nlw = dc.GetTextExtent(net_label).Width
-            dc.DrawText(net_label, cx - nlw // 2, cy + TERM_R + 15)
+            dc.DrawText(net_label, cx - nlw // 2, net_y)
 
     def _draw_ghost(self, dc: wx.DC) -> None:
         """Draw a semi-transparent component preview at the drag position."""
@@ -1620,6 +1976,24 @@ class BreadboardCanvas(wx.Panel):
                 wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1)
                 .Style(wx.PENSTYLE_DOT)))
             gc.DrawPath(path)
+
+            # Pin name labels on the side away from the body (ghost variant)
+            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#444444')
+            label_gap_g = 4
+            for pin_num_g, hole_g in pin_holes.items():
+                pxy_g = lay.hole_xy(hole_g)
+                if pxy_g is None:
+                    continue
+                name_g = comp_def.pin_names.get(pin_num_g, str(pin_num_g))
+                ptw_g, pth_g = dc.GetTextExtent(name_g)
+                if in_top:
+                    dc.DrawText(name_g, pxy_g[0] - ptw_g // 2,
+                                int(pin_y_g) + label_gap_g)
+                else:
+                    dc.DrawText(name_g, pxy_g[0] - ptw_g // 2,
+                                int(pin_y_g) - pth_g - label_gap_g)
         else:
             body_rect = wx.Rect(min(xs) - 4, min(ys) - 6,
                                 max(xs) - min(xs) + 8, max(ys) - min(ys) + 12)
@@ -1838,11 +2212,12 @@ class BreadboardCanvas(wx.Panel):
         dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL))
         dc.SetTextForeground('#808080')
-        label_y = lay._row_y['j'] + PITCH + 2
-        for col in range(1, COLUMNS + 1, 5):
-            x = lay.col_x(col)
-            label = str(col)
-            dc.DrawText(label, x - dc.GetTextExtent(label).Width // 2, label_y)
+        for section in range(lay.sections):
+            label_y = lay.section_row_y('j', section) + PITCH + 2
+            for col in range(1, lay.columns + 1, 5):
+                x = lay.col_x(col)
+                label = str(col)
+                dc.DrawText(label, x - dc.GetTextExtent(label).Width // 2, label_y)
 
 
 # ---------------------------------------------------------------------------
