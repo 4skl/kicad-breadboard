@@ -250,7 +250,7 @@ class CanvasLayout:
         vert_space = VERT_STRIP_X if board_layout == 'triple' else 0
         _brand = BRAND_STRIP if show_branding else 0
         _brand_gap = 8   # gap between branding strip and the nearest post edge
-        _post_gap  = 20  # gap between board body edge and post centre
+        _POST_BOARD_GAP = 40  # gap between post edge and nearest board body edge
 
         # Binding-post x-centre — computed before board_left so the left-side
         # case can push the board right by the correct amount.
@@ -258,14 +258,14 @@ class CanvasLayout:
         # Layout for right: [board…] [gap] [post] [gap?+brand?] [MARGIN]
         if binding_post_side == 'left':
             term_cx = MARGIN + (_brand + _brand_gap if _brand else 0) + TERM_R
-            self.board_left = term_cx + TERM_R + PITCH + MARGIN + vert_space
+            self.board_left = term_cx + TERM_R + _POST_BOARD_GAP + vert_space
         else:
             self.board_left = MARGIN + vert_space
 
         board_right = self.board_left + (self.columns - 1) * PITCH
 
         if binding_post_side == 'right':
-            term_cx = board_right + TERM_R + _post_gap
+            term_cx = board_right + TERM_R + _POST_BOARD_GAP
 
         # --- Binding post positions ---
         n = len(TERMINAL_NAMES)
@@ -1186,39 +1186,12 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_baseboard(self, dc: wx.DC) -> None:
         lay = self.layout
-        pad = 18
 
-        # Compute a tight bounding box around all rendered content, then add
-        # a uniform pad on every side so the baseboard is evenly spaced.
-
-        # Board body (all sections)
-        left   = lay.board_left - PITCH // 2
-        right  = lay.board_left + (lay.columns - 1) * PITCH + PITCH // 2
-        top    = lay._section_top[0]
-        bottom = lay._section_top[-1] + lay._section_body_h
-
-        # Vertical rails (triple layout)
-        for rail_cx in lay._vert_rail_cx.values():
-            left = min(left, rail_cx - PITCH)
-
-        # Binding posts
-        for px, py in lay._term_pos.values():
-            left   = min(left,   px - TERM_R)
-            top    = min(top,    py - TERM_R)
-            right  = max(right,  px + TERM_R)
-            bottom = max(bottom, py + TERM_R)
-
-        # Branding rect
-        if lay.branding_rect is not None:
-            r = lay.branding_rect
-            left   = min(left,   r.GetLeft())
-            top    = min(top,    r.GetTop())
-            right  = max(right,  r.GetRight())
-            bottom = max(bottom, r.GetBottom())
-
-        base_rect = wx.Rect(left - pad, top - pad,
-                            right - left + 2 * pad,
-                            bottom - top + 2 * pad)
+        # The CanvasLayout already reserves MARGIN on every side and allocates
+        # extra space for top/bottom binding posts via top_extra/bot_extra, so
+        # using the full canvas extent gives uniform spacing around all content
+        # regardless of where the binding posts are placed.
+        base_rect = wx.Rect(0, 0, lay.total_width(), lay.total_height)
 
         color = self.baseboard_color
         try:
