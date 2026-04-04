@@ -73,7 +73,7 @@ VERT_STRIP_X = 54   # x-width allocated for the two vertical rails (triple layou
 BRAND_STRIP = 80    # extra space (px) added on the binding-post side for the brand image
 
 # Binding posts (circular)
-TERM_R = 36         # radius of binding-post circle
+TERM_R = 30         # radius of binding-post circle
 TERM_CX = TERM_R + 8   # x-centre of all binding posts (from canvas left edge)
 TERM_COLORS = {
     'GND': ('#3a3a3a', '#707070'),   # (body colour, highlight ring colour)
@@ -1187,11 +1187,26 @@ class BreadboardCanvas(wx.Panel):
     def _draw_baseboard(self, dc: wx.DC) -> None:
         lay = self.layout
 
-        # The CanvasLayout already reserves MARGIN on every side and allocates
-        # extra space for top/bottom binding posts via top_extra/bot_extra, so
-        # using the full canvas extent gives uniform spacing around all content
-        # regardless of where the binding posts are placed.
-        base_rect = wx.Rect(0, 0, lay.total_width(), lay.total_height)
+        # Start from the full canvas extent (which already has MARGIN on every
+        # side).  When binding posts are on the top or bottom the layout adds
+        # extra space on the post side but not the opposite side, making the
+        # board body sit too close to that baseboard edge.  Mirror that extra
+        # space so the board body appears centred inside the baseboard.
+        w = lay.total_width()
+        h = lay.total_height
+        x, y = 0, 0
+
+        if lay.binding_post_side == 'top':
+            # Extra space above board: section_top[0] minus the base MARGIN
+            extra = lay._section_top[0] - MARGIN
+            h += extra
+        elif lay.binding_post_side == 'bottom':
+            # Extra space below board: symmetric mirror at the top
+            extra = lay.total_height - (lay._section_top[-1] + lay._section_body_h) - MARGIN
+            y -= extra
+            h += extra
+
+        base_rect = wx.Rect(x, y, w, h)
 
         color = self.baseboard_color
         try:
