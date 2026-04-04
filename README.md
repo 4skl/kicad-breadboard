@@ -134,8 +134,8 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 |---|---|
 | Size / layout | `Mini` (170 holes, no rails) · `Half` (400 holes) · `Full` (830 holes) · `Double` (2× full stacked) · `Triple` (3× full + vertical power rails) |
 | Binding posts side | Position of the GND / V1 / V2 binding posts: `Left` (default), `Right`, `Top`, or `Bottom` |
-| Show baseboard | Draw a colored panel behind the breadboard(s) |
-| Baseboard colour | Fill color of the baseboard |
+| Show baseboard | Draw a coloured panel behind the breadboard(s) |
+| Baseboard colour | Fill colour of the baseboard |
 | Include branding | Display a logo image in the strip between the board body and the binding posts |
 | Branding image | Path to a custom PNG/SVG/JPG image; leave blank to use the built-in default |
 | Show binding posts on board | Toggle the circular binding-post terminals on the canvas |
