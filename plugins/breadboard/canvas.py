@@ -1186,19 +1186,39 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_baseboard(self, dc: wx.DC) -> None:
         lay = self.layout
-        pad = 24
-        # Ensure all binding posts are inside the baseboard by extending pad on post side
-        post_xs = [pos[0] for pos in lay._term_pos.values()] if lay._term_pos else []
-        post_ys = [pos[1] for pos in lay._term_pos.values()] if lay._term_pos else []
-        bs_left = min(lay.board_left - PITCH - MARGIN - pad,
-                      (min(post_xs) - TERM_R - 8) if post_xs else 9999)
-        bs_top  = min(MARGIN - pad // 2,
-                      (min(post_ys) - TERM_R - 8) if post_ys else 9999)
-        bs_right  = max(lay.total_width() - MARGIN + pad,
-                        (max(post_xs) + TERM_R + 8) if post_xs else 0)
-        bs_bottom = max(lay.total_height + pad // 2,
-                        (max(post_ys) + TERM_R + 8) if post_ys else 0)
-        base_rect = wx.Rect(bs_left, bs_top, bs_right - bs_left, bs_bottom - bs_top)
+        pad = 18
+
+        # Compute a tight bounding box around all rendered content, then add
+        # a uniform pad on every side so the baseboard is evenly spaced.
+
+        # Board body (all sections)
+        left   = lay.board_left - PITCH // 2
+        right  = lay.board_left + (lay.columns - 1) * PITCH + PITCH // 2
+        top    = lay._section_top[0]
+        bottom = lay._section_top[-1] + lay._section_body_h
+
+        # Vertical rails (triple layout)
+        for rail_cx in lay._vert_rail_cx.values():
+            left = min(left, rail_cx - PITCH)
+
+        # Binding posts
+        for px, py in lay._term_pos.values():
+            left   = min(left,   px - TERM_R)
+            top    = min(top,    py - TERM_R)
+            right  = max(right,  px + TERM_R)
+            bottom = max(bottom, py + TERM_R)
+
+        # Branding rect
+        if lay.branding_rect is not None:
+            r = lay.branding_rect
+            left   = min(left,   r.GetLeft())
+            top    = min(top,    r.GetTop())
+            right  = max(right,  r.GetRight())
+            bottom = max(bottom, r.GetBottom())
+
+        base_rect = wx.Rect(left - pad, top - pad,
+                            right - left + 2 * pad,
+                            bottom - top + 2 * pad)
 
         color = self.baseboard_color
         try:
@@ -1835,30 +1855,55 @@ class BreadboardCanvas(wx.Panel):
             body_color, highlight_color = TERM_COLORS[name]
             assigned = self.board.get_terminal_net(name)
 
-            # Drop shadow
-            dc.SetBrush(wx.Brush('#888888'))
-            dc.SetPen(wx.Pen('#888888', 0))
-            dc.DrawCircle(cx + 2, cy + 2, TERM_R)
+            # ── Drop shadow ──────────────────────────────────────────────
+            dc.SetBrush(wx.Brush('#666666'))
+            dc.SetPen(wx.Pen('#666666', 0))
+            dc.DrawCircle(cx + 3, cy + 3, TERM_R)
 
-            # Outer body — bright white border when assigned, dark border otherwise
+            # ── Outer knurled body ────────────────────────────────────────
+            # Bright white ring when assigned; dark border otherwise
             dc.SetBrush(wx.Brush(body_color))
-            dc.SetPen(wx.Pen('#ffffff' if assigned else '#111111', 3 if assigned else 2))
+            dc.SetPen(wx.Pen('#ffffff' if assigned else '#111111',
+                             3 if assigned else 2))
             dc.DrawCircle(cx, cy, TERM_R)
 
-            # Threaded-shaft ring (lighter, inner circle)
+            # Knurl ticks — short radial lines around the outer rim
+            n_ticks = 18
+            r_tick_outer = TERM_R - 2
+            r_tick_inner = TERM_R - 9
+            dc.SetPen(wx.Pen('#111111', 2))
+            for i in range(n_ticks):
+                angle = 2 * math.pi * i / n_ticks
+                cos_a, sin_a = math.cos(angle), math.sin(angle)
+                dc.DrawLine(
+                    cx + int(r_tick_inner * cos_a),
+                    cy + int(r_tick_inner * sin_a),
+                    cx + int(r_tick_outer * cos_a),
+                    cy + int(r_tick_outer * sin_a),
+                )
+
+            # ── Inner raised cap (the rotatable clamp nut) ───────────────
+            r_cap = TERM_R - 10
             dc.SetBrush(wx.Brush(highlight_color))
-            dc.SetPen(wx.Pen('#888888', 1))
-            dc.DrawCircle(cx, cy, TERM_R - 6)
+            dc.SetPen(wx.Pen('#333333', 1))
+            dc.DrawCircle(cx, cy, r_cap)
 
-            # Center hole
-            dc.SetBrush(wx.Brush('#111111'))
+            # ── Central threaded post ─────────────────────────────────────
+            r_post = TERM_R // 3
+            dc.SetBrush(wx.Brush('#4a4a4a'))
+            dc.SetPen(wx.Pen('#222222', 1))
+            dc.DrawCircle(cx, cy, r_post)
+
+            # ── Wire entry hole ───────────────────────────────────────────
+            r_hole = TERM_R // 5
+            dc.SetBrush(wx.Brush('#0a0a0a'))
             dc.SetPen(wx.Pen('#000000', 1))
-            dc.DrawCircle(cx, cy, 5)
+            dc.DrawCircle(cx, cy, r_hole)
 
-            # Bright wire-entry dot
-            dc.SetBrush(wx.Brush('#e0e0e0'))
-            dc.SetPen(wx.Pen('#aaaaaa', 0))
-            dc.DrawCircle(cx, cy, 3)
+            # Glint on hole edge (top-left)
+            dc.SetBrush(wx.Brush('#888888'))
+            dc.SetPen(wx.Pen('#888888', 0))
+            dc.DrawCircle(cx - r_hole // 2, cy - r_hole // 2, 2)
 
             # Name label and net assignment — direction depends on binding post side
             label_below = lay.binding_post_side != 'bottom'
