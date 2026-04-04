@@ -4,16 +4,18 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 
 ## What it does
 
-- Renders an 830-point breadboard (63 columns × rows a–j, four power rails, three binding posts: GND / V1 / V2)
+- Renders a breadboard in five configurable sizes: mini (170 holes), half (400), full (830), double (2× full stacked), or triple (3× full with vertical power rails)
 - Parses a KiCad S-expression netlist and shows all placeable components in a side tray
 - Two-step placement for 2-pin components: click pin 1, then click pin 2
-- Single-click placement for DIP ICs and 3-pin components (BJT, POT)
+- Single-click placement for DIP ICs and 3-pin components (BJT, POT); DIP bodies show the reference and value (e.g. U1 / RC4558) for quick identification
+- TO-92 components (BJT, JFET) show the current pinout order (e.g. C-B-E or E-B-C) on their card; click `>` to cycle variants before placing
 - Draw jumper wires between any two holes (tie strip, rail, or binding post)
 - Validate the board against the schematic: highlights open nets (?) and shorts (⚡)
-- Export the board as a PNG image
+- Export the board as a PNG or SVG image
 - "Update from schematic" re-exports the netlist via `kicad-cli` without leaving the window
 - Save and load board sessions (`.kicad_bbrd`)
-- Instrument probes: place function-generator and oscilloscope connection points on the board; drag their labels freely for better visibility
+- Instrument probes: place function-generator, oscilloscope (1–4 channels), and PSU connection points on the board; drag their labels freely for better visibility
+- Preferences dialog (`File → Preferences…`) controls instruments, display, board layout, and export format; settings can be saved as defaults and restored on startup
 
 ## Supported components
 
@@ -75,8 +77,7 @@ If you have not exported a netlist yet, use **"Update from schematic"** in the t
 |---|---|
 | Open netlist | Load a `.net` file manually |
 | Update from schematic | Re-export netlist from `.kicad_sch` via `kicad-cli` and reload *(requires KiCad project; not available in standalone mode)* |
-| Export image | Save the current board view as a PNG |
-| Signal labels | Toggle net signal labels on the board |
+| Export image | Save the current board view as a PNG or SVG (format set in Preferences) |
 | Validate | Check if the breadboard matches the schematic |
 | Clear warnings | Dismiss `?` / `⚡` validation markers |
 | Clear board | Remove all placed components and wires |
@@ -102,23 +103,64 @@ If you have not exported a netlist yet, use **"Update from schematic"** in the t
 
 ---
 
+## Preferences
+
+Open **File → Preferences…** to configure the plugin. Settings take effect immediately when you click OK. Use **Save as default** to persist them to `~/.config/kicad_bbrd/prefs.json`, and tick **Load these settings on startup** to restore them automatically on next launch.
+
+### Instruments
+
+| Setting | Description |
+|---|---|
+| Enable instruments panel | Show or hide the Function generator / Oscilloscope / PSU section in the side panel |
+| Auto-assign schematic ground | Automatically assign net `0` or `GND` to instrument grounds when a netlist is loaded |
+| Oscilloscope channels | Number of oscilloscope channel rows shown (1–4) |
+| PSU channels | Number of PSU channel pairs shown (1–3) |
+
+### Display
+
+| Setting | Description |
+|---|---|
+| Show signal labels | Draw net names next to holes on the board |
+
+### Export
+
+| Setting | Description |
+|---|---|
+| Format | PNG (default) or SVG |
+
+### Board
+
+| Setting | Description |
+|---|---|
+| Size / layout | `Mini` (170 holes, no rails) · `Half` (400 holes) · `Full` (830 holes) · `Double` (2× full stacked) · `Triple` (3× full + vertical power rails) |
+| Binding posts side | Position of the GND / V1 / V2 binding posts: `Left` (default), `Right`, `Top`, or `Bottom` |
+| Show baseboard | Draw a colored panel behind the breadboard(s) |
+| Baseboard colour | Fill color of the baseboard |
+| Include branding | Display a logo image in the strip between the board body and the binding posts |
+| Branding image | Path to a custom PNG/SVG/JPG image; leave blank to use the built-in default |
+| Show binding posts on board | Toggle the circular binding-post terminals on the canvas |
+
+---
+
 ## Side panel
 
 ### Binding posts
 
-Three binding posts (GND, V1, V2) on the left of the board can be assigned to schematic nets via the dropdowns. GND is automatically assigned to net `0` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
+Three binding posts (GND, V1, V2) on the left of the board can be assigned to schematic nets via the dropdowns. GND is automatically assigned to net `0` (SPICE-style) or `GND` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
 
 ### Instruments
 
-The **Function generator** and **Oscilloscope** sections let you place optional probe markers on any hole. Each probe can be assigned to a schematic net independently of the binding posts.
+The **Function generator**, **Oscilloscope**, and **Power supply (PSU)** sections let you place optional probe markers on any hole. Each probe can be assigned to a schematic net independently of the binding posts. The instruments panel and the number of channels shown are configurable in **Preferences**.
 
 | Probe | Instrument |
 |---|---|
 | FG+ | Function generator signal |
 | FG⏚ | Function generator ground |
-| CH1 | Oscilloscope channel 1 |
-| CH2 | Oscilloscope channel 2 |
+| CH1–CH4 | Oscilloscope channels (1–4 shown, set in Preferences) |
 | SC⏚ | Oscilloscope ground |
+| PSU1+ / PSU1− | PSU channel 1 positive / negative |
+| PSU2+ / PSU2− | PSU channel 2 positive / negative |
+| PSU3+ / PSU3− | PSU channel 3 positive / negative |
 
 - Click **Place** to enter placement mode, then click any hole on the board.
 - Click **Remove** (same button once placed) to remove the probe.
@@ -149,6 +191,8 @@ At the top, a new breadboard icon appeared (in the toolbar, next to the CLI inpu
 That's it! Have fun!
 
 Robin
+
+> **Help menu:** use **Help → Check for updates…** to compare your installed version against the latest release on GitHub, or **Help → Report issue…** to open a pre-filled GitHub issue with your system information attached.
 
 ---
 
