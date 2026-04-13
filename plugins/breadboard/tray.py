@@ -15,31 +15,40 @@ rather than via PrepareDC, which is the reliable cross-platform pattern.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import List, Optional
 
 import wx
 
 from .model import (
     ComponentDef, ALL_DEFS, Netlist, NetlistComponent,
-    guess_type_id, Breadboard,
+    guess_type_id, Breadboard, TO92_PINOUT_VARIANTS,
 )
 
-CARD_W   = 110
-CARD_H   = 36
-CARD_PAD = 4
-SWATCH_W = 12
+CARD_W      = 110
+CARD_H      = 36
+TO92_CARD_H = 48   # taller to accommodate the pinout row
+CARD_PAD    = 4
+SWATCH_W    = 12
+
+# Cycle-button dimensions (TO-92 cards only)
+_BTN_W = 16
+_BTN_H = 12
+_BTN_RIGHT_PAD = 4   # gap between button right edge and card right edge
 
 
 class _Card:
     """Pure data — no wx widget."""
-    __slots__ = ('ref', 'comp', 'comp_def', 'y')
+    __slots__ = ('ref', 'comp', 'comp_def', 'y', 'height', 'pinout_idx')
 
     def __init__(self, ref: str, comp: NetlistComponent,
-                 comp_def: Optional[ComponentDef], y: int):
-        self.ref      = ref
-        self.comp     = comp
-        self.comp_def = comp_def
-        self.y        = y   # top-left y in virtual (unscrolled) coordinates
+                 comp_def: Optional[ComponentDef], y: int, height: int):
+        self.ref        = ref
+        self.comp       = comp
+        self.comp_def   = comp_def
+        self.y          = y       # top-left y in virtual (unscrolled) coordinates
+        self.height     = height
+        self.pinout_idx = 0       # index into TO92_PINOUT_VARIANTS[type_id]
 
 
 class ComponentTray(wx.ScrolledWindow):
@@ -79,8 +88,9 @@ class ComponentTray(wx.ScrolledWindow):
             if type_id is None:
                 continue
             comp_def = ALL_DEFS.get(type_id)
-            self._cards.append(_Card(ref=ref, comp=comp, comp_def=comp_def, y=y))
-            y += CARD_H + CARD_PAD
+            h = TO92_CARD_H if type_id in TO92_PINOUT_VARIANTS else CARD_H
+            self._cards.append(_Card(ref=ref, comp=comp, comp_def=comp_def, y=y, height=h))
+            y += h + CARD_PAD
 
         total_h = y if self._cards else CARD_PAD
         self.SetVirtualSize(CARD_W + CARD_PAD * 2, total_h)
@@ -90,7 +100,7 @@ class ComponentTray(wx.ScrolledWindow):
     def _card_at(self, virt_y: int) -> Optional[_Card]:
         """Return the card whose bounding box contains virtual y-coordinate virt_y."""
         for card in self._cards:
-            if card.y <= virt_y < card.y + CARD_H:
+            if card.y <= virt_y < card.y + card.height:
                 return card
         return None
 
@@ -113,24 +123,27 @@ class ComponentTray(wx.ScrolledWindow):
         font_bold   = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         font_normal = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
 
+        font_pinout = wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        font_btn    = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+
         for card in self._cards:
             placed = self.board.get_placement(card.ref) is not None
             x = CARD_PAD
             y = card.y - scroll_y   # virtual → screen coordinates
-            if y + CARD_H < 0 or y > client_h:
+            if y + card.height < 0 or y > client_h:
                 continue            # outside visible area
             bg = '#b8b8b8' if placed else '#f8f8f8'
 
             # Background
             dc.SetBrush(wx.Brush(bg))
             dc.SetPen(wx.TRANSPARENT_PEN)
-            dc.DrawRectangle(x, y, CARD_W, CARD_H)
+            dc.DrawRectangle(x, y, CARD_W, card.height)
 
             # Colour swatch
             color = card.comp_def.color if card.comp_def else '#aaaaaa'
             dc.SetBrush(wx.Brush(color if not placed else '#888888'))
             dc.SetPen(wx.Pen('#666666', 1))
-            dc.DrawRectangle(x + 4, y + 4, SWATCH_W, CARD_H - 8)
+            dc.DrawRectangle(x + 4, y + 4, SWATCH_W, card.height - 8)
 
             # Text
             fg = '#888888' if placed else '#222222'
@@ -143,23 +156,64 @@ class ComponentTray(wx.ScrolledWindow):
             dc.SetFont(font_normal)
             dc.DrawText(card.comp.value[:14], x + SWATCH_W + 8, y + 18)
 
+            # Pinout row (TO-92 only)
+            if card.height > CARD_H and card.comp_def:
+                variants = TO92_PINOUT_VARIANTS.get(card.comp_def.type_id, [])
+                if variants:
+                    pinout_label = variants[card.pinout_idx][0]
+                    dc.SetFont(font_pinout)
+                    dc.SetTextForeground(fg)
+                    dc.DrawText(pinout_label, x + SWATCH_W + 8, y + 32)
+
+                    # Cycle button (only when not placed and multiple variants exist)
+                    if len(variants) > 1 and not placed:
+                        btn_x = x + CARD_W - _BTN_W - _BTN_RIGHT_PAD
+                        btn_y = y + 30
+                        dc.SetBrush(wx.Brush('#d8d8d8'))
+                        dc.SetPen(wx.Pen('#888888', 1))
+                        dc.DrawRoundedRectangle(btn_x, btn_y, _BTN_W, _BTN_H, 2)
+                        dc.SetFont(font_btn)
+                        dc.SetTextForeground('#333333')
+                        tw, th = dc.GetTextExtent('>')
+                        dc.DrawText('>', btn_x + (_BTN_W - tw) // 2,
+                                    btn_y + (_BTN_H - th) // 2)
+
             # Border
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.SetPen(wx.Pen('#aaaaaa' if placed else '#888888', 1))
-            dc.DrawRectangle(x, y, CARD_W, CARD_H)
+            dc.DrawRectangle(x, y, CARD_W, card.height)
 
     # ------------------------------------------------------------------
     # Mouse
     # ------------------------------------------------------------------
 
     def _on_left_down(self, evt: wx.MouseEvent) -> None:
-        # Convert click position to virtual (unscrolled) coordinates
+        click_x = evt.GetX()
         _, virt_y = self.CalcUnscrolledPosition(evt.GetX(), evt.GetY())
         card = self._card_at(virt_y)
         if card is None:
             return
         placed = self.board.get_placement(card.ref) is not None
+
+        # Check if click landed on the cycle-pinout button (TO-92 only)
+        if (not placed and card.comp_def and
+                card.comp_def.type_id in TO92_PINOUT_VARIANTS):
+            variants = TO92_PINOUT_VARIANTS[card.comp_def.type_id]
+            if len(variants) > 1:
+                btn_x = CARD_PAD + CARD_W - _BTN_W - _BTN_RIGHT_PAD
+                if btn_x <= click_x < btn_x + _BTN_W:
+                    card.pinout_idx = (card.pinout_idx + 1) % len(variants)
+                    self.Refresh()
+                    return
+
         if placed or card.comp_def is None:
             return
         if self.on_pick is not None:
-            self.on_pick(card.comp_def, card.ref)
+            comp_def = card.comp_def
+            if (card.comp_def.type_id in TO92_PINOUT_VARIANTS
+                    and card.pinout_idx > 0):
+                _, variant_offsets = TO92_PINOUT_VARIANTS[
+                    card.comp_def.type_id][card.pinout_idx]
+                comp_def = dataclasses.replace(card.comp_def,
+                                               pin_offsets=variant_offsets)
+            self.on_pick(comp_def, card.ref)

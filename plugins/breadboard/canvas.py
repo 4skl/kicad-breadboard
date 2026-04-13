@@ -43,13 +43,27 @@ from typing import Dict, List, Optional, Set, Tuple
 import wx
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_BRAND_IMAGE = os.path.join(_HERE, 'resources', 'BBBLDR.png')
+_DEFAULT_BRAND_IMAGE = os.path.join(_HERE, 'resources', 'kicad_bbrd.png')
+
+
+def _parse_svg_size(path: str):
+    """Return (width, height) from SVG viewBox attribute, or (100.0, 100.0) as fallback."""
+    import re
+    try:
+        with open(path) as _f:
+            _data = _f.read(1024)
+        _m = re.search(r'viewBox=["\'][\d.eE+\- ]+ ([\d.eE+\-]+) ([\d.eE+\-]+)["\']', _data)
+        if _m:
+            return float(_m.group(1)), float(_m.group(2))
+    except Exception:
+        pass
+    return 100.0, 100.0
 
 from .model import (
     Breadboard, PlacedComponent, Wire,
     TieHole, RailHole, Terminal, Hole,
     COLUMNS, HALF_COLUMNS, MINI_COLUMNS, TOP_ROWS, BOT_ROWS, ALL_ROWS,
-    RAIL_NAMES, VERT_RAIL_NAMES, RAIL_LEN, VERT_RAIL_LEN, RAIL_SPLIT, TERMINAL_NAMES,
+    RAIL_NAMES, VERT_RAIL_NAMES, RAIL_LEN, VERT_RAIL_LEN_PER_SECTION, RAIL_SPLIT, TERMINAL_NAMES,
     RAILLESS_LAYOUTS,
     PROBE_NAMES, PROBE_META,
     ComponentDef, ALL_DEFS,
@@ -195,7 +209,7 @@ class CanvasLayout:
         self.binding_post_side = binding_post_side
         _col_map = {'mini': MINI_COLUMNS, 'half': HALF_COLUMNS}
         self.columns  = _col_map.get(board_layout, COLUMNS)
-        self.sections = {'half': 1, 'full': 1, 'double': 2, 'triple': 3}.get(board_layout, 1)
+        self.sections = {'half': 1, 'full': 1, 'double': 2, 'triple': 3, 'double_rails': 2}.get(board_layout, 1)
         self.has_rails = board_layout not in RAILLESS_LAYOUTS
         self.rail_len  = min(RAIL_LEN, self.columns) if self.has_rails else 0
 
@@ -204,7 +218,7 @@ class CanvasLayout:
         self._rail_rel: Dict[str, int] = {}
 
         if self.has_rails:
-            top_minus_rel = 0
+            top_minus_rel = MARGIN // 2   # built-in top padding — same spacing in every section
             top_plus_rel  = top_minus_rel + RAIL_H + 2
             tie_top_rel   = top_plus_rel  + RAIL_H + RAIL_GAP
             for i, row in enumerate(TOP_ROWS):
@@ -233,7 +247,8 @@ class CanvasLayout:
 
         # --- Section vertical offsets ---
         # Extra space reserved above/below when binding posts are on top/bottom
-        _post_extra = TERM_R * 2 + MARGIN
+        # Extra MARGIN added so terminals have breathing room before the board body
+        _post_extra = TERM_R * 2 + MARGIN * 2
         top_extra = _post_extra if binding_post_side == 'top'    else 0
         bot_extra = _post_extra if binding_post_side == 'bottom' else 0
         self._section_top = [
@@ -247,7 +262,7 @@ class CanvasLayout:
         self._rail_y = {rail: self._section_top[0] + off for rail, off in self._rail_rel.items()}
 
         # --- x layout ---
-        vert_space = VERT_STRIP_X if board_layout == 'triple' else 0
+        vert_space = VERT_STRIP_X if board_layout in ('triple', 'double_rails') else 0
         _brand = BRAND_STRIP if show_branding else 0
         _brand_gap = 8   # gap between branding strip and the nearest post edge
         _POST_BOARD_GAP = 40  # gap between post edge and nearest board body edge
@@ -260,7 +275,9 @@ class CanvasLayout:
             term_cx = MARGIN + (_brand + _brand_gap if _brand else 0) + TERM_R
             self.board_left = term_cx + TERM_R + _POST_BOARD_GAP + vert_space
         else:
-            self.board_left = MARGIN + vert_space
+            # board rect is drawn from (board_left − PITCH − MARGIN//2); keep
+            # that left edge at least MARGIN from the canvas edge (x = 0).
+            self.board_left = MARGIN + PITCH + MARGIN // 2 + vert_space
 
         board_right = self.board_left + (self.columns - 1) * PITCH
 
@@ -290,9 +307,10 @@ class CanvasLayout:
         # Legacy _term_y for any code still using it
         self._term_y = {name: pos[1] for name, pos in self._term_pos.items()}
 
-        # --- Vertical rails (triple layout only) ---
-        if board_layout == 'triple':
-            # Rails sit between binding posts (left) and board, or at left margin
+        # --- Vertical rails (triple and double_rails layouts) ---
+        if board_layout in ('triple', 'double_rails'):
+            vert_rail_len = self.sections * VERT_RAIL_LEN_PER_SECTION
+            # Left rails: between binding posts (left side) and board, or at left margin
             if binding_post_side == 'left':
                 vrl = term_cx + TERM_R + 8
             else:
@@ -301,16 +319,33 @@ class CanvasLayout:
                 'vert_plus':  vrl + PITCH,
                 'vert_minus': vrl + PITCH * 2,
             }
-            # Evenly distribute VERT_RAIL_LEN holes across full board height
-            span = self.total_height - 2 * MARGIN
-            step = span // max(1, VERT_RAIL_LEN - 1)
-            self._vert_hole_y: List[int] = [MARGIN + i * step for i in range(VERT_RAIL_LEN)]
+            # Right rails (double_rails only): mirror the left-side gap exactly.
+            # Compute the actual gap between the left rail background panel and the
+            # board body, then apply the same gap on the right.
+            if board_layout == 'double_rails':
+                _sw2 = (PITCH - 4) // 2
+                _board_vis_left  = self.board_left - PITCH - MARGIN // 2
+                _left_gap = _board_vis_left - (vrl + 2 * PITCH + _sw2 + 4)
+                _board_vis_right = board_right + PITCH + MARGIN // 2
+                vrr = _board_vis_right + _left_gap - PITCH + _sw2 + 4
+                self._vert_rail_cx['vert_right_plus']  = vrr + PITCH
+                self._vert_rail_cx['vert_right_minus'] = vrr + PITCH * 2
+            # Distribute holes across the stacked-board height (not full canvas height),
+            # with an inset of MARGIN so the top/bottom holes clear the +/− symbols.
+            boards_top    = self._section_top[0] - MARGIN // 2
+            boards_bottom = self._section_top[-1] + self._section_body_h
+            hole_pad = MARGIN
+            span = (boards_bottom - hole_pad) - (boards_top + hole_pad)
+            step = span // max(1, vert_rail_len - 1)
+            self._vert_hole_y: List[int] = [boards_top + hole_pad + i * step for i in range(vert_rail_len)]
         else:
             self._vert_rail_cx = {}
             self._vert_hole_y  = []
 
         # --- Total width ---
         right_edge = board_right + PITCH + MARGIN // 2
+        if board_layout == 'double_rails':
+            right_edge = self._vert_rail_cx['vert_right_minus'] + PITCH // 2
         if binding_post_side == 'right':
             # posts sit right of board; brand (if any) sits right of posts
             right_edge = term_cx + TERM_R + (_brand_gap + _brand if _brand else 0)
@@ -390,9 +425,9 @@ class CanvasLayout:
                 return None
             return self.col_x(hole.col), self.section_row_y(hole.row, s)
         if isinstance(hole, RailHole):
-            if hole.rail in VERT_RAIL_NAMES:
-                cx = self._vert_rail_cx.get(hole.rail)
-                if cx is None or hole.index < 1 or hole.index > len(self._vert_hole_y):
+            if hole.rail in self._vert_rail_cx:
+                cx = self._vert_rail_cx[hole.rail]
+                if hole.index < 1 or hole.index > len(self._vert_hole_y):
                     return None
                 return cx, self._vert_hole_y[hole.index - 1]
             if not self.has_rails:
@@ -1161,7 +1196,7 @@ class BreadboardCanvas(wx.Panel):
             self._draw_center_gap(dc, section)
             self._draw_holes(dc, section)
 
-        if lay.board_layout == 'triple':
+        if lay.board_layout in ('triple', 'double_rails'):
             self._draw_vert_rails(dc)
 
         self._draw_wires(dc)
@@ -1187,26 +1222,10 @@ class BreadboardCanvas(wx.Panel):
     def _draw_baseboard(self, dc: wx.DC) -> None:
         lay = self.layout
 
-        # Start from the full canvas extent (which already has MARGIN on every
-        # side).  When binding posts are on the top or bottom the layout adds
-        # extra space on the post side but not the opposite side, making the
-        # board body sit too close to that baseboard edge.  Mirror that extra
-        # space so the board body appears centred inside the baseboard.
-        w = lay.total_width()
-        h = lay.total_height
-        x, y = 0, 0
-
-        if lay.binding_post_side == 'top':
-            # Extra space above board: section_top[0] minus the base MARGIN
-            extra = lay._section_top[0] - MARGIN
-            h += extra
-        elif lay.binding_post_side == 'bottom':
-            # Extra space below board: symmetric mirror at the top
-            extra = lay.total_height - (lay._section_top[-1] + lay._section_body_h) - MARGIN
-            y -= extra
-            h += extra
-
-        base_rect = wx.Rect(x, y, w, h)
+        # The layout already reserves MARGIN on every side and allocates extra
+        # space for top/bottom binding posts, so the full canvas extent is the
+        # correct baseboard boundary.
+        base_rect = wx.Rect(0, 0, lay.total_width(), lay.total_height)
 
         color = self.baseboard_color
         try:
@@ -1220,20 +1239,105 @@ class BreadboardCanvas(wx.Panel):
             min(255, c.Green() + 30),
             min(255, c.Blue()  + 30),
         )
+        ring_c = wx.Colour(
+            min(255, c.Red()   + 60),
+            min(255, c.Green() + 60),
+            min(255, c.Blue()  + 60),
+        )
+        shadow_c = wx.Colour(
+            max(0, c.Red()   - 45),
+            max(0, c.Green() - 45),
+            max(0, c.Blue()  - 45),
+        )
+        w, h = base_rect.width, base_rect.height
+
+        # Main flat body
         dc.SetBrush(wx.Brush(c))
         dc.SetPen(wx.Pen(border_c, 2))
         dc.DrawRoundedRectangle(base_rect, 12)
+
+        # Drop-shadow strips on bottom and right inner edges (same idea as terminal shadow)
+        SH, inset = 4, 10
+        dc.SetBrush(wx.Brush(shadow_c))
+        dc.SetPen(wx.Pen(shadow_c, 0))
+        dc.DrawRoundedRectangle(inset, h - inset - SH, w - 2 * inset, SH, 2)   # bottom
+        dc.DrawRoundedRectangle(w - inset - SH, inset, SH, h - 2 * inset, 2)   # right
+
+        # Inner highlight ring on all edges (the line the user confirmed they like)
+        dc.SetBrush(wx.Brush(c))
+        dc.SetPen(wx.Pen(ring_c, 2))
+        dc.DrawRoundedRectangle(4, 4, w - 8, h - 8, 10)
 
         if self.show_branding and lay.branding_rect is not None:
             self._draw_branding(dc, lay.branding_rect)
 
     def _draw_branding(self, dc: wx.DC, rect: wx.Rect) -> None:
         """Draw the branding image inside rect.
-        For left/right posts the rect is a vertical strip; the image is rotated 90° CCW."""
+        For left/right posts the rect is a vertical strip; the image is rotated 90° CCW.
+
+        Images are rasterised at physical-pixel dimensions (logical × DC zoom) so the
+        DC's zoom transform never upscales a low-res bitmap, preventing pixelation.
+
+        Intentionally uses dc.DrawBitmap (not a GraphicsContext).  On GTK/Linux,
+        creating and destroying a GC mid-paint corrupts the Cairo DC state and causes
+        all subsequent direct-DC drawing (the section body, rails, holes, …) to become
+        invisible — manifesting as the baseboard hiding the entire breadboard.
+        Instead the bitmap is drawn in screen coordinates by temporarily resetting the
+        DC transform, then restoring it.
+        """
         img_path = self.branding_image or (
             _DEFAULT_BRAND_IMAGE if os.path.isfile(_DEFAULT_BRAND_IMAGE) else '')
         if not img_path:
             return
+
+        # Use known canvas state rather than querying the DC: on GTK,
+        # dc.GetDeviceOrigin() unreliably returns (0,0) even after
+        # SetDeviceOrigin(pan_x, pan_y), so restoring that value would shift
+        # all subsequent drawing to the wrong position.
+        zoom = self._zoom
+        ox, oy = int(self._pan_x), int(self._pan_y)
+
+        def _blit(bmp: wx.Bitmap, log_w: int, log_h: int) -> None:
+            """Blit bmp (rasterised at log_w*zoom × log_h*zoom screen px) centred in
+            rect.  Converts the logical centre position to screen coords, resets the
+            DC transform, draws 1:1, then restores the transform."""
+            sx = int((rect.x + (rect.width  - log_w) // 2) * zoom + ox)
+            sy = int((rect.y + (rect.height - log_h) // 2) * zoom + oy)
+            dc.SetUserScale(1.0, 1.0)
+            dc.SetDeviceOrigin(0, 0)
+            try:
+                dc.DrawBitmap(bmp, sx, sy, True)
+            finally:
+                dc.SetUserScale(zoom, zoom)
+                dc.SetDeviceOrigin(ox, oy)
+
+        try:
+            if img_path.lower().endswith('.svg') and hasattr(wx, 'BitmapBundle'):
+                iw, ih = _parse_svg_size(img_path)
+                if self.layout.branding_rotated:
+                    # SVG is landscape; rasterise pre-rotation then rotate so it fills
+                    # the portrait rect.
+                    scale = min(rect.height / iw, rect.width / ih) if iw and ih else 1.0
+                    nw = max(1, int(iw * scale))
+                    nh = max(1, int(ih * scale))
+                    rnw, rnh = max(1, int(nw * zoom)), max(1, int(nh * zoom))
+                    bundle = wx.BitmapBundle.FromSVGFile(img_path, wx.Size(rnw, rnh))
+                    bmp = wx.Bitmap(
+                        bundle.GetBitmap(wx.Size(rnw, rnh))
+                              .ConvertToImage().Rotate90(clockwise=False)
+                    )
+                    _blit(bmp, nh, nw)   # logical dims swap after 90° rotation
+                else:
+                    scale = min(rect.width / iw, rect.height / ih) if iw and ih else 1.0
+                    nw = max(1, int(iw * scale))
+                    nh = max(1, int(ih * scale))
+                    rnw, rnh = max(1, int(nw * zoom)), max(1, int(nh * zoom))
+                    bundle = wx.BitmapBundle.FromSVGFile(img_path, wx.Size(rnw, rnh))
+                    bmp = bundle.GetBitmap(wx.Size(rnw, rnh))
+                    _blit(bmp, nw, nh)
+                return
+        except Exception:
+            pass
         try:
             img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)
             if not img.IsOk():
@@ -1244,11 +1348,9 @@ class BreadboardCanvas(wx.Panel):
             scale = min(rect.width / iw, rect.height / ih) if iw and ih else 1.0
             nw = max(1, int(iw * scale))
             nh = max(1, int(ih * scale))
-            img = img.Scale(nw, nh, wx.IMAGE_QUALITY_HIGH)
-            dc.DrawBitmap(wx.Bitmap(img),
-                          rect.x + (rect.width  - nw) // 2,
-                          rect.y + (rect.height - nh) // 2,
-                          True)
+            rnw, rnh = max(1, int(nw * zoom)), max(1, int(nh * zoom))
+            img = img.Scale(rnw, rnh, wx.IMAGE_QUALITY_HIGH)
+            _blit(wx.Bitmap(img), nw, nh)
         except Exception:
             pass
 
@@ -1257,9 +1359,9 @@ class BreadboardCanvas(wx.Panel):
         top = lay._section_top[section]
         board_rect = wx.Rect(
             lay.board_left - PITCH - MARGIN // 2,
-            top - MARGIN // 2,
-            lay.columns * PITCH + MARGIN,
-            lay._section_body_h + MARGIN // 2,
+            top,
+            (lay.columns + 1) * PITCH + MARGIN,   # extra PITCH makes right margin == left margin
+            lay._section_body_h,
         )
         dc.SetBrush(wx.Brush('#e8e0c8'))
         dc.SetPen(wx.Pen('#b0a090', 1))
@@ -1267,27 +1369,43 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_vert_rails(self, dc: wx.DC) -> None:
         lay = self.layout
-        rail_colors = {'vert_plus': '#cc2222', 'vert_minus': '#2244cc'}
+        rail_colors = {
+            'vert_plus':        '#cc2222',
+            'vert_minus':       '#2244cc',
+            'vert_right_plus':  '#cc2222',
+            'vert_right_minus': '#2244cc',
+        }
 
-        # Cream background panel behind both vertical rails
-        if lay._vert_rail_cx:
-            xs = list(lay._vert_rail_cx.values())
-            bg_x = min(xs) - PITCH // 2 - 4
-            bg_w = max(xs) - min(xs) + PITCH + 8
-            bg_rect = wx.Rect(bg_x, MARGIN // 2, bg_w, lay.total_height - MARGIN)
+        if not lay._vert_rail_cx:
+            return
+
+        # Rails span only the stacked-board height
+        boards_top    = lay._section_top[0] - MARGIN // 2
+        boards_bottom = lay._section_top[-1] + lay._section_body_h
+        boards_height = boards_bottom - boards_top
+
+        # Draw a cream background panel for each side (left / right) separately
+        board_cx = lay.board_left + (lay.columns - 1) * PITCH // 2
+        for side_rails in (
+            {r: cx for r, cx in lay._vert_rail_cx.items() if cx <= board_cx},
+            {r: cx for r, cx in lay._vert_rail_cx.items() if cx >  board_cx},
+        ):
+            if not side_rails:
+                continue
+            xs = list(side_rails.values())
+            sw2 = (PITCH - 4) // 2   # half the strip width
+            bg_x = min(xs) - sw2 - 4
+            bg_w = max(xs) - min(xs) + 2 * sw2 + 8
+            bg_rect = wx.Rect(bg_x, boards_top, bg_w, boards_height)
             dc.SetBrush(wx.Brush('#e8e0c8'))
             dc.SetPen(wx.Pen('#b0a090', 1))
             dc.DrawRoundedRectangle(bg_rect, 6)
 
+        strip_w = PITCH - 4   # match horizontal rail strip_h (= RAIL_H - 4 = 14 px)
         for rail, cx in lay._vert_rail_cx.items():
-            color = rail_colors[rail]
-            # Strip background spanning full height
-            strip_rect = wx.Rect(
-                cx - PITCH // 2,
-                MARGIN,
-                PITCH,
-                lay.total_height - 2 * MARGIN,
-            )
+            color = rail_colors.get(rail, '#cc2222')
+            strip_rect = wx.Rect(cx - strip_w // 2, boards_top + 2,
+                                 strip_w, boards_height - 4)
             dc.SetBrush(wx.Brush(color))
             dc.SetPen(wx.Pen(color, 0))
             dc.DrawRoundedRectangle(strip_rect, 4)
@@ -1300,8 +1418,8 @@ class BreadboardCanvas(wx.Panel):
                                wx.FONTWEIGHT_BOLD))
             dc.SetTextForeground('#ffffff')
             tw, th = dc.GetTextExtent(symbol)
-            dc.DrawText(symbol, cx - tw // 2, MARGIN + 2)
-            dc.DrawText(symbol, cx - tw // 2, lay.total_height - MARGIN - th - 2)
+            dc.DrawText(symbol, cx - tw // 2, boards_top + 2)
+            dc.DrawText(symbol, cx - tw // 2, boards_bottom - th - 2)
 
     def _draw_rails(self, dc: wx.DC, section: int = 0) -> None:
         lay = self.layout
@@ -1348,7 +1466,7 @@ class BreadboardCanvas(wx.Panel):
         gap_rect = wx.Rect(
             lay.board_left - PITCH - MARGIN // 4,
             gap_y_top,
-            lay.columns * PITCH + MARGIN // 2,
+            (lay.columns + 1) * PITCH + MARGIN // 2,   # extra PITCH for equal left/right margin
             gap_y_bot - gap_y_top,
         )
         dc.SetBrush(wx.Brush('#c0b898'))
@@ -1659,23 +1777,66 @@ class BreadboardCanvas(wx.Panel):
         pen_w = 2 if selected else 1
 
         if placed.type_id == 'LED':
-            r = 10.0
+            r = 13.0
+            r_inner = 10.0  # inner lens ring radius (thin ring between r_inner and r)
+
             # Lead lines from each pin to the circle edge
             dc.SetPen(wx.Pen('#888888', 3))
             dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
             dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
-            # Circle body (rotation-invariant)
-            dc.SetBrush(wx.Brush(body_color))
-            dc.SetPen(wx.Pen(border_color, pen_w))
-            dc.DrawCircle(int(mx), int(my), int(r))
-            # Flat cathode marker on pin-1 side, drawn rotated via GC
-            # Pin 1 = K (cathode) per KiCad Device:LED convention
+
+            # All rotated details via GC; -x direction = cathode (pin 1 = K)
             gc = wx.GraphicsContext.Create(dc)
             gc.Translate(mx, my)
             gc.Rotate(angle)
-            gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#444444'))))
-            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#444444')).Width(1)))
-            gc.DrawRectangle(-r, -(r - 1), 4, (r - 1) * 2)
+
+            # Outer circle body
+            gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
+            _circ = gc.CreatePath()
+            _circ.AddEllipse(-r, -r, 2 * r, 2 * r)
+            gc.FillPath(_circ)
+
+            # Cathode marker: dark arc segment on the -x (cathode/K) side
+            stripe_x = r * 0.62
+            y_isect  = math.sqrt(r * r - stripe_x * stripe_x)
+            theta    = math.atan2(y_isect, stripe_x)
+            sp = gc.CreatePath()
+            sp.MoveToPoint(-stripe_x, -y_isect)
+            sp.AddArc(0, 0, r, -(math.pi - theta), math.pi - theta, False)
+            sp.AddLineToPoint(-stripe_x, -y_isect)
+            sp.CloseSubpath()
+            gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#111111'))))
+            gc.FillPath(sp)
+
+            # Inner lens: radial gradient from bright highlight to lens_color,
+            # giving a dome/shine-through appearance distinct from the electrolytic.
+            bc = body_color
+            lens_color = wx.Colour(
+                min(255, int(bc.Red()   + (255 - bc.Red())   * 0.35)),
+                min(255, int(bc.Green() + (255 - bc.Green()) * 0.35)),
+                min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.35)),
+            )
+            highlight = wx.Colour(
+                min(255, int(bc.Red()   + (255 - bc.Red())   * 0.82)),
+                min(255, int(bc.Green() + (255 - bc.Green()) * 0.82)),
+                min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.82)),
+            )
+            fx, fy = -r_inner * 0.25, -r_inner * 0.25
+            lens_grad = gc.CreateRadialGradientBrush(
+                0, 0, fx, fy, r_inner, highlight, lens_color)
+            gc.SetBrush(lens_grad)
+            _lens = gc.CreatePath()
+            _lens.AddEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
+            gc.FillPath(_lens)
+
+            # Outer circle border (on top of everything)
+            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+            gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
+
+            # Inner concentric ring (lens edge)
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(1)))
+            gc.DrawEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
         elif placed.type_id == 'C_POL':
             # Electrolytic capacitor — top-down view: circle with a black stripe
             # on the negative (pin-2) side and a "+" marker on the positive side.
@@ -1832,7 +1993,15 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetPen(wx.Pen('#444444', 1, wx.PENSTYLE_DOT))
                 dc.DrawRoundedRectangle(hx - 12, fy, 24, flag_h, 3)
 
+    def _baseboard_bg_is_dark(self) -> bool:
+        """Return True if the area behind binding-post labels is perceptually dark."""
+        hex_color = self.baseboard_color if self.show_baseboard else '#f0f0f0'
+        c = wx.Colour(hex_color)
+        lum = 0.299 * c.Red() + 0.587 * c.Green() + 0.114 * c.Blue()
+        return lum < 128
+
     def _draw_terminals(self, dc: wx.DC) -> None:
+        dark_bg = self._baseboard_bg_is_dark()
         lay = self.layout
         for name in TERMINAL_NAMES:
             t = Terminal(name)
@@ -1897,7 +2066,7 @@ class BreadboardCanvas(wx.Panel):
             label_below = lay.binding_post_side != 'bottom'
             dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_BOLD))
-            dc.SetTextForeground('#222222')
+            dc.SetTextForeground('#ffffff' if dark_bg else '#222222')
             tw, th = dc.GetTextExtent(name)
             if label_below:
                 lbl_y  = cy + TERM_R + 3
@@ -1911,7 +2080,10 @@ class BreadboardCanvas(wx.Panel):
             net_label = assigned if assigned else ''
             dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
-            dc.SetTextForeground('#446644' if assigned else '#999999')
+            dc.SetTextForeground(
+                ('#ffffff' if assigned else '#aaaaaa') if dark_bg
+                else ('#446644' if assigned else '#999999')
+            )
             max_w = TERM_R * 2 + 8
             while dc.GetTextExtent(net_label).Width > max_w and len(net_label) > 4:
                 net_label = net_label[:-2] + '…'
@@ -2077,6 +2249,75 @@ class BreadboardCanvas(wx.Panel):
         angle = math.atan2(dy, dx)
         ux, uy = dx / length, dy / length
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+
+        base = wx.Colour(comp_def.color)
+        ghost_color = wx.Colour(base.Red(), base.Green(), base.Blue(), 0x88)
+        border_pen = gc_pen = wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1).Style(wx.PENSTYLE_DOT)
+
+        if comp_def.type_id == 'LED':
+            r = 13.0
+            r_inner = 10.0
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
+            dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
+            gc = wx.GraphicsContext.Create(dc)
+            gc.Translate(mx, my)
+            gc.Rotate(angle)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+            gc.SetPen(gc.CreatePen(border_pen))
+            gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
+            # Cathode arc (K = pin 1, at -x after rotation)
+            stripe_x = r * 0.62
+            y_isect = math.sqrt(r * r - stripe_x * stripe_x)
+            theta = math.atan2(y_isect, stripe_x)
+            sp = gc.CreatePath()
+            sp.MoveToPoint(-stripe_x, -y_isect)
+            sp.AddArc(0, 0, r, -(math.pi - theta), math.pi - theta, False)
+            sp.AddLineToPoint(-stripe_x, -y_isect)
+            sp.CloseSubpath()
+            k_col = wx.Colour(0x11, 0x11, 0x11, 0x99)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(k_col)))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(k_col).Width(0)))
+            gc.DrawPath(sp)
+            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+            gc.SetPen(gc.CreatePen(border_pen))
+            gc.DrawEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
+            return
+
+        if comp_def.type_id == 'C_POL':
+            r = 13.0
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
+            dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
+            gc = wx.GraphicsContext.Create(dc)
+            gc.Translate(mx, my)
+            gc.Rotate(angle)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ghost_color).Width(0)))
+            gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
+            # Negative stripe on pin-2 (+x) side
+            stripe_x = r * 0.55
+            y_isect = math.sqrt(r * r - stripe_x * stripe_x)
+            theta = math.atan2(y_isect, stripe_x)
+            sp = gc.CreatePath()
+            sp.MoveToPoint(stripe_x, -y_isect)
+            sp.AddArc(0, 0, r, -theta, theta, True)
+            sp.AddLineToPoint(stripe_x, -y_isect)
+            sp.CloseSubpath()
+            stripe = wx.Colour(0x11, 0x11, 0x11, 0x99)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(stripe)))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(stripe).Width(0)))
+            gc.DrawPath(sp)
+            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+            gc.SetPen(gc.CreatePen(border_pen))
+            gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
+            font = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                           wx.FONTWEIGHT_BOLD)
+            gc.SetFont(gc.CreateFont(font, wx.Colour(0xff, 0xff, 0xff, 0xaa)))
+            tw, th = gc.GetTextExtent('+')
+            gc.DrawText('+', -r + 3, -th / 2)
+            return
+
         body_half = max(length * 0.25, 8.0)
 
         bx1, by1 = mx - ux * body_half, my - uy * body_half
@@ -2086,19 +2327,13 @@ class BreadboardCanvas(wx.Panel):
         dc.DrawLine(int(x1), int(y1), int(bx1), int(by1))
         dc.DrawLine(int(bx2), int(by2), int(x2), int(y2))
 
-        base = wx.Colour(comp_def.color)
-        ghost_color = wx.Colour(base.Red(), base.Green(), base.Blue(), 0x88)
-
         gc = wx.GraphicsContext.Create(dc)
         gc.Translate(mx, my)
         gc.Rotate(angle)
         body_w = body_half * 2
         body_h = 14.0
         gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
-        gc.SetPen(gc.CreatePen(
-            wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1)
-            .Style(wx.PENSTYLE_DOT)
-        ))
+        gc.SetPen(gc.CreatePen(border_pen))
         gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
     def _draw_wire_start_indicator(self, dc: wx.DC) -> None:

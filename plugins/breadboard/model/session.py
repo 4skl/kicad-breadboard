@@ -36,9 +36,10 @@ SESSION_VERSION = 1
 
 def _hole_to_json(h: Hole) -> list:
     if isinstance(h, TieHole):
-        return ['tie', h.col, h.row]
+        # Omit section when 0 for backward compatibility
+        return ['tie', h.col, h.row] if h.section == 0 else ['tie', h.col, h.row, h.section]
     if isinstance(h, RailHole):
-        return ['rail', h.rail, h.index]
+        return ['rail', h.rail, h.index] if h.section == 0 else ['rail', h.rail, h.index, h.section]
     if isinstance(h, Terminal):
         return ['terminal', h.name]
     raise TypeError(f"Unknown hole type: {type(h)}")
@@ -47,9 +48,11 @@ def _hole_to_json(h: Hole) -> list:
 def _hole_from_json(data: list) -> Hole:
     kind = data[0]
     if kind == 'tie':
-        return TieHole(col=data[1], row=data[2])
+        section = data[3] if len(data) > 3 else 0
+        return TieHole(col=data[1], row=data[2], section=section)
     if kind == 'rail':
-        return RailHole(rail=data[1], index=data[2])
+        section = data[3] if len(data) > 3 else 0
+        return RailHole(rail=data[1], index=data[2], section=section)
     if kind == 'terminal':
         return Terminal(name=data[1])
     raise ValueError(f"Unknown hole kind: {kind!r}")
@@ -64,6 +67,7 @@ def save_session(board: Breadboard, netlist_path: Optional[str], path: str) -> N
     doc: Dict[str, Any] = {
         'version': SESSION_VERSION,
         'netlist': netlist_path or '',
+        'board': {'layout': board.layout},
         'terminals': {},
         'placements': [],
         'wires': [],
@@ -123,7 +127,8 @@ def load_session(path: str) -> Dict[str, Any]:
     if version != SESSION_VERSION:
         raise ValueError(f"Unsupported session version {version} (expected {SESSION_VERSION})")
 
-    board = Breadboard()
+    board_cfg = raw.get('board', {})
+    board = Breadboard(layout=board_cfg.get('layout', 'full'))
 
     for name, net in raw.get('terminals', {}).items():
         if name in TERMINAL_NAMES and net:
@@ -155,4 +160,5 @@ def load_session(path: str) -> Dict[str, Any]:
     return {
         'netlist_path': raw.get('netlist', '') or None,
         'board': board,
+        'board_layout': board_cfg.get('layout', 'full'),
     }

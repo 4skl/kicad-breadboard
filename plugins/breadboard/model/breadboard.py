@@ -1,42 +1,74 @@
 """
 Core breadboard data model.
 
-830-point standard breadboard:
-- Tie strip area: 63 columns × 10 rows (a–j), split into top bank (a–e) and bottom bank (f–j)
-- 4 power rails: top_plus, top_minus, bot_plus, bot_minus — each 50 holes long
-- 3 lab power supply terminals: GND, V1, V2
+Supports five layouts:
+  'half'         — 400-point half board (30 columns × 10 rows)
+  'full'         — 830-point standard board (63 columns × 10 rows)  [default]
+  'double'       — two full boards stacked (sections 0 and 1)
+  'triple'       — three full boards stacked (sections 0–2) + shared left vertical power rails
+  'double_rails' — two full boards stacked + shared left AND right vertical power rails
+
+Each section has:
+- Tie strip area: columns × 10 rows (a–j)
+- 4 power rails per section: top_plus, top_minus, bot_plus, bot_minus
+- 3 lab power supply terminals: GND, V1, V2  (shared, no section)
+
+Triple layout additionally has:
+- 2 shared left vertical rails spanning all sections: vert_plus, vert_minus
+
+Double_rails layout additionally has:
+- 2 shared left vertical rails: vert_plus, vert_minus
+- 2 shared right vertical rails: vert_right_plus, vert_right_minus
 
 Connectivity rules (static):
-- All holes in the same column + same bank are connected (tie strips)
-- All holes in the same power rail are connected
+- All holes in the same column + same bank + same section are connected (tie strips)
+- All holes in the same power rail + same section are connected
+- vert_plus/vert_minus/vert_right_plus/vert_right_minus holes are each fully connected (no split)
 - Terminals are isolated until the student connects them with wires
-
-Dynamic state (modified by student):
-- Placed components map each pin to a specific hole
-- Wires connect any two holes
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-COLUMNS = 63
+COLUMNS = 63          # default (full/double/triple)
+HALF_COLUMNS = 30     # half-size board
+MINI_COLUMNS = 17     # mini board (170 points, no rails)
 TOP_ROWS = ('a', 'b', 'c', 'd', 'e')
 BOT_ROWS = ('f', 'g', 'h', 'i', 'j')
 ALL_ROWS = TOP_ROWS + BOT_ROWS
 RAIL_NAMES = ('top_plus', 'top_minus', 'bot_plus', 'bot_minus')
+VERT_RAIL_NAMES = ('vert_plus', 'vert_minus')                       # left vert rails (triple, double_rails)
+VERT_RAIL_NAMES_RIGHT = ('vert_right_plus', 'vert_right_minus')    # right vert rails (double_rails only)
+VERT_RAIL_LEN = 60                              # holes per vertical rail for triple (20 per section)
+VERT_RAIL_LEN_PER_SECTION = 20                  # holes per section on vertical rails
+ALL_RAIL_NAMES = RAIL_NAMES + VERT_RAIL_NAMES + VERT_RAIL_NAMES_RIGHT
 RAIL_LEN = 50
 RAIL_SPLIT = 25     # rails are split into two electrically separate halves here
 TERMINAL_NAMES = ('GND', 'V1', 'V2')
 
+# Derived per-layout constants
+_LAYOUT_PARAMS: Dict[str, Tuple[int, int]] = {
+    'mini':         (MINI_COLUMNS, 1),
+    'half':         (HALF_COLUMNS, 1),
+    'full':         (COLUMNS,      1),
+    'double':       (COLUMNS,      2),
+    'triple':       (COLUMNS,      3),
+    'double_rails': (COLUMNS,      2),
+}
+# Layouts that have no power rails
+RAILLESS_LAYOUTS = frozenset({'mini'})
+
 # Instrument probe points — placed by the student on arbitrary holes
-PROBE_NAMES = ('FG+', 'FG_GND', 'CH1', 'CH2', 'SCOPE_GND',
+PROBE_NAMES = ('FG+', 'FG_GND', 'CH1', 'CH2', 'CH3', 'CH4', 'SCOPE_GND',
                'PSU1+', 'PSU1-', 'PSU2+', 'PSU2-', 'PSU3+', 'PSU3-')
 PROBE_META = {
     'FG+':       {'label': 'FG+',  'color': '#c87000'},
     'FG_GND':    {'label': 'FG⏚',  'color': '#444444'},
     'CH1':       {'label': 'CH1',  'color': '#b09800'},
     'CH2':       {'label': 'CH2',  'color': '#1050b0'},
+    'CH3':       {'label': 'CH3',  'color': '#208050'},
+    'CH4':       {'label': 'CH4',  'color': '#802080'},
     'SCOPE_GND': {'label': 'SC⏚',  'color': '#444444'},
     'PSU1+':     {'label': 'PSU1+', 'color': '#cc2020'},
     'PSU1-':     {'label': 'PSU1-', 'color': '#882020'},
@@ -49,31 +81,37 @@ PROBE_META = {
 
 @dataclass(frozen=True)
 class TieHole:
-    col: int   # 1–63
-    row: str   # 'a'–'j'
+    col: int        # 1–columns (layout-dependent)
+    row: str        # 'a'–'j'
+    section: int = 0   # 0 = first board, 1 = second, 2 = third
 
     def __post_init__(self):
-        assert 1 <= self.col <= COLUMNS, f"Column {self.col} out of range 1–{COLUMNS}"
+        assert self.col >= 1, f"Column {self.col} must be >= 1"
         assert self.row in ALL_ROWS, f"Row {self.row!r} not in {ALL_ROWS}"
+        assert self.section >= 0, f"Section {self.section} must be >= 0"
 
     def bank(self) -> str:
         return 'top' if self.row in TOP_ROWS else 'bot'
 
     def __repr__(self):
-        return f"{self.row}{self.col}"
+        s = f'[{self.section}]' if self.section else ''
+        return f"{self.row}{self.col}{s}"
 
 
 @dataclass(frozen=True)
 class RailHole:
-    rail: str   # one of RAIL_NAMES
-    index: int  # 1–RAIL_LEN
+    rail: str       # one of ALL_RAIL_NAMES
+    index: int      # 1–RAIL_LEN (or 1–VERT_RAIL_LEN for vert rails)
+    section: int = 0   # 0 for vert rails (they span all sections)
 
     def __post_init__(self):
-        assert self.rail in RAIL_NAMES, f"Unknown rail {self.rail!r}"
-        assert 1 <= self.index <= RAIL_LEN, f"Rail index {self.index} out of range"
+        assert self.rail in ALL_RAIL_NAMES, f"Unknown rail {self.rail!r}"
+        assert self.index >= 1, f"Rail index {self.index} must be >= 1"
+        assert self.section >= 0, f"Section {self.section} must be >= 0"
 
     def __repr__(self):
-        return f"{self.rail}[{self.index}]"
+        s = f'[{self.section}]' if self.section else ''
+        return f"{self.rail}{s}[{self.index}]"
 
 
 @dataclass(frozen=True)
@@ -146,9 +184,13 @@ class Breadboard:
     Full breadboard state: static topology + student's dynamic placements.
 
     The connectivity is rebuilt on demand via build_connectivity().
+
+    layout: one of 'half', 'full', 'double', 'triple'
     """
 
-    def __init__(self):
+    def __init__(self, layout: str = 'full'):
+        self.layout = layout
+        self.columns, self.sections = _LAYOUT_PARAMS.get(layout, (COLUMNS, 1))
         self._placements: Dict[str, PlacedComponent] = {}   # ref → placement
         self._wires: List[Wire] = []
         self._static: List[Tuple[Hole, Hole]] = list(self._build_static())
@@ -162,19 +204,33 @@ class Breadboard:
     # ------------------------------------------------------------------
 
     def _build_static(self):
-        # Tie strips: connect each hole to its neighbour in the same bank
-        for col in range(1, COLUMNS + 1):
-            for rows in (TOP_ROWS, BOT_ROWS):
-                for i in range(len(rows) - 1):
-                    yield TieHole(col, rows[i]), TieHole(col, rows[i + 1])
+        # Tie strips: connect each hole to its neighbour in the same bank, per section
+        for section in range(self.sections):
+            for col in range(1, self.columns + 1):
+                for rows in (TOP_ROWS, BOT_ROWS):
+                    for i in range(len(rows) - 1):
+                        yield TieHole(col, rows[i], section), TieHole(col, rows[i + 1], section)
 
-        # Power rails: two electrically separate halves (like a real 830-pt board).
-        # Left half: holes 1–RAIL_SPLIT, right half: holes RAIL_SPLIT+1–RAIL_LEN.
-        for rail in RAIL_NAMES:
-            for i in range(1, RAIL_LEN):
-                if i == RAIL_SPLIT:
-                    continue        # gap — no connection across the split
-                yield RailHole(rail, i), RailHole(rail, i + 1)
+        # Power rails per section (not present on mini boards)
+        if self.layout not in RAILLESS_LAYOUTS:
+            for section in range(self.sections):
+                for rail in RAIL_NAMES:
+                    for i in range(1, RAIL_LEN):
+                        if i == RAIL_SPLIT:
+                            continue        # gap — no connection across the split
+                        yield RailHole(rail, i, section), RailHole(rail, i + 1, section)
+
+        # Shared vertical rails (triple and double_rails) — no split, fully connected
+        if self.layout in ('triple', 'double_rails'):
+            vert_len = self.sections * VERT_RAIL_LEN_PER_SECTION
+            for rail in VERT_RAIL_NAMES:
+                for i in range(1, vert_len):
+                    yield RailHole(rail, i), RailHole(rail, i + 1)
+            # Right-side vertical rails (double_rails only)
+            if self.layout == 'double_rails':
+                for rail in VERT_RAIL_NAMES_RIGHT:
+                    for i in range(1, vert_len):
+                        yield RailHole(rail, i), RailHole(rail, i + 1)
 
     # ------------------------------------------------------------------
     # Dynamic state: components

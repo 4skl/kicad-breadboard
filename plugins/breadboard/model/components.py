@@ -53,7 +53,7 @@ class PinOffset:
             idx = bank.index(anchor.row) + self.row_delta
             idx = max(0, min(len(bank) - 1, idx))
             row = bank[idx]
-        return TieHole(col, row)
+        return TieHole(col, row, anchor.section)
 
 
 @dataclass
@@ -79,7 +79,7 @@ class ComponentDef:
         Returns {pin_number: TieHole}.
         """
         if self.is_dip:
-            anchor = TieHole(anchor.col, 'e')
+            anchor = TieHole(anchor.col, 'e', anchor.section)
         return {pin: offset.resolve(anchor, flipped, cross_flip=self.is_dip)
                 for pin, offset in self.pin_offsets.items()}
 
@@ -243,6 +243,34 @@ BS170 = ComponentDef(
     pin_names={1: 'S', 2: 'G', 3: 'D'},
     color='#404040',
 )
+
+# ---------------------------------------------------------------------------
+# TO-92 pinout variants.
+#
+# Different real-world parts share the same schematic symbol but have a
+# different physical leg order (flat face toward viewer, left → right).
+# Each entry is (display_label, {schematic_pin_num: PinOffset}).
+# The first entry is the default and must match the ComponentDef above.
+# BS170 has a single standard pinout and is omitted.
+# ---------------------------------------------------------------------------
+TO92_PINOUT_VARIANTS: Dict[str, List[Tuple[str, Dict[int, PinOffset]]]] = {
+    'NPN': [
+        ('C-B-E', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),  # BC547, BC337 …
+        ('E-B-C', {3: PinOffset(0), 2: PinOffset(1), 1: PinOffset(2)}),  # 2N3904, 2N2222 …
+    ],
+    'PNP': [
+        ('C-B-E', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),  # BC557, BC327 …
+        ('E-B-C', {3: PinOffset(0), 2: PinOffset(1), 1: PinOffset(2)}),  # 2N3906 …
+    ],
+    'JFET_N': [
+        ('S-G-D', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),  # BF245, 2N5459 …
+        ('D-G-S', {3: PinOffset(0), 2: PinOffset(1), 1: PinOffset(2)}),  # 2N5457 …
+    ],
+    'JFET_P': [
+        ('S-G-D', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),
+        ('D-G-S', {3: PinOffset(0), 2: PinOffset(1), 1: PinOffset(2)}),
+    ],
+}
 
 # ---------------------------------------------------------------------------
 # DIP op-amps — anchor always in row 'e', bottom side in row 'f'

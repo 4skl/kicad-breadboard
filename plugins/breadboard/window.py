@@ -20,8 +20,9 @@ from typing import Optional
 import wx
 import wx.lib.stattext
 
-from .canvas import BreadboardCanvas, MODE_SELECT, MODE_WIRE, MODE_DELETE
+from .canvas import BreadboardCanvas, CanvasLayout, MODE_SELECT, MODE_WIRE, MODE_DELETE
 from .tray import ComponentTray
+from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
     Breadboard, Netlist,
     parse_netlist, find_netlist, find_schematic,
@@ -30,6 +31,9 @@ from .model import (
     save_session, load_session,
     PROBE_NAMES, PROBE_META,
 )
+
+PLUGIN_VERSION = 'Yufka'
+REPO           = 'kerstensrobin/kicad-breadboard'
 
 # Toolbar button IDs
 ID_SELECT = wx.NewIdRef()
@@ -41,9 +45,11 @@ ID_VALIDATE    = wx.NewIdRef()
 ID_CLEAR_WARNINGS = wx.NewIdRef()
 ID_CLEAR       = wx.NewIdRef()
 ID_OPEN        = wx.NewIdRef()
-ID_NET_LABELS  = wx.NewIdRef()
 ID_SAVE        = wx.NewIdRef()
 ID_LOAD        = wx.NewIdRef()
+ID_PREFS       = wx.NewIdRef()
+ID_HELP_UPDATES = wx.NewIdRef()
+ID_HELP_ISSUE   = wx.NewIdRef()
 
 
 class BreadboardWindow(wx.Frame):
@@ -56,13 +62,15 @@ class BreadboardWindow(wx.Frame):
             style=wx.DEFAULT_FRAME_STYLE,
         )
 
-        self.board = Breadboard()
+        self.prefs = load_prefs()
+        self.board = Breadboard(layout=self.prefs.board_layout)
         self.netlist: Optional[Netlist] = None
         self._project_path: Optional[str] = project_path
         self._netlist_path: Optional[str] = None   # last successfully loaded .net file
         self._refreshing_choices: bool = False     # suppress EVT_CHOICE during SetItems
 
         self._build_ui()
+        self._init_canvas_from_prefs()
         self._bind_events()
 
         if project_path:
@@ -111,59 +119,77 @@ class BreadboardWindow(wx.Frame):
         tray_sizer = wx.BoxSizer(wx.VERTICAL)
 
         # --- Binding-post assignment section ---
-        term_label = wx.StaticText(tray_panel, label='Binding posts')
+        self._binding_panel = wx.Panel(tray_panel)
+        binding_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        term_label = wx.StaticText(self._binding_panel, label='Binding posts')
         term_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                    wx.FONTWEIGHT_BOLD))
-        tray_sizer.Add(term_label, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
+        binding_sizer.Add(term_label, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
 
         _TERM_COLORS = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30'}
         self._term_choices: dict = {}
         term_grid = wx.FlexGridSizer(rows=3, cols=2, vgap=4, hgap=6)
         term_grid.AddGrowableCol(1)
         for name in ('GND', 'V1', 'V2'):
-            lbl = wx.StaticText(tray_panel, label=name)
+            lbl = wx.StaticText(self._binding_panel, label=name)
             lbl.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                 wx.FONTWEIGHT_BOLD))
             lbl.SetForegroundColour(_TERM_COLORS[name])
-            ch = wx.Choice(tray_panel, choices=['(unassigned)'])
+            ch = wx.Choice(self._binding_panel, choices=['(unassigned)'])
             ch.SetSelection(0)
             self._term_choices[name] = ch
             term_grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
             term_grid.Add(ch, 1, wx.EXPAND)
-        tray_sizer.Add(term_grid, 0, wx.EXPAND | wx.ALL, 6)
-        tray_sizer.Add(wx.StaticLine(tray_panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+        binding_sizer.Add(term_grid, 0, wx.EXPAND | wx.ALL, 6)
+        self._binding_panel.SetSizer(binding_sizer)
+        tray_sizer.Add(self._binding_panel, 0, wx.EXPAND)
 
-        # --- Instruments section ---
-        instr_label = wx.StaticText(tray_panel, label='Instruments')
+        # --- Instruments section (wrapped in a panel so it can be shown/hidden) ---
+        self._instr_panel = wx.Panel(tray_panel)
+        instr_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        instr_sizer.Add(wx.StaticLine(self._instr_panel), 0,
+                        wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
+        instr_label = wx.StaticText(self._instr_panel, label='Instruments')
         instr_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                     wx.FONTWEIGHT_BOLD))
-        tray_sizer.Add(instr_label, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
+        instr_sizer.Add(instr_label, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
 
         self._probe_choices: dict = {}
         self._probe_place_btns: dict = {}
+        # widget refs for dynamic show/hide
+        self._ch2_widgets = []      # [lbl, btn, choice] for the CH2 row
+        self._ch3_widgets = []      # widgets for CH3 row
+        self._ch4_widgets = []      # widgets for CH4 row
+        self._psu2_widgets = []     # widgets for PSU2+, PSU2- rows
+        self._psu3_widgets = []     # widgets for PSU3+, PSU3- rows
+        self._scope_grid = None
+        self._psu_grid = None
 
         _INSTRUMENT_GROUPS = [
             ('Function generator', ('FG+', 'FG_GND')),
-            ('Oscilloscope',       ('CH1', 'CH2', 'SCOPE_GND')),
+            ('Oscilloscope',       ('CH1', 'CH2', 'CH3', 'CH4', 'SCOPE_GND')),
             ('Power supply (PSU)', ('PSU1+', 'PSU1-', 'PSU2+', 'PSU2-', 'PSU3+', 'PSU3-')),
         ]
         for group_label, probe_list in _INSTRUMENT_GROUPS:
-            sub = wx.StaticText(tray_panel, label=group_label)
+            sub = wx.StaticText(self._instr_panel, label=group_label)
             sub.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
                                 wx.FONTWEIGHT_NORMAL))
             sub.SetForegroundColour('#555555')
-            tray_sizer.Add(sub, 0, wx.LEFT | wx.TOP, 8)
+            instr_sizer.Add(sub, 0, wx.LEFT | wx.TOP, 8)
 
             grid = wx.FlexGridSizer(rows=len(probe_list), cols=3, vgap=3, hgap=4)
             grid.AddGrowableCol(2)
             for name in probe_list:
                 meta = PROBE_META[name]
-                lbl = wx.StaticText(tray_panel, label=meta['label'])
+                lbl = wx.StaticText(self._instr_panel, label=meta['label'])
                 lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                     wx.FONTWEIGHT_BOLD))
                 lbl.SetForegroundColour(meta['color'])
-                btn = wx.Button(tray_panel, label='Place', size=(54, -1))
-                ch = wx.Choice(tray_panel, choices=['(unassigned)'])
+                btn = wx.Button(self._instr_panel, label='Place', size=(54, -1))
+                ch = wx.Choice(self._instr_panel, choices=['(unassigned)'])
                 ch.SetSelection(0)
                 self._probe_place_btns[name] = btn
                 self._probe_choices[name] = ch
@@ -172,7 +198,33 @@ class BreadboardWindow(wx.Frame):
                 grid.Add(ch,  1, wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL)
                 btn.Bind(wx.EVT_BUTTON, lambda e, n=name: self._on_probe_place_btn(n))
                 ch.Bind(wx.EVT_CHOICE,  lambda e, n=name: self._on_probe_choice(n, e))
-            tray_sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+                # capture variable-visibility rows
+                if name == 'CH2':
+                    self._ch2_widgets = [lbl, btn, ch]
+                elif name == 'CH3':
+                    self._ch3_widgets = [lbl, btn, ch]
+                elif name == 'CH4':
+                    self._ch4_widgets = [lbl, btn, ch]
+                elif name in ('PSU2+', 'PSU2-'):
+                    self._psu2_widgets += [lbl, btn, ch]
+                elif name in ('PSU3+', 'PSU3-'):
+                    self._psu3_widgets += [lbl, btn, ch]
+
+            instr_sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+            if group_label == 'Oscilloscope':
+                self._scope_grid = grid
+            elif group_label.startswith('Power'):
+                self._psu_grid = grid
+
+        # Apply initial visibility based on default prefs
+        for w in self._ch3_widgets:
+            self._scope_grid.Show(w, False)
+        for w in self._ch4_widgets:
+            self._scope_grid.Show(w, False)
+
+        self._instr_panel.SetSizer(instr_sizer)
+        tray_sizer.Add(self._instr_panel, 0, wx.EXPAND)
 
         tray_sizer.Add(wx.StaticLine(tray_panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
@@ -226,14 +278,27 @@ class BreadboardWindow(wx.Frame):
         r = hk_row('Ctrl+Home', 'Fit', right_grid, r)
         r = hk_row('+/\u2212', 'Zoom', right_grid, r)
 
-        info_lbl = wx.lib.stattext.GenStaticText(tray_panel,
-                                 label='\nRelease: zopf\n\nMade with \u2665 by\nRobin Kerstens\nUniversity of Antwerp,\nBelgium.')
-        info_lbl.SetFont(info_font)
-        info_lbl.SetForegroundColour('#666666')
+        def _info_link(label, url):
+            lbl = wx.lib.stattext.GenStaticText(tray_panel, label=label)
+            lbl.SetFont(info_font)
+            lbl.SetForegroundColour('#666666')
+            lbl.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+            lbl.Bind(wx.EVT_LEFT_DOWN, lambda _e: wx.LaunchDefaultBrowser(url))
+            return lbl
+
+        info_top = wx.lib.stattext.GenStaticText(tray_panel,
+                                  label='\nRelease: Yufka\nMade with \u2665 by')
+        info_top.SetFont(info_font)
+        info_top.SetForegroundColour('#666666')
+
+        info_sizer = wx.BoxSizer(wx.VERTICAL)
+        info_sizer.Add(info_top, 0)
+        info_sizer.Add(_info_link('nacho.works and', 'https://nacho.works'), 0)
+        info_sizer.Add(_info_link('uantwerpen.be', 'https://www.uantwerpen.be/en/'), 0)
 
         right_sizer = wx.BoxSizer(wx.VERTICAL)
         right_sizer.Add(right_grid, 0)
-        right_sizer.Add(info_lbl, 0, wx.TOP, 6)
+        right_sizer.Add(info_sizer, 0, wx.TOP, 6)
 
         left_col = wx.BoxSizer(wx.VERTICAL)
         left_col.Add(left_grid, 0)
@@ -246,6 +311,8 @@ class BreadboardWindow(wx.Frame):
         tray_sizer.AddStretchSpacer(1)
         tray_sizer.Add(hotkey_sizer, 0, wx.ALL, 6)
 
+        self._tray_panel = tray_panel
+        self._tray_sizer = tray_sizer
         tray_panel.SetSizer(tray_sizer)
 
         inner_splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
@@ -265,6 +332,7 @@ class BreadboardWindow(wx.Frame):
 
     def _build_menu(self) -> None:
         menu_bar = wx.MenuBar()
+
         file_menu = wx.Menu()
         file_menu.Append(ID_OPEN,   'Open netlist…\tCtrl+O',
                          'Load a KiCad .net file')
@@ -276,8 +344,18 @@ class BreadboardWindow(wx.Frame):
         file_menu.Append(ID_LOAD,   'Load session…\tCtrl+L',
                          'Restore placements and wires from a .kicad_bbrd file')
         file_menu.AppendSeparator()
+        file_menu.Append(ID_PREFS, 'Preferences…', 'Configure instruments, display, and export options')
+        file_menu.AppendSeparator()
         file_menu.Append(wx.ID_EXIT, 'Quit\tAlt+F4')
         menu_bar.Append(file_menu, '&File')
+
+        help_menu = wx.Menu()
+        help_menu.Append(ID_HELP_UPDATES, 'Check for updates…',
+                         'Compare installed version with the latest release on GitHub')
+        help_menu.Append(ID_HELP_ISSUE, 'Report issue…',
+                         'Open a pre-filled GitHub issue with your system information')
+        menu_bar.Append(help_menu, '&Help')
+
         self.SetMenuBar(menu_bar)
 
     def _build_toolbar(self) -> None:
@@ -298,11 +376,6 @@ class BreadboardWindow(wx.Frame):
         tb.AddSeparator()
         tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
                    shortHelp='Save the breadboard as a PNG image')
-        tb.AddSeparator()
-        tb.AddTool(ID_NET_LABELS, 'Signal labels', wx.NullBitmap,
-                   shortHelp='Show / hide net signal labels on the breadboard',
-                   kind=wx.ITEM_CHECK)
-        tb.ToggleTool(ID_NET_LABELS, True)
         tb.AddSeparator()
         tb.AddTool(ID_VALIDATE, 'Validate',   wx.NullBitmap,
                    shortHelp='Check if your circuit matches the schematic')
@@ -325,7 +398,9 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_select,   id=ID_SELECT)
         self.Bind(wx.EVT_TOOL, self._on_wire,     id=ID_WIRE)
         self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
-        self.Bind(wx.EVT_TOOL, self._on_net_labels,     id=ID_NET_LABELS)
+        self.Bind(wx.EVT_MENU, self._on_prefs,          id=ID_PREFS)
+        self.Bind(wx.EVT_MENU, self._on_check_updates,  id=ID_HELP_UPDATES)
+        self.Bind(wx.EVT_MENU, self._on_report_issue,   id=ID_HELP_ISSUE)
         self.Bind(wx.EVT_TOOL, self._on_validate,       id=ID_VALIDATE)
         self.Bind(wx.EVT_TOOL, self._on_clear_warnings, id=ID_CLEAR_WARNINGS)
         self.Bind(wx.EVT_TOOL, self._on_clear,          id=ID_CLEAR)
@@ -389,7 +464,7 @@ class BreadboardWindow(wx.Frame):
                 wx.YES_NO | wx.ICON_QUESTION, self,
             ) != wx.YES:
                 return
-            self.board = Breadboard()
+            self.board = Breadboard(layout=self.prefs.board_layout)
             self.canvas.board = self.board
             self.tray.board = self.board
             self.tray.refresh_placed()
@@ -494,24 +569,33 @@ class BreadboardWindow(wx.Frame):
                 self.SetStatusText(f'Netlist updated. {"; ".join(msgs).capitalize()}.', 0)
 
     def _on_export(self, _evt) -> None:
-        default = 'breadboard.png'
+        use_svg = self.prefs.export_format == 'svg'
+        ext = 'svg' if use_svg else 'png'
+        default = f'breadboard.{ext}'
         if self._project_path:
-            from pathlib import Path as _Path
-            default = str(_Path(self._project_path) / 'breadboard.png')
+            default = str(Path(self._project_path) / default)
+        wildcard = ('SVG image (*.svg)|*.svg' if use_svg
+                    else 'PNG image (*.png)|*.png')
         with wx.FileDialog(
             self,
             message='Save breadboard image',
             defaultFile=default,
-            wildcard='PNG image (*.png)|*.png',
+            wildcard=wildcard,
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
             path = dlg.GetPath()
 
-        bmp = self.canvas.render_to_bitmap()
-        if not bmp.SaveFile(path, wx.BITMAP_TYPE_PNG):
-            wx.MessageBox(f'Failed to save image to:\n{path}',
+        try:
+            if use_svg:
+                self.canvas.render_to_svg(path)
+            else:
+                bmp = self.canvas.render_to_bitmap()
+                if not bmp.SaveFile(path, wx.BITMAP_TYPE_PNG):
+                    raise RuntimeError('SaveFile returned False')
+        except Exception as exc:
+            wx.MessageBox(f'Failed to save image to:\n{path}\n\n{exc}',
                           'Export image', wx.OK | wx.ICON_ERROR, self)
             return
         self.SetStatusText(f'Image saved to {path}', 0)
@@ -563,6 +647,14 @@ class BreadboardWindow(wx.Frame):
         self.tray.board = self.board
         self.canvas.clear_highlights()
 
+        # Sync layout prefs from saved session
+        saved_layout = result.get('board_layout', 'full')
+        if saved_layout != self.prefs.board_layout:
+            self.prefs.board_layout = saved_layout
+        self.canvas.layout = CanvasLayout(saved_layout, self.prefs.binding_post_side,
+                                          self.prefs.show_branding)
+        self.canvas._pan_initialized = False
+
         # Reload the netlist from the saved path (if present and netlist not yet loaded)
         saved_netlist = result.get('netlist_path')
         if saved_netlist and self.netlist is None:
@@ -581,9 +673,214 @@ class BreadboardWindow(wx.Frame):
         self.canvas.Refresh()
         self.SetStatusText(f'Session loaded from {path}', 0)
 
-    def _on_net_labels(self, _evt) -> None:
-        self.canvas.show_net_labels = self.toolbar.GetToolState(ID_NET_LABELS)
+    def _on_prefs(self, _evt) -> None:
+        dlg = PreferencesDialog(self, self.prefs)
+        if dlg.ShowModal() == wx.ID_OK:
+            old = self.prefs
+            self.prefs = dlg.get_prefs()
+            self._apply_prefs(old)
+        dlg.Destroy()
+
+    def _apply_prefs(self, old: Preferences) -> None:
+        p = self.prefs
+
+        # Signal labels
+        if p.show_net_labels != old.show_net_labels:
+            self.canvas.show_net_labels = p.show_net_labels
+
+        # Binding posts on canvas and sidebar
+        if p.show_binding_posts != old.show_binding_posts:
+            self.canvas.show_binding_posts = p.show_binding_posts
+            self._tray_sizer.Show(self._binding_panel, p.show_binding_posts)
+            self._tray_panel.Layout()
+
+        # Instruments panel visibility
+        if p.instruments_enabled != old.instruments_enabled:
+            self._tray_sizer.Show(self._instr_panel, p.instruments_enabled)
+            self._tray_panel.Layout()
+
+        # Oscilloscope channel count
+        if p.scope_channels != old.scope_channels:
+            for w in self._ch2_widgets:
+                self._scope_grid.Show(w, p.scope_channels >= 2)
+            for w in self._ch3_widgets:
+                self._scope_grid.Show(w, p.scope_channels >= 3)
+            for w in self._ch4_widgets:
+                self._scope_grid.Show(w, p.scope_channels >= 4)
+            self._instr_panel.Layout()
+
+        # PSU channel count
+        if p.psu_channels != old.psu_channels:
+            show_psu2 = p.psu_channels >= 2
+            show_psu3 = p.psu_channels >= 3
+            for w in self._psu2_widgets:
+                self._psu_grid.Show(w, show_psu2)
+            for w in self._psu3_widgets:
+                self._psu_grid.Show(w, show_psu3)
+            self._instr_panel.Layout()
+
+        # Board layout
+        if p.board_layout != old.board_layout:
+            # Changing layout clears the board — confirm if there's existing work
+            has_work = bool(self.board.placements or self.board.wires)
+            proceed = True
+            if has_work:
+                ans = wx.MessageBox(
+                    'Changing the board layout will clear all current placements and wires.\n'
+                    'Continue?',
+                    'Clear board?', wx.YES_NO | wx.ICON_WARNING, self,
+                )
+                proceed = (ans == wx.YES)
+            if proceed:
+                from .model import Breadboard
+                self.board = Breadboard(layout=p.board_layout)
+                self.canvas.board = self.board
+                self.tray.board = self.board
+                self.tray.refresh_placed()
+                self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
+                                                  p.show_branding)
+                self.canvas._pan_initialized = False
+
+        # Binding post side or branding (canvas layout only, no data change)
+        if p.binding_post_side != old.binding_post_side or p.show_branding != old.show_branding:
+            self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
+                                              p.show_branding)
+            self.canvas._pan_initialized = False
+
+        # Baseboard
+        if p.show_baseboard != old.show_baseboard:
+            self.canvas.show_baseboard = p.show_baseboard
+        if p.baseboard_color != old.baseboard_color:
+            self.canvas.baseboard_color = p.baseboard_color
+        if p.show_branding != old.show_branding:
+            self.canvas.show_branding = p.show_branding
+        if p.branding_image != old.branding_image:
+            self.canvas.branding_image = p.branding_image
+
         self.canvas.Refresh()
+
+    def _init_canvas_from_prefs(self) -> None:
+        """Sync all canvas properties from self.prefs (called once at startup)."""
+        p = self.prefs
+        self.canvas.show_net_labels    = p.show_net_labels
+        self.canvas.show_binding_posts = p.show_binding_posts
+        self.canvas.show_baseboard     = p.show_baseboard
+        self.canvas.baseboard_color    = p.baseboard_color
+        self.canvas.show_branding      = p.show_branding
+        self.canvas.branding_image     = p.branding_image
+        self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
+                                          p.show_branding)
+        self.canvas._pan_initialized = False
+        self._tray_sizer.Show(self._binding_panel, p.show_binding_posts)
+        self._tray_panel.Layout()
+
+    # ------------------------------------------------------------------
+    # Help menu handlers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _collect_sysinfo() -> str:
+        import platform, sys, os
+        lines = [
+            f'**Plugin version:** {PLUGIN_VERSION}',
+            f'**OS:** {platform.system()} {platform.release()} ({platform.machine()})',
+            f'**Python:** {sys.version.split()[0]}',
+        ]
+        try:
+            import wx as _wx
+            lines.append(f'**wxPython:** {_wx.version()}')
+        except Exception:
+            pass
+        try:
+            import pcbnew
+            lines.append(f'**KiCad:** {pcbnew.GetMajorMinorVersion()}')
+        except Exception:
+            lines.append('**KiCad:** standalone / not available')
+        # CPU
+        try:
+            cpu = platform.processor()
+            if not cpu and platform.system() == 'Linux':
+                with open('/proc/cpuinfo') as f:
+                    for line in f:
+                        if line.startswith('model name'):
+                            cpu = line.split(':', 1)[1].strip()
+                            break
+            cores = os.cpu_count()
+            lines.append(f'**CPU:** {cpu or "unknown"} ({cores} cores)')
+        except Exception:
+            pass
+        # GPU
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['lspci'], capture_output=True, text=True, timeout=5)
+            gpus = [l.split(':', 2)[-1].strip()
+                    for l in result.stdout.splitlines()
+                    if any(k in l for k in ('VGA', '3D', 'Display'))]
+            if gpus:
+                lines.append(f'**GPU:** {"; ".join(gpus)}')
+        except Exception:
+            pass
+        return '\n'.join(lines)
+
+    def _on_check_updates(self, _evt) -> None:
+        import urllib.request, json, webbrowser
+        releases_url = f'https://github.com/{REPO}/releases'
+        api_url      = f'https://api.github.com/repos/{REPO}/tags'
+        wx.BeginBusyCursor()
+        try:
+            req = urllib.request.Request(api_url,
+                                         headers={'User-Agent': 'kicad-breadboard'})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                tags = json.loads(r.read())
+            latest = tags[0]['name'] if tags else None
+        except Exception:
+            latest = None
+        finally:
+            wx.EndBusyCursor()
+
+        if latest is None:
+            if wx.MessageBox(
+                'Could not reach GitHub to check for updates.\n'
+                'Open the releases page in your browser?',
+                'Check for updates', wx.YES_NO | wx.ICON_QUESTION, self,
+            ) == wx.YES:
+                webbrowser.open(releases_url)
+            return
+
+        # Versions go backwards through the alphabet (zwieback → zopf → … → aardvark)
+        # so a lower string value means a newer release.
+        if latest.lower().lstrip('v') >= PLUGIN_VERSION.lower():
+            wx.MessageBox(
+                f'You are running the latest version: {PLUGIN_VERSION}.',
+                'Check for updates', wx.OK | wx.ICON_INFORMATION, self,
+            )
+        else:
+            if wx.MessageBox(
+                f'A newer version is available: {latest}\n'
+                f'(installed: {PLUGIN_VERSION})\n\n'
+                'Open the releases page?',
+                'Update available', wx.YES_NO | wx.ICON_INFORMATION, self,
+            ) == wx.YES:
+                webbrowser.open(releases_url)
+
+    def _on_report_issue(self, _evt) -> None:
+        import urllib.parse, webbrowser
+        sysinfo = self._collect_sysinfo()
+        body = (
+            f'{sysinfo}\n\n'
+            '---\n\n'
+            '**Describe the issue:**\n'
+            '<!-- What went wrong? -->\n\n'
+            '**Steps to reproduce:**\n'
+            '1. \n'
+            '2. \n\n'
+            '**Expected behaviour:**\n'
+            '<!-- What did you expect to happen? -->'
+        )
+        url = (f'https://github.com/{REPO}/issues/new'
+               f'?body={urllib.parse.quote(body)}')
+        webbrowser.open(url)
 
     def _on_validate(self, _evt) -> None:
         if self.netlist is None:
@@ -613,12 +910,14 @@ class BreadboardWindow(wx.Frame):
             'Clear all placed components and wires?', 'Confirm',
             wx.YES_NO | wx.ICON_QUESTION, self
         ) == wx.YES:
-            self.board = Breadboard()
+            self.board = Breadboard(layout=self.prefs.board_layout)
             # Re-apply GND assignments
-            if self.netlist and self.netlist.net_by_name('0'):
-                self.board.assign_terminal('GND', '0')
-                self.board.assign_probe_net('FG_GND', '0')
-                self.board.assign_probe_net('SCOPE_GND', '0')
+            _gnd_net = next((n for n in ('0', 'GND') if self.netlist and self.netlist.net_by_name(n)), None)
+            if _gnd_net:
+                self.board.assign_terminal('GND', _gnd_net)
+                if self.prefs.auto_gnd:
+                    for _pname in ('FG_GND', 'SCOPE_GND'):
+                        self.board.assign_probe_net(_pname, _gnd_net)
             self.canvas.board = self.board
             self.tray.board = self.board
             self.tray.refresh_placed()
@@ -730,11 +1029,13 @@ class BreadboardWindow(wx.Frame):
         self.canvas.netlist = self.netlist
         self.tray.load_netlist(self.netlist)
 
-        # Auto-assign GND terminal and instrument grounds to the simulation ground net ("0")
-        if self.netlist.net_by_name('0'):
-            self.board.assign_terminal('GND', '0')
-            self.board.assign_probe_net('FG_GND', '0')
-            self.board.assign_probe_net('SCOPE_GND', '0')
+        # Auto-assign GND terminal and instrument grounds to the ground net ("0" or "GND")
+        _gnd_net = next((n for n in ('0', 'GND') if self.netlist.net_by_name(n)), None)
+        if _gnd_net:
+            self.board.assign_terminal('GND', _gnd_net)
+            if self.prefs.auto_gnd:
+                for _pname in ('FG_GND', 'SCOPE_GND'):
+                    self.board.assign_probe_net(_pname, _gnd_net)
 
         self._refresh_terminal_choices()
         self._refresh_probe_choices()
@@ -758,3 +1059,185 @@ class BreadboardWindow(wx.Frame):
                 f'Loaded {n_shown} component(s) from {Path(path).name}.{note}  '
                 'Click a component in the tray to place it.', 0
             )
+
+
+# ---------------------------------------------------------------------------
+# Preferences dialog
+# ---------------------------------------------------------------------------
+
+class PreferencesDialog(wx.Dialog):
+    """Modal dialog for all user preferences."""
+
+    def __init__(self, parent: wx.Window, prefs: Preferences):
+        super().__init__(parent, title='Preferences',
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        def section(label: str) -> wx.StaticText:
+            t = wx.StaticText(self, label=label)
+            t.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                              wx.FONTWEIGHT_BOLD))
+            return t
+
+        # ---- Instruments ----
+        sizer.Add(section('Instruments'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        self._cb_instr = wx.CheckBox(self, label='Enable instruments panel')
+        self._cb_instr.SetValue(prefs.instruments_enabled)
+        sizer.Add(self._cb_instr, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        self._cb_auto_gnd = wx.CheckBox(
+            self, label='Auto-assign schematic ground to instrument grounds')
+        self._cb_auto_gnd.SetValue(prefs.auto_gnd)
+        sizer.Add(self._cb_auto_gnd, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        scope_row = wx.BoxSizer(wx.HORIZONTAL)
+        scope_row.Add(wx.StaticText(self, label='Oscilloscope channels:'), 0,
+                      wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._sc_scope = wx.SpinCtrl(self, min=1, max=4,
+                                     initial=prefs.scope_channels, size=(50, -1))
+        scope_row.Add(self._sc_scope, 0)
+        sizer.Add(scope_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        psu_row = wx.BoxSizer(wx.HORIZONTAL)
+        psu_row.Add(wx.StaticText(self, label='PSU channels:'), 0,
+                    wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._sc_psu = wx.SpinCtrl(self, min=1, max=3,
+                                   initial=prefs.psu_channels, size=(50, -1))
+        psu_row.Add(self._sc_psu, 0)
+        sizer.Add(psu_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+
+        # ---- Display ----
+        sizer.Add(section('Display'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        self._cb_labels = wx.CheckBox(self, label='Show signal labels')
+        self._cb_labels.SetValue(prefs.show_net_labels)
+        sizer.Add(self._cb_labels, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+
+        # ---- Export ----
+        sizer.Add(section('Export'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        fmt_row = wx.BoxSizer(wx.HORIZONTAL)
+        fmt_row.Add(wx.StaticText(self, label='Format:'), 0,
+                    wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._rb_png = wx.RadioButton(self, label='PNG', style=wx.RB_GROUP)
+        self._rb_svg = wx.RadioButton(self, label='SVG')
+        self._rb_png.SetValue(prefs.export_format == 'png')
+        self._rb_svg.SetValue(prefs.export_format == 'svg')
+        fmt_row.Add(self._rb_png, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        fmt_row.Add(self._rb_svg, 0, wx.ALIGN_CENTRE_VERTICAL)
+        sizer.Add(fmt_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+
+        # ---- Board ----
+        sizer.Add(section('Board'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        layout_row = wx.BoxSizer(wx.HORIZONTAL)
+        layout_row.Add(wx.StaticText(self, label='Size / layout:'), 0,
+                       wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._ch_layout = wx.Choice(self, choices=[
+            'Mini (170 holes, no rails)',
+            'Half (400 holes)', 'Full (830 holes)',
+            'Double (2× full, stacked)', 'Triple (3× full + vertical rails)',
+            'Double + side rails (2× full, left & right rails)',
+        ])
+        _layout_map = ['mini', 'half', 'full', 'double', 'triple', 'double_rails']
+        self._ch_layout.SetSelection(
+            _layout_map.index(prefs.board_layout) if prefs.board_layout in _layout_map else 2)
+        layout_row.Add(self._ch_layout, 1, wx.EXPAND)
+        sizer.Add(layout_row, 0, wx.EXPAND | wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        post_row = wx.BoxSizer(wx.HORIZONTAL)
+        post_row.Add(wx.StaticText(self, label='Binding posts side:'), 0,
+                     wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._ch_post_side = wx.Choice(self, choices=['Left', 'Right', 'Top', 'Bottom'])
+        _side_map = ['left', 'right', 'top', 'bottom']
+        self._ch_post_side.SetSelection(
+            _side_map.index(prefs.binding_post_side) if prefs.binding_post_side in _side_map else 0)
+        post_row.Add(self._ch_post_side, 0)
+        sizer.Add(post_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        self._cb_baseboard = wx.CheckBox(self, label='Show baseboard')
+        self._cb_baseboard.SetValue(prefs.show_baseboard)
+        sizer.Add(self._cb_baseboard, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        color_row = wx.BoxSizer(wx.HORIZONTAL)
+        color_row.Add(wx.StaticText(self, label='Baseboard colour:'), 0,
+                      wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._cp_base = wx.ColourPickerCtrl(self)
+        self._cp_base.SetColour(wx.Colour(prefs.baseboard_color))
+        color_row.Add(self._cp_base, 0)
+        sizer.Add(color_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        self._cb_branding = wx.CheckBox(self, label='Include branding')
+        self._cb_branding.SetValue(prefs.show_branding)
+        sizer.Add(self._cb_branding, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        img_row = wx.BoxSizer(wx.HORIZONTAL)
+        img_row.Add(wx.StaticText(self, label='Branding image:'), 0,
+                    wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._tc_brand_img = wx.TextCtrl(self, value=prefs.branding_image, size=(120, -1))
+        img_row.Add(self._tc_brand_img, 1, wx.EXPAND | wx.RIGHT, 4)
+        browse_btn = wx.Button(self, label='Browse…', size=(70, -1))
+        img_row.Add(browse_btn, 0)
+        sizer.Add(img_row, 0, wx.EXPAND | wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        def _on_browse(evt):
+            dlg = wx.FileDialog(self, 'Choose branding image',
+                                wildcard='Images (*.png;*.jpg;*.bmp;*.svg)|*.png;*.jpg;*.jpeg;*.bmp;*.svg|All files (*.*)|*.*',
+                                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+            if dlg.ShowModal() == wx.ID_OK:
+                self._tc_brand_img.SetValue(dlg.GetPath())
+            dlg.Destroy()
+        browse_btn.Bind(wx.EVT_BUTTON, _on_browse)
+
+        self._cb_binding = wx.CheckBox(self, label='Show binding posts on board')
+        self._cb_binding.SetValue(prefs.show_binding_posts)
+        sizer.Add(self._cb_binding, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+
+        sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+
+        # ---- Buttons ----
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        save_btn = wx.Button(self, label='Save as default')
+        btn_sizer.Add(save_btn, 0, wx.RIGHT, 8)
+        btn_sizer.AddStretchSpacer()
+        btn_sizer.Add(wx.Button(self, wx.ID_CANCEL), 0, wx.RIGHT, 8)
+        ok_btn = wx.Button(self, wx.ID_OK)
+        ok_btn.SetDefault()
+        btn_sizer.Add(ok_btn, 0)
+        sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        def _on_save_default(evt):
+            import dataclasses
+            save_prefs(dataclasses.replace(self.get_prefs(), load_on_startup=True))
+            self.EndModal(wx.ID_OK)
+        save_btn.Bind(wx.EVT_BUTTON, _on_save_default)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+        self.CentreOnParent()
+
+    def get_prefs(self) -> Preferences:
+        _layout_map = ['mini', 'half', 'full', 'double', 'triple', 'double_rails']
+        _side_map   = ['left', 'right', 'top', 'bottom']
+        return Preferences(
+            instruments_enabled=self._cb_instr.IsChecked(),
+            auto_gnd=self._cb_auto_gnd.IsChecked(),
+            scope_channels=self._sc_scope.GetValue(),
+            psu_channels=self._sc_psu.GetValue(),
+            show_net_labels=self._cb_labels.IsChecked(),
+            show_binding_posts=self._cb_binding.IsChecked(),
+            export_format='svg' if self._rb_svg.GetValue() else 'png',
+            board_layout=_layout_map[self._ch_layout.GetSelection()],
+            binding_post_side=_side_map[self._ch_post_side.GetSelection()],
+            show_baseboard=self._cb_baseboard.IsChecked(),
+            baseboard_color=self._cp_base.GetColour().GetAsString(wx.C2S_HTML_SYNTAX),
+            show_branding=self._cb_branding.IsChecked(),
+            branding_image=self._tc_brand_img.GetValue(),
+        )

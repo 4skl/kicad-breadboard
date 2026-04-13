@@ -1,11 +1,11 @@
 # KiCad Breadboard Builder <img src="images/icon.png" height="45">
 
-A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the University of Antwerp. Students draw a schematic in Eeschema, then use this plugin to wire up the same circuit on a virtual 830-point breadboard — placing components, drawing jumper wires, and validating their work against the schematic.
+A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the University of Antwerp. Students draw a schematic in Eeschema, then use this plugin to wire up the same circuit on a virtual breadboard — placing components, drawing jumper wires, and validating their work against the schematic.
 
 ## What it does
 
-- Renders a breadboard in five configurable sizes: mini (170 holes), half (400), full (830), double (2× full stacked), or triple (3× full with vertical power rails)
-- Parses a KiCad S-expression netlist and shows all placeable components in a side tray
+- Renders a breadboard in six configurable sizes: mini (170 holes), half (400), full (830), double (2× full stacked), triple (3× full with vertical power rails), or double rails (2× full with vertical power rails on both sides)
+- Parses a KiCad netlist and shows all placeable components in a side tray
 - Two-step placement for 2-pin components: click pin 1, then click pin 2
 - Single-click placement for DIP ICs and 3-pin components (BJT, POT); DIP bodies show the reference and value (e.g. U1 / RC4558) for quick identification
 - TO-92 components (BJT, JFET) show the current pinout order (e.g. C-B-E or E-B-C) on their card; click `>` to cycle variants before placing
@@ -88,11 +88,12 @@ If you have not exported a netlist yet, use **"Update from schematic"** in the t
 |---|---|
 | W | Wire mode |
 | D | Delete mode |
-| R | Rotate DIP IC or TO-92 / POT 180° (during placement or when selected) |
+| R | Rotate / flip component (during placement or when selected) |
 | Esc | Back to Select / Move mode |
 | Del | Delete selected component or wire |
 | Right-click on DIP | Rotate 180° |
 | Right-click on binding post | Assign to schematic net |
+| Ctrl+O | Open netlist |
 | Ctrl+S | Save session |
 | Ctrl+L | Load session |
 | Scroll | Zoom in / out |
@@ -132,7 +133,7 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 
 | Setting | Description |
 |---|---|
-| Size / layout | `Mini` (170 holes, no rails) · `Half` (400 holes) · `Full` (830 holes) · `Double` (2× full stacked) · `Triple` (3× full + vertical power rails) |
+| Size / layout | `Mini` (170 holes, no rails) · `Half` (400 holes) · `Full` (830 holes) · `Double` (2× full stacked) · `Triple` (3× full + vertical power rails left side) · `Double Rails` (2× full + vertical power rails both sides) |
 | Binding posts side | Position of the GND / V1 / V2 binding posts: `Left` (default), `Right`, `Top`, or `Bottom` |
 | Show baseboard | Draw a coloured panel behind the breadboard(s) |
 | Baseboard colour | Fill colour of the baseboard |
@@ -146,7 +147,7 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 
 ### Binding posts
 
-Three binding posts (GND, V1, V2) on the left of the board can be assigned to schematic nets via the dropdowns. GND is automatically assigned to net `0` (SPICE-style) or `GND` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
+Three binding posts (GND, V1, V2) on the board can be assigned to schematic nets via the dropdowns. GND is automatically assigned to net `0` (SPICE-style) or `GND` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
 
 ### Instruments
 
@@ -189,8 +190,6 @@ At the top, a new breadboard icon appeared (in the toolbar, next to the CLI inpu
 ![shortcircuit](images/shortcircuit.png)
 
 That's it! Have fun!
-
-Robin
 
 > **Help menu:** use **Help → Check for updates…** to compare your installed version against the latest release on GitHub, or **Help → Report issue…** to open a pre-filled GitHub issue with your system information attached.
 
@@ -241,3 +240,7 @@ pip install wxPython
 cd /path/to/kicad-breadboard
 python -m plugins.breadboard.standalone path/to/circuit.net
 ```
+
+---
+
+Made with ♥ by [nacho.works](https://nacho.works) and [University of Antwerp](https://www.uantwerpen.be/en/), Belgium.
