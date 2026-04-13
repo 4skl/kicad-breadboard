@@ -106,7 +106,7 @@ If you have not exported a netlist yet, use **"Update from schematic"** in the t
 
 ## Preferences
 
-Open **File → Preferences…** to configure the plugin. Settings take effect immediately when you click OK. Use **Save as default** to persist them to `~/.config/kicad_bbrd/prefs.json`, and tick **Load these settings on startup** to restore them automatically on next launch.
+Open **File → Preferences…** to configure the plugin. Settings take effect immediately when you click OK. Use **Save as default** to persist them to `~/.config/kicad_bbrd/prefs.json` and restore them automatically on next launch.
 
 ### Instruments
 
