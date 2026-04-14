@@ -5,13 +5,19 @@ Each component is shown as a small card with its reference, value, and a
 colour swatch.  The student clicks a card to begin placing it on the canvas.
 Once placed, the card is greyed out but stays visible.
 
-Cards are drawn entirely in the ScrolledWindow's EVT_PAINT handler using
-wx.AutoBufferedPaintDC.  No native child wx.Panel widgets are used, which
-avoids a GTK/Linux issue where native sub-windows overflow their parent's
-clip region and bleed into adjacent panels.
+Two rendering implementations are selected at import time based on platform:
 
-Scroll offset is computed manually (GetScrollPixelsPerUnit + GetViewStart)
-rather than via PrepareDC, which is the reliable cross-platform pattern.
+  _PaintComponentTray  — used on GTK/Linux: all cards drawn in the
+    ScrolledWindow's own EVT_PAINT handler via wx.AutoBufferedPaintDC.
+    No native child panels, which avoids the GTK/X11 issue where native
+    sub-windows overflow their parent's clip region.
+
+  _NativeComponentTray — used on Windows: each card is a wx.Panel with
+    wx.StaticText children.  ScrolledWindow custom painting is unreliable
+    on Windows regardless of DC or background-style configuration;
+    native widgets render correctly on all Windows versions.
+
+ComponentTray is an alias that resolves to the correct class at runtime.
 """
 from __future__ import annotations
 
@@ -37,7 +43,9 @@ _BTN_H = 12
 _BTN_RIGHT_PAD = 4   # gap between button right edge and card right edge
 
 
-class _Card:
+# ── Custom-paint implementation (GTK / Linux) ─────────────────────────────
+
+class _PaintCard:
     """Pure data — no wx widget."""
     __slots__ = ('ref', 'comp', 'comp_def', 'y', 'height', 'pinout_idx')
 
@@ -51,13 +59,14 @@ class _Card:
         self.pinout_idx = 0       # index into TO92_PINOUT_VARIANTS[type_id]
 
 
-class ComponentTray(wx.ScrolledWindow):
+class _PaintComponentTray(wx.ScrolledWindow):
+    """Custom EVT_PAINT tray — reliable on GTK/Linux."""
 
     def __init__(self, parent, board: Breadboard, netlist: Optional[Netlist] = None):
         super().__init__(parent, style=wx.VSCROLL | wx.BORDER_SUNKEN)
         self.board   = board
         self.netlist = netlist
-        self._cards: List[_Card] = []
+        self._cards: List[_PaintCard] = []
         self.on_pick = None
 
         self.SetScrollRate(0, CARD_H + CARD_PAD)
@@ -89,7 +98,8 @@ class ComponentTray(wx.ScrolledWindow):
                 continue
             comp_def = ALL_DEFS.get(type_id)
             h = TO92_CARD_H if type_id in TO92_PINOUT_VARIANTS else CARD_H
-            self._cards.append(_Card(ref=ref, comp=comp, comp_def=comp_def, y=y, height=h))
+            self._cards.append(_PaintCard(ref=ref, comp=comp, comp_def=comp_def,
+                                          y=y, height=h))
             y += h + CARD_PAD
 
         total_h = y if self._cards else CARD_PAD
@@ -97,7 +107,7 @@ class ComponentTray(wx.ScrolledWindow):
         self.Scroll(0, 0)
         self.Refresh()
 
-    def _card_at(self, virt_y: int) -> Optional[_Card]:
+    def _card_at(self, virt_y: int) -> Optional[_PaintCard]:
         """Return the card whose bounding box contains virtual y-coordinate virt_y."""
         for card in self._cards:
             if card.y <= virt_y < card.y + card.height:
@@ -217,3 +227,167 @@ class ComponentTray(wx.ScrolledWindow):
                 comp_def = dataclasses.replace(card.comp_def,
                                                pin_offsets=variant_offsets)
             self.on_pick(comp_def, card.ref)
+
+
+# ── Native widget implementation (Windows) ────────────────────────────────
+
+class _NativeCard(wx.Panel):
+    """wx.Panel card with native StaticText children — reliable on Windows."""
+
+    def __init__(self, parent, ref: str, comp: NetlistComponent,
+                 comp_def: Optional[ComponentDef], board: Breadboard,
+                 is_to92: bool = False):
+        h = TO92_CARD_H if is_to92 else CARD_H
+        super().__init__(parent, size=(CARD_W, h), style=wx.BORDER_SIMPLE)
+        self.ref          = ref
+        self.comp         = comp
+        self.comp_def     = comp_def
+        self.board        = board
+        self._is_to92     = is_to92
+        self._swatch_color = comp_def.color if comp_def else '#aaaaaa'
+        self.pinout_idx   = 0
+
+        self._swatch = wx.Panel(self, pos=(4, 4), size=(SWATCH_W, h - 8))
+
+        type_suffix = f' - {comp_def.type_id}' if comp_def else ''
+        self._ref_lbl = wx.StaticText(
+            self, label=f'{ref}{type_suffix}', pos=(SWATCH_W + 8, 3))
+        self._ref_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+
+        self._val_lbl = wx.StaticText(
+            self, label=comp.value[:14], pos=(SWATCH_W + 8, 18))
+        self._val_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
+                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+
+        self._pinout_lbl: Optional[wx.StaticText] = None
+        self._cycle_lbl:  Optional[wx.StaticText] = None
+        if is_to92 and comp_def:
+            variants = TO92_PINOUT_VARIANTS.get(comp_def.type_id, [])
+            if variants:
+                self._pinout_lbl = wx.StaticText(
+                    self, label=variants[0][0], pos=(SWATCH_W + 8, 32))
+                self._pinout_lbl.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                                                  wx.FONTSTYLE_NORMAL,
+                                                  wx.FONTWEIGHT_NORMAL))
+                if len(variants) > 1:
+                    btn_x = CARD_W - _BTN_W - _BTN_RIGHT_PAD
+                    self._cycle_lbl = wx.StaticText(
+                        self, label='>', pos=(btn_x + 3, 31))
+                    self._cycle_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
+                                                     wx.FONTSTYLE_NORMAL,
+                                                     wx.FONTWEIGHT_BOLD))
+
+        for w in filter(None, [self, self._swatch, self._ref_lbl, self._val_lbl,
+                                self._pinout_lbl, self._cycle_lbl]):
+            w.Bind(wx.EVT_LEFT_DOWN, self._on_click)
+
+        self._apply_colors()
+
+    # ------------------------------------------------------------------
+
+    def _apply_colors(self) -> None:
+        placed = self.board.get_placement(self.ref) is not None
+        bg = '#b8b8b8' if placed else '#f8f8f8'
+        fg = '#888888' if placed else '#222222'
+        sw = '#888888' if placed else self._swatch_color
+
+        self.SetBackgroundColour(bg)
+        self._swatch.SetBackgroundColour(sw)
+        for lbl in filter(None, [self._ref_lbl, self._val_lbl,
+                                  self._pinout_lbl, self._cycle_lbl]):
+            lbl.SetBackgroundColour(bg)
+            lbl.SetForegroundColour(fg)
+        self.Refresh()
+
+    def update(self, board: Breadboard) -> None:
+        self.board = board
+        self._apply_colors()
+
+    def _cycle_pinout(self) -> None:
+        if not self.comp_def:
+            return
+        variants = TO92_PINOUT_VARIANTS.get(self.comp_def.type_id, [])
+        if len(variants) > 1:
+            self.pinout_idx = (self.pinout_idx + 1) % len(variants)
+            if self._pinout_lbl:
+                self._pinout_lbl.SetLabel(variants[self.pinout_idx][0])
+
+    def _on_click(self, evt: wx.MouseEvent) -> None:
+        placed = self.board.get_placement(self.ref) is not None
+        if placed or self.comp_def is None:
+            return
+
+        if evt.GetEventObject() is self._cycle_lbl:
+            self._cycle_pinout()
+            return
+
+        comp_def = self.comp_def
+        if (self.comp_def.type_id in TO92_PINOUT_VARIANTS and self.pinout_idx > 0):
+            _, variant_offsets = TO92_PINOUT_VARIANTS[
+                self.comp_def.type_id][self.pinout_idx]
+            comp_def = dataclasses.replace(self.comp_def, pin_offsets=variant_offsets)
+
+        tray = self.GetParent()
+        if hasattr(tray, 'on_pick') and tray.on_pick is not None:
+            tray.on_pick(comp_def, self.ref)
+
+
+class _NativeComponentTray(wx.ScrolledWindow):
+    """Native-widget tray — reliable on Windows."""
+
+    def __init__(self, parent, board: Breadboard, netlist: Optional[Netlist] = None):
+        super().__init__(parent, style=wx.VSCROLL | wx.BORDER_SUNKEN)
+        self.board   = board
+        self.netlist = netlist
+        self._cards: List[_NativeCard] = []
+        self.on_pick = None
+
+        self.SetScrollRate(0, CARD_H + CARD_PAD)
+        self.SetBackgroundColour('#d8d8d8')
+
+        if netlist:
+            self._build_cards(netlist)
+
+    def load_netlist(self, netlist: Netlist) -> None:
+        self.netlist = netlist
+        self._build_cards(netlist)
+
+    def refresh_placed(self) -> None:
+        self.Freeze()
+        for card in self._cards:
+            card.update(self.board)
+        self.Thaw()
+
+    # ------------------------------------------------------------------
+
+    def _build_cards(self, netlist: Netlist) -> None:
+        self.Freeze()
+        for card in self._cards:
+            card.Destroy()
+        self._cards.clear()
+
+        y = CARD_PAD
+        for ref, comp in sorted(netlist.components.items()):
+            type_id  = guess_type_id(ref, comp.value, comp.symbol, comp.lib)
+            if type_id is None:
+                continue
+            comp_def = ALL_DEFS.get(type_id)
+            is_to92  = type_id in TO92_PINOUT_VARIANTS
+            h        = TO92_CARD_H if is_to92 else CARD_H
+            card = _NativeCard(self, ref=ref, comp=comp, comp_def=comp_def,
+                               board=self.board, is_to92=is_to92)
+            card.SetPosition(wx.Point(CARD_PAD, y))
+            self._cards.append(card)
+            y += h + CARD_PAD
+
+        total_h = y if self._cards else CARD_PAD
+        self.SetVirtualSize(CARD_W + CARD_PAD * 2, total_h)
+        self.Scroll(0, 0)
+        self.Thaw()
+
+
+# ── Platform selection ────────────────────────────────────────────────────
+
+ComponentTray = (_NativeComponentTray if wx.Platform == '__WXMSW__'
+                 else _PaintComponentTray)
