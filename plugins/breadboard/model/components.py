@@ -66,6 +66,7 @@ class ComponentDef:
     color: str = '#888888'              # body fill color for canvas
     is_dip: bool = False                # True → anchor forced to row 'e'
     symmetric: bool = False             # True → non-polar; validator accepts either pin order
+    is_module: bool = False             # True → draw as PCB board (Arduino/RPi style)
 
     @property
     def pin_count(self) -> int:
@@ -373,6 +374,86 @@ OPAMP_SPICE = ComponentDef(
 )
 
 # ---------------------------------------------------------------------------
+# Board modules — DIP-style (straddle center gap), rendered as PCB boards.
+#
+# Pin layout convention (same as DIP):
+#   Pins 1..N/2  → left/top side,  cross_gap=False (row e), col_delta = pin-1
+#   Pins N/2+1..N → right/bottom side, cross_gap=True  (row f), col_delta = N-pin
+#
+# Arduino Nano (KiCad Module.pretty/Arduino_Nano.kicad_mod):
+#   30 pins, 15 per side, 2.54mm pitch → 15 breadboard columns.
+#   Physical width: 15.24mm (6×2.54mm) between the two header rows.
+#
+# Pin names: standard Arduino Nano pinout, USB-end = pin 1 side.
+# Left  (1-15): TX, RX, RST, GND, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12
+# Right (30→16, col 0→14): VIN, GND, RST, 5V, A7, A6, A5, A4, A3, A2, A1, A0, AREF, 3V3, D13
+# ---------------------------------------------------------------------------
+
+def _nano_offsets() -> Dict[int, PinOffset]:
+    left  = {n:      PinOffset(n - 1,      cross_gap=False) for n in range(1,  16)}
+    right = {n:      PinOffset(30 - n,     cross_gap=True)  for n in range(16, 31)}
+    return {**left, **right}
+
+ARDUINO_NANO = ComponentDef(
+    type_id='Arduino_Nano',
+    display_name='Arduino Nano',
+    ref_prefix='MCU',
+    pin_offsets=_nano_offsets(),
+    pin_names={
+        # Left side (USB end → far end), pins 1-15
+        1:  'TX',   2:  'RX',   3:  'RST',  4:  'GND',  5:  'D2',
+        6:  'D3',   7:  'D4',   8:  'D5',   9:  'D6',   10: 'D7',
+        11: 'D8',   12: 'D9',   13: 'D10',  14: 'D11',  15: 'D12',
+        # Right side (USB end → far end), pins 30→16 (col 0→14)
+        30: 'VIN',  29: 'GND',  28: 'RST',  27: '5V',   26: 'A7',
+        25: 'A6',   24: 'A5',   23: 'A4',   22: 'A3',   21: 'A2',
+        20: 'A1',   19: 'A0',   18: 'AREF', 17: '3V3',  16: 'D13',
+    },
+    color='#1a3a8f',   # Arduino blue
+    is_dip=False,
+    is_module=True,
+)
+
+# ---------------------------------------------------------------------------
+# Raspberry Pi Pico (KiCad Module.pretty/RaspberryPi_Pico_Common_THT.kicad_mod):
+#   40 pins, 20 per side, 2.54mm pitch → 20 breadboard columns.
+#   Physical width: 17.78mm (7×2.54mm) between the two header rows.
+#
+# Standard Pico pinout, USB-end = pin 1 side.
+# Left  (1-20):  GP0, GP1, GND, GP2, GP3, GP4, GP5, GND, GP6, GP7,
+#                GP8, GP9, GND, GP10, GP11, GP12, GP13, GND, GP14, GP15
+# Right (40→21, col 0→19): VBUS, VSYS, GND, 3V3EN, 3V3, VREF, GP28, GND,
+#                GP27, GP26, RUN, GP22, GND, GP21, GP20, GP19, GP18, GND, GP17, GP16
+# ---------------------------------------------------------------------------
+
+def _pico_offsets() -> Dict[int, PinOffset]:
+    left  = {n:  PinOffset(n - 1,   cross_gap=False) for n in range(1,  21)}
+    right = {n:  PinOffset(40 - n,  cross_gap=True)  for n in range(21, 41)}
+    return {**left, **right}
+
+RASPBERRY_PI_PICO = ComponentDef(
+    type_id='RPi_Pico',
+    display_name='Raspberry Pi',
+    ref_prefix='MCU',
+    pin_offsets=_pico_offsets(),
+    pin_names={
+        # Left side (USB end → far end), pins 1-20
+        1:  'GP0',   2:  'GP1',   3:  'GND',   4:  'GP2',   5:  'GP3',
+        6:  'GP4',   7:  'GP5',   8:  'GND',   9:  'GP6',   10: 'GP7',
+        11: 'GP8',   12: 'GP9',   13: 'GND',   14: 'GP10',  15: 'GP11',
+        16: 'GP12',  17: 'GP13',  18: 'GND',   19: 'GP14',  20: 'GP15',
+        # Right side (USB end → far end), pins 40→21 (col 0→19)
+        40: 'VBUS',  39: 'VSYS',  38: 'GND',   37: '3V3EN', 36: '3V3',
+        35: 'VREF',  34: 'GP28',  33: 'GND',   32: 'GP27',  31: 'GP26',
+        30: 'RUN',   29: 'GP22',  28: 'GND',   27: 'GP21',  26: 'GP20',
+        25: 'GP19',  24: 'GP18',  23: 'GND',   22: 'GP17',  21: 'GP16',
+    },
+    color='#388e3c',   # PCB green
+    is_dip=False,
+    is_module=True,
+)
+
+# ---------------------------------------------------------------------------
 # Registry: map type_id → ComponentDef
 # Also provides heuristic lookup from KiCad symbol/value strings.
 # ---------------------------------------------------------------------------
@@ -384,6 +465,8 @@ ALL_DEFS: Dict[str, ComponentDef] = {
         POTENTIOMETER,
         NPN_BJT, PNP_BJT, JFET_N, JFET_P, BS170,
         TL081, RC4558, TL084, OPAMP_SPICE,
+        ARDUINO_NANO,
+        RASPBERRY_PI_PICO,
     ]
 }
 
@@ -400,6 +483,22 @@ def guess_type_id(ref: str, value: str, symbol: str, lib: str = '') -> Optional[
     v = value.upper()
     s = symbol.upper()
     l = lib.upper()
+
+    # Board modules — all KiCad variants map to a single standard layout.
+    # Arduino: any Arduino board with a Nano-compatible 30-pin header.
+    # Catches: Arduino_Nano_v2.x, Arduino_Nano_v3.x, Arduino_Nano_Every,
+    #          Arduino_Nano_ESP32, Arduino_Nano_RP2040_Connect, etc.
+    if 'ARDUINO' in v or 'ARDUINO' in s:
+        return 'Arduino_Nano'
+    # RPi Pico: any board using the standard 40-pin Pico header.
+    # Catches: RaspberryPi_Pico, RaspberryPi_Pico_W, RaspberryPi_Pico_Debug,
+    #          RaspberryPi_Pico_Extensive, RP2040, RP2350A/B, RP2354A/B, etc.
+    if ('PICO' in v or 'PICO' in s
+            or 'RP2040' in v or 'RP2040' in s
+            or 'RP2350' in v or 'RP2350' in s
+            or 'RP2354' in v or 'RP2354' in s
+            or 'RASPBERRYPI' in v or 'RASPBERRYPI' in s):
+        return 'RPi_Pico'
 
     # Exact value/symbol matches first
     for key in ('TL084', 'RC4558', 'TL081', 'BS170'):

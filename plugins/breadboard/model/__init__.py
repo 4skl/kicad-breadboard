@@ -1,6 +1,6 @@
 from .breadboard import (
     Breadboard, PlacedComponent, Wire,
-    TieHole, RailHole, Terminal, Hole,
+    TieHole, RailHole, Terminal, ModulePin, Hole,
     COLUMNS, HALF_COLUMNS, MINI_COLUMNS, TOP_ROWS, BOT_ROWS, ALL_ROWS,
     RAILLESS_LAYOUTS,
     RAIL_NAMES, VERT_RAIL_NAMES, VERT_RAIL_NAMES_RIGHT, ALL_RAIL_NAMES,

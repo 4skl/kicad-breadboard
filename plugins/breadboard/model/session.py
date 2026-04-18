@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 
 from .breadboard import (
     Breadboard, PlacedComponent, Wire,
-    TieHole, RailHole, Terminal, Hole,
+    TieHole, RailHole, Terminal, ModulePin, Hole,
     TERMINAL_NAMES, PROBE_NAMES,
 )
 
@@ -42,6 +42,8 @@ def _hole_to_json(h: Hole) -> list:
         return ['rail', h.rail, h.index] if h.section == 0 else ['rail', h.rail, h.index, h.section]
     if isinstance(h, Terminal):
         return ['terminal', h.name]
+    if isinstance(h, ModulePin):
+        return ['module', h.ref, h.pin]
     raise TypeError(f"Unknown hole type: {type(h)}")
 
 
@@ -55,6 +57,8 @@ def _hole_from_json(data: list) -> Hole:
         return RailHole(rail=data[1], index=data[2], section=section)
     if kind == 'terminal':
         return Terminal(name=data[1])
+    if kind == 'module':
+        return ModulePin(ref=data[1], pin=int(data[2]))
     raise ValueError(f"Unknown hole kind: {kind!r}")
 
 
@@ -110,6 +114,11 @@ def save_session(board: Breadboard, netlist_path: Optional[str], path: str) -> N
     if probes:
         doc['probes'] = probes
 
+    if board.module_positions:
+        doc['module_positions'] = {
+            ref: list(pos) for ref, pos in board.module_positions.items()
+        }
+
     Path(path).write_text(json.dumps(doc, indent=2), encoding='utf-8')
 
 
@@ -156,6 +165,10 @@ def load_session(path: str) -> Dict[str, Any]:
             off = info.get('offset')
             if off and len(off) == 2:
                 board.set_probe_label_offset(name, int(off[0]), int(off[1]))
+
+    for ref, pos in raw.get('module_positions', {}).items():
+        if isinstance(pos, (list, tuple)) and len(pos) == 2:
+            board.set_module_position(ref, int(pos[0]), int(pos[1]))
 
     return {
         'netlist_path': raw.get('netlist', '') or None,

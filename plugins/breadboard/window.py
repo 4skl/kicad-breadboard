@@ -20,7 +20,7 @@ from typing import Optional
 import wx
 import wx.lib.stattext
 
-from .canvas import BreadboardCanvas, CanvasLayout, MODE_SELECT, MODE_WIRE, MODE_DELETE
+from .canvas import BreadboardCanvas, CanvasLayout, MODE_SELECT, MODE_WIRE, MODE_DELETE, WIRE_COLORS
 from .tray import ComponentTray
 from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
@@ -50,6 +50,10 @@ ID_LOAD        = wx.NewIdRef()
 ID_PREFS       = wx.NewIdRef()
 ID_HELP_UPDATES = wx.NewIdRef()
 ID_HELP_ISSUE   = wx.NewIdRef()
+
+# Wire color picker — labels mirror WIRE_COLORS order; first entry means "cycle automatically"
+_WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
+_WIRE_COLOR_LABELS = ['Auto'] + _WIRE_COLOR_NAMES
 
 
 class BreadboardWindow(wx.Frame):
@@ -370,6 +374,13 @@ class BreadboardWindow(wx.Frame):
         tb.AddTool(ID_WIRE,   'Draw Wire',    wx.NullBitmap,
                    shortHelp='Draw a jumper wire between two holes',
                    kind=wx.ITEM_RADIO)
+        tb.AddControl(wx.StaticText(tb, label='  '))
+        self._wire_color_choice = wx.Choice(tb, choices=_WIRE_COLOR_LABELS)
+        self._wire_color_choice.SetSelection(0)
+        self._wire_color_choice.SetToolTip(
+            'Auto: cycles through colors each wire. Pick a color to always use it.')
+        self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
+        tb.AddControl(self._wire_color_choice)
         tb.AddTool(ID_DELETE, 'Delete',       wx.NullBitmap,
                    shortHelp='Delete a component or wire',
                    kind=wx.ITEM_RADIO)
@@ -431,6 +442,11 @@ class BreadboardWindow(wx.Frame):
     def _on_wire(self, _evt) -> None:
         self._set_mode(MODE_WIRE)
 
+    def _on_wire_color_choice(self, _evt) -> None:
+        idx = self._wire_color_choice.GetSelection()
+        # idx 0 = Auto (cycle); idx 1..N = specific color from WIRE_COLORS
+        self.canvas.set_wire_color(WIRE_COLORS[idx - 1] if idx > 0 else None)
+
     def _on_delete(self, _evt) -> None:
         self._set_mode(MODE_DELETE)
 
@@ -465,7 +481,7 @@ class BreadboardWindow(wx.Frame):
             ) != wx.YES:
                 return
             self.board = Breadboard(layout=self.prefs.board_layout)
-            self.canvas.board = self.board
+            self.canvas.reload_board(self.board)
             self.tray.board = self.board
             self.tray.refresh_placed()
             self.canvas.clear_highlights()
@@ -643,7 +659,7 @@ class BreadboardWindow(wx.Frame):
 
         # Restore board state
         self.board = result['board']
-        self.canvas.board = self.board
+        self.canvas.reload_board(self.board)
         self.tray.board = self.board
         self.canvas.clear_highlights()
 
@@ -653,6 +669,7 @@ class BreadboardWindow(wx.Frame):
             self.prefs.board_layout = saved_layout
         self.canvas.layout = CanvasLayout(saved_layout, self.prefs.binding_post_side,
                                           self.prefs.show_branding)
+        self.canvas._populate_module_pins()
         self.canvas._pan_initialized = False
 
         # Reload the netlist from the saved path (if present and netlist not yet loaded)
@@ -734,7 +751,7 @@ class BreadboardWindow(wx.Frame):
             if proceed:
                 from .model import Breadboard
                 self.board = Breadboard(layout=p.board_layout)
-                self.canvas.board = self.board
+                self.canvas.reload_board(self.board)
                 self.tray.board = self.board
                 self.tray.refresh_placed()
                 self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
@@ -918,7 +935,7 @@ class BreadboardWindow(wx.Frame):
                 if self.prefs.auto_gnd:
                     for _pname in ('FG_GND', 'SCOPE_GND'):
                         self.board.assign_probe_net(_pname, _gnd_net)
-            self.canvas.board = self.board
+            self.canvas.reload_board(self.board)
             self.tray.board = self.board
             self.tray.refresh_placed()
             self._refresh_terminal_choices()
