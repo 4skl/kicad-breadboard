@@ -325,6 +325,7 @@ class BreadboardWindow(wx.Frame):
 
         # Connect tray → canvas placement flow
         self.tray.on_pick = lambda comp_def, ref: self.canvas.begin_place(comp_def, ref)
+        self.tray.on_rpi_label_mode = lambda v: self.canvas.set_rpi_long_labels(v)
         self.canvas.on_placed = lambda ref: self.tray.refresh_placed()
         self.canvas.on_probe_placed = lambda name: self._refresh_probe_buttons()
 
@@ -374,16 +375,17 @@ class BreadboardWindow(wx.Frame):
         tb.AddTool(ID_WIRE,   'Draw Wire',    wx.NullBitmap,
                    shortHelp='Draw a jumper wire between two holes',
                    kind=wx.ITEM_RADIO)
-        tb.AddControl(wx.StaticText(tb, label='  '))
+        tb.AddTool(ID_DELETE, 'Delete',       wx.NullBitmap,
+                   shortHelp='Delete a component or wire',
+                   kind=wx.ITEM_RADIO)
+        tb.AddSeparator()
+        tb.AddControl(wx.StaticText(tb, label=' Wire colour: '))
         self._wire_color_choice = wx.Choice(tb, choices=_WIRE_COLOR_LABELS)
         self._wire_color_choice.SetSelection(0)
         self._wire_color_choice.SetToolTip(
             'Auto: cycles through colors each wire. Pick a color to always use it.')
         self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
         tb.AddControl(self._wire_color_choice)
-        tb.AddTool(ID_DELETE, 'Delete',       wx.NullBitmap,
-                   shortHelp='Delete a component or wire',
-                   kind=wx.ITEM_RADIO)
         tb.AddSeparator()
         tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
                    shortHelp='Save the breadboard as a PNG image')

@@ -69,6 +69,7 @@ from .model import (
     ComponentDef, ALL_DEFS,
     Netlist, guess_type_id,
     validate, IssueKind,
+    RPi_PIN_NAMES_LONG,
 )
 
 # ---------------------------------------------------------------------------
@@ -99,7 +100,8 @@ _MODULE_BODY_H: Dict[str, int] = {
     'Arduino_Nano': 42,
     'RPi_Pico':      8,   # compact 2×20 header: two rows 8px apart, both at top edge
 }
-_RPi_BOARD_H = 110   # total RPi board visual height (pin area + body below)
+_RPi_BOARD_H         = 110  # total RPi board height for landscape orientation
+_RPi_PORTRAIT_PITCH  = 10  # pin pitch for portrait orientations (smaller than 18 to keep board compact)
 
 # USB-style connector protruding from the left (pin-1) end of Arduino Nano.
 # Each tuple: (rel_cy, conn_w, conn_h)
@@ -613,6 +615,8 @@ class BreadboardCanvas(wx.Panel):
         self._drag_label_start_mouse: Tuple[int, int] = (0, 0)
         self._drag_label_start_offset: Tuple[int, int] = (0, 0)
 
+        self._rpi_long_labels: bool = False   # toggle for RPi alt-function pin names
+
         # Callbacks
         self.on_placed: Optional[callable] = None
         self.on_probe_placed: Optional[callable] = None  # called with probe name
@@ -806,6 +810,10 @@ class BreadboardCanvas(wx.Panel):
             all_holes.update(issue.holes)
         self._highlighted_holes = all_holes
         self._highlight_kind = result.issues[0].kind if result.issues else None
+        self.Refresh()
+
+    def set_rpi_long_labels(self, long: bool) -> None:
+        self._rpi_long_labels = long
         self.Refresh()
 
     def set_wire_color(self, color: Optional[str]) -> None:
@@ -1094,6 +1102,18 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
             return
 
+        # Live-move a dragged module
+        if self._drag_comp:
+            p = self.board.get_placement(self._drag_comp)
+            comp_def = ALL_DEFS.get(p.type_id) if p else None
+            if comp_def and comp_def.is_module:
+                mx = int(px - self._drag_offset[0])
+                my = int(py - self._drag_offset[1])
+                self.board.set_module_position(self._drag_comp, mx, my)
+                self._sync_module_pins(self._drag_comp)
+            self.Refresh()
+            return
+
         self._ghost_pos = (px, py)
         if self._ghost:
             comp_def = self._ghost.comp_def
@@ -1187,14 +1207,18 @@ class BreadboardCanvas(wx.Panel):
     def _comp_at(self, px: int, py: int) -> Optional[str]:
         """Return ref of the component whose body contains pixel (px, py)."""
         for ref, p in self.board.placements.items():
+            comp_def = ALL_DEFS.get(p.type_id)
             holes_xy = [self.layout.hole_xy(h) for h in p.pin_holes.values()]
             holes_xy = [xy for xy in holes_xy if xy is not None]
             if not holes_xy:
                 continue
-            # Hit-test the full bounding box of the component body
             xs = [xy[0] for xy in holes_xy]
             ys = [xy[1] for xy in holes_xy]
-            pad_x, pad_y = 6, 10
+            if comp_def and comp_def.is_module:
+                # Use generous padding to cover the full board body, not just GPIO pins
+                pad_x, pad_y = 90, 120
+            else:
+                pad_x, pad_y = 6, 10
             if (min(xs) - pad_x <= px <= max(xs) + pad_x and
                     min(ys) - pad_y <= py <= max(ys) + pad_y):
                 return ref
@@ -1890,30 +1914,146 @@ class BreadboardCanvas(wx.Panel):
                             ref: str, mx: int, my: int,
                             selected: bool, ghost: bool = False,
                             flipped: bool = False) -> None:
-        """Draw a Raspberry Pi board.
-
-        (mx, my) = pin-1 canvas position (top pin row).
-        Both header rows sit at the TOP edge of the board, 8px apart.
-        The board body extends downward below the header strip.
+        """Draw a Raspberry Pi board.  rotation = int(flipped) % 4:
+          0 = GPIO top  (landscape)     1 = GPIO right (portrait, 90° CW)
+          2 = GPIO bottom (landscape)   3 = GPIO left  (portrait, 270° CW)
+        (mx, my) = pin-1 canvas position in all orientations.
         """
-        PIN_ROW_GAP = self._body_h(comp_def)   # 8px — compact 2×20 header
-        max_col     = max((o.col_delta for o in comp_def.pin_offsets.values()), default=0)
-        SIDE_PAD    = 32   # wide margin so mounting holes sit clear of the pin area
-        body_w      = max_col * MODULE_PIN_PITCH + SIDE_PAD * 2
-        HDR_H       = PIN_ROW_GAP + MODULE_BODY_PAD * 2   # 18px header strip
-        body_h      = _RPi_BOARD_H                         # fixed total height
-
-        body_x = mx - SIDE_PAD
-        body_y = my - MODULE_BODY_PAD   # pin row-0 is MODULE_BODY_PAD inside the top
+        rot = int(flipped) % 4
+        GAP   = self._body_h(comp_def)   # 8 px between the two header rows
+        max_col = max((o.col_delta for o in comp_def.pin_offsets.values()), default=0)
+        PAD   = MODULE_BODY_PAD          # 5 px
+        HDR_H = GAP + PAD * 2           # 18 px header strip
+        P     = MODULE_PIN_PITCH         # 18 px landscape pitch
+        Pp    = _RPi_PORTRAIT_PITCH      # 10 px portrait pitch
+        SA    = 32   # "A" side margin: left (0), bottom (1), right (2), top (3)
+        SB    = 75   # "B" side margin (connectors): right (0), top (1), left (2), bottom (3)
 
         board_color = wx.Colour(comp_def.color)
         grey = wx.Colour('#d0d0d0')
         dark = wx.Colour('#888888')
+        RPi_PIN_R = 3
+        eth_s = 30;  usb_s = 16;  chip_s = 44
+        group_h = usb_s + 4 + usb_s + 4 + eth_s   # 70 px connector stack
 
-        def _pin_xy(offset) -> Tuple[int, int]:
-            x = mx + offset.col_delta * MODULE_PIN_PITCH
-            on_bottom = offset.cross_gap ^ flipped
-            return x, my + (PIN_ROW_GAP if on_bottom else 0)
+        # ── Per-rotation geometry ──────────────────────────────────────────
+        if rot == 0:
+            # GPIO TOP — col→right, gap→down, board extends downward
+            ps = max_col * P
+            body_x = mx - SA;  body_y = my - PAD
+            body_w = ps + SA + SB;  body_h = _RPi_BOARD_H
+            hdr_rx, hdr_ry, hdr_rw, hdr_rh = mx - PAD, body_y, ps + PAD*2, HDR_H
+
+            def _pin_xy(o): return (mx + o.col_delta * P, my + (GAP if o.cross_gap else 0))
+
+            def _label(dc_, o, name):
+                px, _ = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                _, rh = dc_.GetTextExtent('M')
+                row2 = body_y - 4
+                row1 = row2 - rh - 4
+                dc_.DrawText(name, px - tw//2, row1 if o.cross_gap else row2)
+
+            ba_y = body_y + HDR_H;  ba_h = body_h - HDR_H;  ba_cy = ba_y + ba_h // 2
+            hole_positions = [(body_x+16, body_y+HDR_H//2), (mx+ps+22, body_y+HDR_H//2),
+                              (body_x+16, body_y+body_h-10), (mx+ps+22, body_y+body_h-10)]
+            chip_cx = body_x + (SA + ps) // 2;  chip_cy = ba_y + ba_h // 3
+            gt = ba_cy - group_h // 2
+            usb1_cx = usb2_cx = body_x + body_w - usb_s//2 - 3
+            eth_cx  = body_x + body_w - eth_s//2 - 3
+            usb1_cy = gt + usb_s//2;  usb2_cy = usb1_cy + usb_s + 4
+            eth_cy  = usb2_cy + usb_s//2 + 4 + eth_s//2
+            name_cx = chip_cx;  name_cy = chip_cy + chip_s//2 + 6
+
+        elif rot == 1:
+            # GPIO RIGHT — col→up, gap→left, board extends leftward
+            ps = max_col * Pp
+            body_h = ps + SA + SB;  body_w = _RPi_BOARD_H
+            body_x = mx + PAD - body_w;  body_y = my + SA - body_h
+            hdr_rx = body_x + body_w - HDR_H;  hdr_ry = my - ps - PAD
+            hdr_rw = HDR_H;  hdr_rh = ps + PAD * 2
+
+            def _pin_xy(o): return (mx - (GAP if o.cross_gap else 0), my - o.col_delta * Pp)
+
+            def _label(dc_, o, name):
+                _, py = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                _, rh = dc_.GetTextExtent('M')
+                col1 = body_x + body_w + 3
+                col2 = col1 + rh + 4
+                dc_.DrawText(name, col2 if o.cross_gap else col1, py - th//2)
+
+            ba_x = body_x;  ba_w = body_w - HDR_H;  ba_cx = ba_x + ba_w // 2
+            ba_cy = body_y + body_h // 2
+            hole_positions = [(body_x+16, body_y+16), (body_x+body_w-16, body_y+16),
+                              (body_x+16, body_y+body_h-16), (body_x+body_w-16, my-ps-22)]
+            chip_cx = ba_cx;  chip_cy = body_y + (SB + ps) // 2 + SB // 3
+            gt = ba_cy - group_h // 2
+            usb1_cy = usb2_cy = body_y + body_h - usb_s//2 - 3  # bottom of board...
+            # Connector stack at the TOP (SB side)
+            gt = body_y + (SB - group_h) // 2
+            usb1_cy = gt + usb_s//2;  usb2_cy = usb1_cy + usb_s + 4
+            eth_cy  = usb2_cy + usb_s//2 + 4 + eth_s//2
+            usb1_cx = usb2_cx = ba_cx;  eth_cx = ba_cx
+            name_cx = ba_cx;  name_cy = chip_cy + chip_s//2 + 6
+
+        elif rot == 2:
+            # GPIO BOTTOM — col→left, gap→up, board extends upward
+            ps = max_col * P
+            body_x = mx - ps - SB;  body_y = my + PAD - _RPi_BOARD_H
+            body_w = ps + SA + SB;  body_h = _RPi_BOARD_H
+            hdr_rx = mx - ps - PAD;  hdr_ry = body_y + body_h - HDR_H
+            hdr_rw = ps + PAD * 2;   hdr_rh = HDR_H
+
+            def _pin_xy(o): return (mx - o.col_delta * P, my - (GAP if o.cross_gap else 0))
+
+            def _label(dc_, o, name):
+                px, _ = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                _, rh = dc_.GetTextExtent('M')
+                row1 = body_y + body_h + 4
+                row2 = row1 + rh + 4
+                dc_.DrawText(name, px - tw//2, row2 if o.cross_gap else row1)
+
+            ba_y = body_y;  ba_h = body_h - HDR_H;  ba_cy = ba_y + ba_h // 2
+            hole_positions = [(body_x+16, body_y+10), (mx-ps-22, body_y+10),
+                              (body_x+16, body_y+body_h-HDR_H//2), (mx-ps-22, body_y+body_h-HDR_H//2)]
+            chip_cx = body_x + (SB + ps) // 2;  chip_cy = ba_y + ba_h * 2 // 3
+            gt = ba_cy - group_h // 2
+            usb1_cx = usb2_cx = body_x + usb_s//2 + 3
+            eth_cx  = body_x + eth_s//2 + 3
+            usb1_cy = gt + usb_s//2;  usb2_cy = usb1_cy + usb_s + 4
+            eth_cy  = usb2_cy + usb_s//2 + 4 + eth_s//2
+            name_cx = chip_cx;  name_cy = chip_cy - chip_s//2 - nh_placeholder = 0
+
+        else:  # rot == 3
+            # GPIO LEFT — col→down, gap→right, board extends rightward
+            ps = max_col * Pp
+            body_h = ps + SA + SB;  body_w = _RPi_BOARD_H
+            body_x = mx - PAD;  body_y = my - SB - ps
+            hdr_rx = body_x;  hdr_ry = my - PAD
+            hdr_rw = HDR_H;  hdr_rh = ps + PAD * 2
+
+            def _pin_xy(o): return (mx + (GAP if o.cross_gap else 0), my + o.col_delta * Pp)
+
+            def _label(dc_, o, name):
+                _, py = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                _, rh = dc_.GetTextExtent('M')
+                col1 = body_x - 3 - rh
+                col2 = col1 - rh - 4
+                dc_.DrawText(name, (col2 - tw) if o.cross_gap else (col1 - tw), py - th//2)
+
+            ba_x = body_x + HDR_H;  ba_w = body_w - HDR_H;  ba_cx = ba_x + ba_w // 2
+            ba_cy = body_y + body_h // 2
+            hole_positions = [(body_x+16, body_y+16), (body_x+body_w-16, body_y+16),
+                              (body_x+16, body_y+body_h-16), (mx+ps+22, body_y+body_h-16)]
+            chip_cx = ba_cx;  chip_cy = body_y + body_h - (SB + ps) // 2 - SB // 3
+            gt = body_y + body_h - SB + (SB - group_h) // 2
+            usb1_cy = gt + usb_s//2;  usb2_cy = usb1_cy + usb_s + 4
+            eth_cy  = usb2_cy + usb_s//2 + 4 + eth_s//2
+            usb1_cx = usb2_cx = ba_cx;  eth_cx = ba_cx
+            name_cx = ba_cx;  name_cy = chip_cy + chip_s//2 + 6
 
         # ── Ghost ─────────────────────────────────────────────────────────
         if ghost:
@@ -1924,16 +2064,15 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawRoundedRectangle(body_x, body_y, body_w, body_h, 4)
             dc.SetBrush(wx.Brush(wx.Colour('#555555')))
             dc.SetPen(wx.TRANSPARENT_PEN)
-            dc.DrawRectangle(body_x + 1, body_y, body_w - 2, HDR_H)
+            dc.DrawRectangle(hdr_rx, hdr_ry, hdr_rw, hdr_rh)
             dc.SetBrush(wx.Brush(wx.Colour('#aaaaaa')))
             dc.SetPen(wx.Pen(wx.Colour('#777777'), 1))
             for pin_num, offset in comp_def.pin_offsets.items():
                 px, py = _pin_xy(offset)
                 if pin_num == 1:
-                    dc.DrawRectangle(px - MODULE_PIN_R, py - MODULE_PIN_R,
-                                     MODULE_PIN_R*2, MODULE_PIN_R*2)
+                    dc.DrawRectangle(px - RPi_PIN_R, py - RPi_PIN_R, RPi_PIN_R*2, RPi_PIN_R*2)
                 else:
-                    dc.DrawCircle(px, py, MODULE_PIN_R)
+                    dc.DrawCircle(px, py, RPi_PIN_R)
             return
 
         # ── Selection halo ────────────────────────────────────────────────
@@ -1947,44 +2086,31 @@ class BreadboardCanvas(wx.Panel):
         dc.SetPen(wx.Pen(wx.Colour('#1a1a1a'), 1))
         dc.DrawRoundedRectangle(body_x, body_y, body_w, body_h, 4)
 
-        # ── Black header strip along the top edge ─────────────────────────
+        # ── Black header plastic ───────────────────────────────────────────
         dc.SetBrush(wx.Brush(wx.Colour('#1c1c1c')))
         dc.SetPen(wx.TRANSPARENT_PEN)
-        dc.DrawRectangle(body_x + 1, body_y, body_w - 2, HDR_H)
+        dc.DrawRectangle(hdr_rx, hdr_ry, hdr_rw, hdr_rh)
 
-        # ── Mounting holes (copper ring + dark centre) ────────────────────
-        hole_r   = 7
-        h_inset  = 12   # horizontal: clears pin area (SIDE_PAD=24, so 12px from edge)
-        v_inset  = 10   # vertical: within header strip and at board bottom
-        body_bot = body_y + body_h
-        for hx, hy in [(body_x + h_inset,         body_y + HDR_H // 2),
-                       (body_x + body_w - h_inset, body_y + HDR_H // 2),
-                       (body_x + h_inset,          body_bot - v_inset),
-                       (body_x + body_w - h_inset, body_bot - v_inset)]:
+        # ── Mounting holes ────────────────────────────────────────────────
+        for hx, hy in hole_positions:
             dc.SetBrush(wx.Brush(wx.Colour('#c8a800')))
             dc.SetPen(wx.Pen(wx.Colour('#8a7200'), 1))
-            dc.DrawCircle(hx, hy, hole_r)
+            dc.DrawCircle(hx, hy, 7)
             dc.SetBrush(wx.Brush(wx.Colour('#2a4030')))
             dc.SetPen(wx.TRANSPARENT_PEN)
-            dc.DrawCircle(hx, hy, hole_r - 3)
+            dc.DrawCircle(hx, hy, 4)
 
-        # ── Processor square (left-centre of body area) ───────────────────
-        chip_s       = 44
-        body_area_y  = body_y + HDR_H
-        body_area_h  = body_h - HDR_H
-        body_area_cy = body_area_y + body_area_h // 2
-        chip_cx = body_x + body_w // 3
-        chip_cy = body_area_cy
+        # ── Processor square ──────────────────────────────────────────────
         dc.SetBrush(wx.Brush(grey))
         dc.SetPen(wx.Pen(dark, 1))
         dc.DrawRectangle(chip_cx - chip_s//2, chip_cy - chip_s//2, chip_s, chip_s)
 
-        # ── Ethernet square (right portion, inside the board) ─────────────
-        eth_s = 30
-        eth_cx = body_x + body_w * 3 // 4
+        # ── Connectors (ethernet + 2× USB) ────────────────────────────────
         dc.SetBrush(wx.Brush(grey))
         dc.SetPen(wx.Pen(dark, 1))
-        dc.DrawRectangle(eth_cx - eth_s//2, body_area_cy - eth_s//2, eth_s, eth_s)
+        dc.DrawRectangle(eth_cx  - eth_s//2, eth_cy  - eth_s//2, eth_s,  eth_s)
+        dc.DrawRectangle(usb1_cx - usb_s//2, usb1_cy - usb_s//2, usb_s,  usb_s)
+        dc.DrawRectangle(usb2_cx - usb_s//2, usb2_cy - usb_s//2, usb_s,  usb_s)
 
         # ── Pin pads ──────────────────────────────────────────────────────
         dc.SetBrush(wx.Brush(wx.Colour('#c8c8c8')))
@@ -1992,35 +2118,24 @@ class BreadboardCanvas(wx.Panel):
         for pin_num, offset in comp_def.pin_offsets.items():
             px, py = _pin_xy(offset)
             if pin_num == 1:
-                dc.DrawRectangle(px - MODULE_PIN_R, py - MODULE_PIN_R,
-                                 MODULE_PIN_R*2, MODULE_PIN_R*2)
+                dc.DrawRectangle(px - RPi_PIN_R, py - RPi_PIN_R, RPi_PIN_R*2, RPi_PIN_R*2)
             else:
-                dc.DrawCircle(px, py, MODULE_PIN_R)
+                dc.DrawCircle(px, py, RPi_PIN_R)
 
-        # ── Pin labels — both rows above the board ────────────────────────
-        dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                           wx.FONTWEIGHT_NORMAL))
+        # ── Pin labels ────────────────────────────────────────────────────
+        dc.SetFont(wx.Font(4, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         dc.SetTextForeground('#1a1a1a')
-        _, th = dc.GetTextExtent('M')
-        label_lower = body_y - MODULE_LABEL_GAP - th      # just above board top
-        label_upper = label_lower - th - 2                 # one row higher
+        pin_name_map = RPi_PIN_NAMES_LONG if self._rpi_long_labels else comp_def.pin_names
         for pin_num, offset in comp_def.pin_offsets.items():
-            name = comp_def.pin_names.get(pin_num, str(pin_num))
-            px, py = _pin_xy(offset)
-            tw, _ = dc.GetTextExtent(name)
-            on_bottom = offset.cross_gap ^ flipped
-            # outer row (y=my) → label_lower; inner row (y=my+8) → label_upper
-            dc.DrawText(name, px - tw//2, label_upper if on_bottom else label_lower)
+            _label(dc, offset, pin_name_map.get(pin_num, str(pin_num)))
 
-        # ── Board name + ref centred below header ─────────────────────────
+        # ── Board name + ref ──────────────────────────────────────────────
         r2, g2, b2 = board_color.Red(), board_color.Green(), board_color.Blue()
         luma = 0.299*r2 + 0.587*g2 + 0.114*b2
         dc.SetTextForeground('#ffffff' if luma < 160 else '#222222')
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         dname = comp_def.display_name
         nw, nh = dc.GetTextExtent(dname)
-        name_cx = body_x + body_w // 2
-        name_cy = body_area_cy + chip_s//2 + 8
         dc.DrawText(dname, name_cx - nw//2, name_cy)
         if ref:
             dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
@@ -2223,10 +2338,24 @@ class BreadboardCanvas(wx.Panel):
         """Return (ref, pin_num) → (canvas_x, canvas_y) for all module pins.
 
         (mx, my) = pin-1 canvas position.
-        col_delta → x;  cross_gap → bottom row;  flipped → swap rows.
+        For RPi: flipped=True rotates 90° (col_delta → y, cross_gap → x).
+        For others: col_delta → x, cross_gap → bottom row, flipped swaps rows.
         """
-        bh = self._body_h(comp_def)
         result: Dict[Tuple[str, int], Tuple[int, int]] = {}
+        if comp_def.type_id == 'RPi_Pico':
+            GAP = self._body_h(comp_def)   # 8px row gap
+            for pin_num, offset in comp_def.pin_offsets.items():
+                inner = offset.cross_gap
+                if flipped:
+                    # 90° rotation: col_delta runs downward using portrait pitch
+                    x = mx + (GAP if inner else 0)
+                    y = my + offset.col_delta * _RPi_PORTRAIT_PITCH
+                else:
+                    x = mx + offset.col_delta * MODULE_PIN_PITCH
+                    y = my + (GAP if inner else 0)
+                result[(ref, pin_num)] = (x, y)
+            return result
+        bh = self._body_h(comp_def)
         for pin_num, offset in comp_def.pin_offsets.items():
             x = mx + offset.col_delta * MODULE_PIN_PITCH
             on_bottom = offset.cross_gap ^ flipped

@@ -415,43 +415,71 @@ ARDUINO_NANO = ComponentDef(
 )
 
 # ---------------------------------------------------------------------------
-# Raspberry Pi Pico (KiCad Module.pretty/RaspberryPi_Pico_Common_THT.kicad_mod):
-#   40 pins, 20 per side, 2.54mm pitch → 20 breadboard columns.
-#   Physical width: 17.78mm (7×2.54mm) between the two header rows.
-#
-# Standard Pico pinout, USB-end = pin 1 side.
-# Left  (1-20):  GP0, GP1, GND, GP2, GP3, GP4, GP5, GND, GP6, GP7,
-#                GP8, GP9, GND, GP10, GP11, GP12, GP13, GND, GP14, GP15
-# Right (40→21, col 0→19): VBUS, VSYS, GND, 3V3EN, 3V3, VREF, GP28, GND,
-#                GP27, GP26, RUN, GP22, GND, GP21, GP20, GP19, GP18, GND, GP17, GP16
+# Raspberry Pi — standard 40-pin GPIO header (BCM numbering).
+# Odd pins  (1,3,5,…,39): col_delta=(pin-1)//2, cross_gap=False (outer row)
+# Even pins (2,4,6,…,40): col_delta=(pin-2)//2, cross_gap=True  (inner row)
 # ---------------------------------------------------------------------------
 
-def _pico_offsets() -> Dict[int, PinOffset]:
-    left  = {n:  PinOffset(n - 1,   cross_gap=False) for n in range(1,  21)}
-    right = {n:  PinOffset(40 - n,  cross_gap=True)  for n in range(21, 41)}
-    return {**left, **right}
+def _rpi_gpio_offsets() -> Dict[int, PinOffset]:
+    odd  = {n: PinOffset((n - 1) // 2, cross_gap=False) for n in range(1, 41, 2)}
+    even = {n: PinOffset((n - 2) // 2, cross_gap=True)  for n in range(2, 41, 2)}
+    return {**odd, **even}
 
 RASPBERRY_PI_PICO = ComponentDef(
     type_id='RPi_Pico',
     display_name='Raspberry Pi',
     ref_prefix='MCU',
-    pin_offsets=_pico_offsets(),
+    pin_offsets=_rpi_gpio_offsets(),
     pin_names={
-        # Left side (USB end → far end), pins 1-20
-        1:  'GP0',   2:  'GP1',   3:  'GND',   4:  'GP2',   5:  'GP3',
-        6:  'GP4',   7:  'GP5',   8:  'GND',   9:  'GP6',   10: 'GP7',
-        11: 'GP8',   12: 'GP9',   13: 'GND',   14: 'GP10',  15: 'GP11',
-        16: 'GP12',  17: 'GP13',  18: 'GND',   19: 'GP14',  20: 'GP15',
-        # Right side (USB end → far end), pins 40→21 (col 0→19)
-        40: 'VBUS',  39: 'VSYS',  38: 'GND',   37: '3V3EN', 36: '3V3',
-        35: 'VREF',  34: 'GP28',  33: 'GND',   32: 'GP27',  31: 'GP26',
-        30: 'RUN',   29: 'GP22',  28: 'GND',   27: 'GP21',  26: 'GP20',
-        25: 'GP19',  24: 'GP18',  23: 'GND',   22: 'GP17',  21: 'GP16',
+        1:  '3V3',  2:  '5V',
+        3:  'G2',   4:  '5V',
+        5:  'G3',   6:  'GND',
+        7:  'G4',   8:  'G14',
+        9:  'GND',  10: 'G15',
+        11: 'G17',  12: 'G18',
+        13: 'G27',  14: 'GND',
+        15: 'G22',  16: 'G23',
+        17: '3V3',  18: 'G24',
+        19: 'G10',  20: 'GND',
+        21: 'G9',   22: 'G25',
+        23: 'G11',  24: 'G8',
+        25: 'GND',  26: 'G7',
+        27: 'G0',   28: 'G1',
+        29: 'G5',   30: 'GND',
+        31: 'G6',   32: 'G12',
+        33: 'G13',  34: 'GND',
+        35: 'G19',  36: 'G16',
+        37: 'G26',  38: 'G20',
+        39: 'GND',  40: 'G21',
     },
-    color='#388e3c',   # PCB green
+    color='#388e3c',
     is_dip=False,
     is_module=True,
 )
+
+# Alternative pin labels showing primary alternate functions (SDA, SCL, CE0…)
+RPi_PIN_NAMES_LONG = {
+    1:  '3V3',    2:  '5V',
+    3:  'SDA1',   4:  '5V',
+    5:  'SCL1',   6:  'GND',
+    7:  'GPCLK0', 8:  'TXD0',
+    9:  'GND',    10: 'RXD0',
+    11: 'G17',    12: 'PCM',
+    13: 'G27',    14: 'GND',
+    15: 'G22',    16: 'G23',
+    17: '3V3',    18: 'G24',
+    19: 'MOSI0',  20: 'GND',
+    21: 'MISO0',  22: 'G25',
+    23: 'SCLK0',  24: 'CE0',
+    25: 'GND',    26: 'CE1',
+    27: 'ID_SD',  28: 'ID_SC',
+    29: 'G5',     30: 'GND',
+    31: 'G6',     32: 'PWM0',
+    33: 'PWM1',   34: 'GND',
+    35: 'MISO1',  36: 'CE0_1',
+    37: 'G26',    38: 'MOSI1',
+    39: 'GND',    40: 'SCLK1',
+}
 
 # ---------------------------------------------------------------------------
 # Registry: map type_id → ComponentDef
@@ -524,6 +552,8 @@ def guess_type_id(ref: str, value: str, symbol: str, lib: str = '') -> Optional[
 
     # Reference prefix fallback
     prefix = ''.join(c for c in ref if c.isalpha()).upper()
+    if prefix in ('MCU', 'A'):
+        return 'RPi_Pico'
     if prefix == 'R':
         return 'C_POL' if ('POL' in s or 'ELEC' in v) else 'R'
     if prefix == 'C':

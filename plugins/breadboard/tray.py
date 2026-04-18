@@ -47,16 +47,17 @@ _BTN_RIGHT_PAD = 4   # gap between button right edge and card right edge
 
 class _PaintCard:
     """Pure data — no wx widget."""
-    __slots__ = ('ref', 'comp', 'comp_def', 'y', 'height', 'pinout_idx')
+    __slots__ = ('ref', 'comp', 'comp_def', 'y', 'height', 'pinout_idx', 'rpi_long_labels')
 
     def __init__(self, ref: str, comp: NetlistComponent,
                  comp_def: Optional[ComponentDef], y: int, height: int):
-        self.ref        = ref
-        self.comp       = comp
-        self.comp_def   = comp_def
-        self.y          = y       # top-left y in virtual (unscrolled) coordinates
-        self.height     = height
-        self.pinout_idx = 0       # index into TO92_PINOUT_VARIANTS[type_id]
+        self.ref             = ref
+        self.comp            = comp
+        self.comp_def        = comp_def
+        self.y               = y       # top-left y in virtual (unscrolled) coordinates
+        self.height          = height
+        self.pinout_idx      = 0       # index into TO92_PINOUT_VARIANTS[type_id]
+        self.rpi_long_labels = False   # RPi extended alt-function pin names
 
 
 class _PaintComponentTray(wx.ScrolledWindow):
@@ -68,6 +69,7 @@ class _PaintComponentTray(wx.ScrolledWindow):
         self.netlist = netlist
         self._cards: List[_PaintCard] = []
         self.on_pick = None
+        self.on_rpi_label_mode = None   # callback(bool)
 
         self.SetScrollRate(0, CARD_H + CARD_PAD)
         self.SetBackgroundColour('#d8d8d8')
@@ -97,7 +99,7 @@ class _PaintComponentTray(wx.ScrolledWindow):
             if type_id is None:
                 continue
             comp_def = ALL_DEFS.get(type_id)
-            h = TO92_CARD_H if type_id in TO92_PINOUT_VARIANTS else CARD_H
+            h = TO92_CARD_H if (type_id in TO92_PINOUT_VARIANTS or type_id == 'RPi_Pico') else CARD_H
             self._cards.append(_PaintCard(ref=ref, comp=comp, comp_def=comp_def,
                                           y=y, height=h))
             y += h + CARD_PAD
@@ -188,6 +190,22 @@ class _PaintComponentTray(wx.ScrolledWindow):
                         dc.DrawText('>', btn_x + (_BTN_W - tw) // 2,
                                     btn_y + (_BTN_H - th) // 2)
 
+                # RPi long-label checkbox
+                if card.comp_def.type_id == 'RPi_Pico':
+                    cb_x = x + SWATCH_W + 8
+                    cb_y = y + 32
+                    cb_s = 10
+                    dc.SetBrush(wx.Brush('#ffffff' if not placed else bg))
+                    dc.SetPen(wx.Pen('#888888', 1))
+                    dc.DrawRectangle(cb_x, cb_y, cb_s, cb_s)
+                    if card.rpi_long_labels:
+                        dc.SetPen(wx.Pen('#333333', 2))
+                        dc.DrawLine(cb_x+2, cb_y+5, cb_x+4, cb_y+8)
+                        dc.DrawLine(cb_x+4, cb_y+8, cb_x+8, cb_y+2)
+                    dc.SetFont(font_pinout)
+                    dc.SetTextForeground(fg)
+                    dc.DrawText('pin functions', cb_x + cb_s + 4, cb_y)
+
             # Border
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.SetPen(wx.Pen('#aaaaaa' if placed else '#888888', 1))
@@ -216,6 +234,19 @@ class _PaintComponentTray(wx.ScrolledWindow):
                     self.Refresh()
                     return
 
+        # Check if click landed on the RPi long-labels checkbox
+        if card.comp_def and card.comp_def.type_id == 'RPi_Pico' and card.height > CARD_H:
+            _, screen_y = self.CalcUnscrolledPosition(0, evt.GetY())
+            cb_x = CARD_PAD + SWATCH_W + 8
+            cb_y_virt = card.y + 32
+            if (cb_x <= click_x < cb_x + 10 and
+                    cb_y_virt <= virt_y < cb_y_virt + 10):
+                card.rpi_long_labels = not card.rpi_long_labels
+                self.Refresh()
+                if self.on_rpi_label_mode is not None:
+                    self.on_rpi_label_mode(card.rpi_long_labels)
+                return
+
         if placed or card.comp_def is None:
             return
         if self.on_pick is not None:
@@ -236,16 +267,18 @@ class _NativeCard(wx.Panel):
 
     def __init__(self, parent, ref: str, comp: NetlistComponent,
                  comp_def: Optional[ComponentDef], board: Breadboard,
-                 is_to92: bool = False):
-        h = TO92_CARD_H if is_to92 else CARD_H
+                 is_to92: bool = False, is_rpi: bool = False):
+        h = TO92_CARD_H if (is_to92 or is_rpi) else CARD_H
         super().__init__(parent, size=(CARD_W, h), style=wx.BORDER_SIMPLE)
-        self.ref          = ref
-        self.comp         = comp
-        self.comp_def     = comp_def
-        self.board        = board
-        self._is_to92     = is_to92
-        self._swatch_color = comp_def.color if comp_def else '#aaaaaa'
-        self.pinout_idx   = 0
+        self.ref              = ref
+        self.comp             = comp
+        self.comp_def         = comp_def
+        self.board            = board
+        self._is_to92         = is_to92
+        self._is_rpi          = is_rpi
+        self._swatch_color    = comp_def.color if comp_def else '#aaaaaa'
+        self.pinout_idx       = 0
+        self.rpi_long_labels  = False
 
         self._swatch = wx.Panel(self, pos=(4, 4), size=(SWATCH_W, h - 8))
 
@@ -262,6 +295,7 @@ class _NativeCard(wx.Panel):
 
         self._pinout_lbl: Optional[wx.StaticText] = None
         self._cycle_lbl:  Optional[wx.StaticText] = None
+        self._rpi_chk:    Optional[wx.CheckBox]   = None
         if is_to92 and comp_def:
             variants = TO92_PINOUT_VARIANTS.get(comp_def.type_id, [])
             if variants:
@@ -277,6 +311,12 @@ class _NativeCard(wx.Panel):
                     self._cycle_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                                                      wx.FONTSTYLE_NORMAL,
                                                      wx.FONTWEIGHT_BOLD))
+        if is_rpi:
+            self._rpi_chk = wx.CheckBox(self, label='pin functions',
+                                        pos=(SWATCH_W + 8, 32))
+            self._rpi_chk.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                                          wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+            self._rpi_chk.Bind(wx.EVT_CHECKBOX, self._on_rpi_chk)
 
         for w in filter(None, [self, self._swatch, self._ref_lbl, self._val_lbl,
                                 self._pinout_lbl, self._cycle_lbl]):
@@ -298,6 +338,9 @@ class _NativeCard(wx.Panel):
                                   self._pinout_lbl, self._cycle_lbl]):
             lbl.SetBackgroundColour(bg)
             lbl.SetForegroundColour(fg)
+        if self._rpi_chk:
+            self._rpi_chk.SetBackgroundColour(bg)
+            self._rpi_chk.SetForegroundColour(fg)
         self.Refresh()
 
     def update(self, board: Breadboard) -> None:
@@ -312,6 +355,12 @@ class _NativeCard(wx.Panel):
             self.pinout_idx = (self.pinout_idx + 1) % len(variants)
             if self._pinout_lbl:
                 self._pinout_lbl.SetLabel(variants[self.pinout_idx][0])
+
+    def _on_rpi_chk(self, evt: wx.CommandEvent) -> None:
+        self.rpi_long_labels = evt.IsChecked()
+        tray = self.GetParent()
+        if hasattr(tray, 'on_rpi_label_mode') and tray.on_rpi_label_mode is not None:
+            tray.on_rpi_label_mode(self.rpi_long_labels)
 
     def _on_click(self, evt: wx.MouseEvent) -> None:
         placed = self.board.get_placement(self.ref) is not None
@@ -342,6 +391,7 @@ class _NativeComponentTray(wx.ScrolledWindow):
         self.netlist = netlist
         self._cards: List[_NativeCard] = []
         self.on_pick = None
+        self.on_rpi_label_mode = None   # callback(bool)
 
         self.SetScrollRate(0, CARD_H + CARD_PAD)
         self.SetBackgroundColour('#d8d8d8')
@@ -374,9 +424,10 @@ class _NativeComponentTray(wx.ScrolledWindow):
                 continue
             comp_def = ALL_DEFS.get(type_id)
             is_to92  = type_id in TO92_PINOUT_VARIANTS
-            h        = TO92_CARD_H if is_to92 else CARD_H
+            is_rpi   = type_id == 'RPi_Pico'
+            h        = TO92_CARD_H if (is_to92 or is_rpi) else CARD_H
             card = _NativeCard(self, ref=ref, comp=comp, comp_def=comp_def,
-                               board=self.board, is_to92=is_to92)
+                               board=self.board, is_to92=is_to92, is_rpi=is_rpi)
             card.SetPosition(wx.Point(CARD_PAD, y))
             self._cards.append(card)
             y += h + CARD_PAD
