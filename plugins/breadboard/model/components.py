@@ -416,13 +416,13 @@ ARDUINO_NANO = ComponentDef(
 
 # ---------------------------------------------------------------------------
 # Raspberry Pi — standard 40-pin GPIO header (BCM numbering).
-# Odd pins  (1,3,5,…,39): col_delta=(pin-1)//2, cross_gap=False (outer row)
-# Even pins (2,4,6,…,40): col_delta=(pin-2)//2, cross_gap=True  (inner row)
+# Even pins (2,4,6,…,40): col_delta=(pin-2)//2, cross_gap=False (outer/edge row — 5V at edge)
+# Odd pins  (1,3,5,…,39): col_delta=(pin-1)//2, cross_gap=True  (inner row)
 # ---------------------------------------------------------------------------
 
 def _rpi_gpio_offsets() -> Dict[int, PinOffset]:
-    odd  = {n: PinOffset((n - 1) // 2, cross_gap=False) for n in range(1, 41, 2)}
-    even = {n: PinOffset((n - 2) // 2, cross_gap=True)  for n in range(2, 41, 2)}
+    odd  = {n: PinOffset((n - 1) // 2, cross_gap=True)  for n in range(1, 41, 2)}
+    even = {n: PinOffset((n - 2) // 2, cross_gap=False) for n in range(2, 41, 2)}
     return {**odd, **even}
 
 RASPBERRY_PI_PICO = ComponentDef(

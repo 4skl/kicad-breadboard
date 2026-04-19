@@ -18,6 +18,7 @@ File format (version 1):
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -136,6 +137,24 @@ def load_session(path: str) -> Dict[str, Any]:
     if version != SESSION_VERSION:
         raise ValueError(f"Unsupported session version {version} (expected {SESSION_VERSION})")
 
+    # Migrate legacy 'A{n}' module refs → 'MCU{n}'
+    _MODULE_TYPES = frozenset({'RPi_Pico', 'Arduino_Nano'})
+    ref_rename: Dict[str, str] = {}
+    for p in raw.get('placements', []):
+        m = re.match(r'^A(\d+)$', p.get('ref', ''))
+        if m and p.get('type_id') in _MODULE_TYPES:
+            ref_rename[p['ref']] = 'MCU' + m.group(1)
+    if ref_rename:
+        for p in raw.get('placements', []):
+            p['ref'] = ref_rename.get(p['ref'], p['ref'])
+        raw['module_positions'] = {ref_rename.get(k, k): v
+                                   for k, v in raw.get('module_positions', {}).items()}
+        for w in raw.get('wires', []):
+            for key in ('h1', 'h2'):
+                h = w.get(key)
+                if isinstance(h, list) and len(h) >= 2 and h[0] == 'module':
+                    h[1] = ref_rename.get(h[1], h[1])
+
     board_cfg = raw.get('board', {})
     board = Breadboard(layout=board_cfg.get('layout', 'full'))
 
@@ -149,7 +168,7 @@ def load_session(path: str) -> Dict[str, Any]:
             ref=p['ref'],
             type_id=p['type_id'],
             pin_holes=pin_holes,
-            flipped=p.get('flipped', False),
+            flipped=int(p.get('flipped', 0)),
         )
         board.place(placed)
 

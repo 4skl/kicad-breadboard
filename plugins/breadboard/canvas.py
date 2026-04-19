@@ -98,9 +98,9 @@ MODULE_HEADER_H  = 10   # height of the black header strip along each long edge
 # Per-type inner body height (px between top and bottom pin-row centres).
 _MODULE_BODY_H: Dict[str, int] = {
     'Arduino_Nano': 42,
-    'RPi_Pico':      8,   # compact 2×20 header: two rows 8px apart, both at top edge
+    'RPi_Pico':      PITCH,  # 2×20 header: rows one grid-step apart so both land on tie holes
 }
-_RPi_BOARD_H         = 110  # total RPi board height for landscape orientation
+_RPi_BOARD_H         = 140  # total RPi board height for landscape orientation
 _RPi_PORTRAIT_PITCH  = 10  # pin pitch for portrait orientations (smaller than 18 to keep board compact)
 
 # USB-style connector protruding from the left (pin-1) end of Arduino Nano.
@@ -563,7 +563,7 @@ class DragGhost:
     comp_def: ComponentDef
     ref: str
     anchor: Optional[TieHole] = None   # snapped hole for pin 1
-    flipped: bool = False              # DIP only: horizontally mirrored
+    flipped: int = 0                   # DIP: 0/1; RPi modules: 0-3 (CW rotation)
 
 
 # ---------------------------------------------------------------------------
@@ -862,11 +862,13 @@ class BreadboardCanvas(wx.Panel):
             self._selected_wire = None
             self.Refresh()
         elif key in (ord('R'), ord('r')):
-            # Rotate 180° during placement, or rotate selected component.
+            # Rotate during placement, or rotate selected component.
             # 2-pin: only before pin1 is locked (flips the step-1 preview direction).
             if self._ghost is not None and (
                     self._ghost.comp_def.pin_count != 2 or self._place_pin1 is None):
-                self._ghost.flipped = not self._ghost.flipped
+                cd = self._ghost.comp_def
+                n_rots = 4 if cd.type_id == 'RPi_Pico' else 2
+                self._ghost.flipped = (self._ghost.flipped + 1) % n_rots
                 self.Refresh()
             elif self._selected_ref is not None:
                 self._flip_component(self._selected_ref)
@@ -1167,7 +1169,8 @@ class BreadboardCanvas(wx.Panel):
             return
 
         if comp_def.is_module:
-            placed.flipped = not placed.flipped
+            n_rots = 4 if comp_def.type_id == 'RPi_Pico' else 2
+            placed.flipped = (placed.flipped + 1) % n_rots
             self._sync_module_pins(ref)
             self.Refresh()
             return
@@ -1924,8 +1927,7 @@ class BreadboardCanvas(wx.Panel):
         max_col = max((o.col_delta for o in comp_def.pin_offsets.values()), default=0)
         PAD   = MODULE_BODY_PAD          # 5 px
         HDR_H = GAP + PAD * 2           # 18 px header strip
-        P     = MODULE_PIN_PITCH         # 18 px landscape pitch
-        Pp    = _RPi_PORTRAIT_PITCH      # 10 px portrait pitch
+        P     = MODULE_PIN_PITCH         # 18 px — same pitch in all orientations
         SA    = 32   # "A" side margin: left (0), bottom (1), right (2), top (3)
         SB    = 75   # "B" side margin (connectors): right (0), top (1), left (2), bottom (3)
 
@@ -1933,8 +1935,8 @@ class BreadboardCanvas(wx.Panel):
         grey = wx.Colour('#d0d0d0')
         dark = wx.Colour('#888888')
         RPi_PIN_R = 3
-        eth_s = 30;  usb_s = 16;  chip_s = 44
-        group_h = usb_s + 4 + usb_s + 4 + eth_s   # 70 px connector stack
+        eth_s = 30;  usb_s = 20;  chip_s = 44
+        group_h = usb_s + 4 + usb_s + 4 + eth_s
 
         # ── Per-rotation geometry ──────────────────────────────────────────
         if rot == 0:
@@ -1950,14 +1952,15 @@ class BreadboardCanvas(wx.Panel):
                 px, _ = _pin_xy(o)
                 tw, th = dc_.GetTextExtent(name)
                 _, rh = dc_.GetTextExtent('M')
-                row2 = body_y - 4
-                row1 = row2 - rh - 4
-                dc_.DrawText(name, px - tw//2, row1 if o.cross_gap else row2)
+                if not o.cross_gap:   # outer row: label outside the board (above)
+                    dc_.DrawText(name, px - tw//2, body_y - rh - 2)
+                else:                 # inner row: label inside the board (below header strip)
+                    dc_.DrawText(name, px - tw//2, body_y + HDR_H + 2)
 
             ba_y = body_y + HDR_H;  ba_h = body_h - HDR_H;  ba_cy = ba_y + ba_h // 2
-            hole_positions = [(body_x+16, body_y+HDR_H//2), (mx+ps+22, body_y+HDR_H//2),
-                              (body_x+16, body_y+body_h-10), (mx+ps+22, body_y+body_h-10)]
-            chip_cx = body_x + (SA + ps) // 2;  chip_cy = ba_y + ba_h // 3
+            hole_positions = [(body_x+16, body_y+HDR_H//2), (body_x+body_w-53, body_y+HDR_H//2),
+                              (body_x+16, body_y+body_h-10), (body_x+body_w-53, body_y+body_h-10)]
+            chip_cx = body_x + (SA + ps) // 2;  chip_cy = ba_y + ba_h // 2
             gt = ba_cy - group_h // 2
             usb1_cx = usb2_cx = body_x + body_w - usb_s//2 - 3
             eth_cx  = body_x + body_w - eth_s//2 - 3
@@ -1966,35 +1969,35 @@ class BreadboardCanvas(wx.Panel):
             name_cx = chip_cx;  name_cy = chip_cy + chip_s//2 + 6
 
         elif rot == 1:
-            # GPIO RIGHT — col→up, gap→left, board extends leftward
-            ps = max_col * Pp
+            # GPIO RIGHT — col→down, gap→left, board extends leftward; SA@top SB@bottom
+            ps = max_col * P
             body_h = ps + SA + SB;  body_w = _RPi_BOARD_H
-            body_x = mx + PAD - body_w;  body_y = my + SA - body_h
-            hdr_rx = body_x + body_w - HDR_H;  hdr_ry = my - ps - PAD
+            body_x = mx + PAD - body_w;  body_y = my - SA
+            hdr_rx = body_x + body_w - HDR_H;  hdr_ry = my - PAD
             hdr_rw = HDR_H;  hdr_rh = ps + PAD * 2
 
-            def _pin_xy(o): return (mx - (GAP if o.cross_gap else 0), my - o.col_delta * Pp)
+            def _pin_xy(o): return (mx - (GAP if o.cross_gap else 0), my + o.col_delta * P)
 
             def _label(dc_, o, name):
                 _, py = _pin_xy(o)
                 tw, th = dc_.GetTextExtent(name)
-                _, rh = dc_.GetTextExtent('M')
-                col1 = body_x + body_w + 3
-                col2 = col1 + rh + 4
-                dc_.DrawText(name, col2 if o.cross_gap else col1, py - th//2)
+                if not o.cross_gap:   # outer row: label outside the board (right)
+                    dc_.DrawText(name, body_x + body_w + 3, py - th//2)
+                else:                 # inner row: label inside board (left of header strip)
+                    dc_.DrawText(name, body_x + body_w - HDR_H - tw - 2, py - th//2)
 
             ba_x = body_x;  ba_w = body_w - HDR_H;  ba_cx = ba_x + ba_w // 2
             ba_cy = body_y + body_h // 2
-            hole_positions = [(body_x+16, body_y+16), (body_x+body_w-16, body_y+16),
-                              (body_x+16, body_y+body_h-16), (body_x+body_w-16, my-ps-22)]
-            chip_cx = ba_cx;  chip_cy = body_y + (SB + ps) // 2 + SB // 3
-            gt = ba_cy - group_h // 2
-            usb1_cy = usb2_cy = body_y + body_h - usb_s//2 - 3  # bottom of board...
-            # Connector stack at the TOP (SB side)
-            gt = body_y + (SB - group_h) // 2
-            usb1_cy = gt + usb_s//2;  usb2_cy = usb1_cy + usb_s + 4
-            eth_cy  = usb2_cy + usb_s//2 + 4 + eth_s//2
-            usb1_cx = usb2_cx = ba_cx;  eth_cx = ba_cx
+            hole_positions = [(body_x+10, body_y+16), (body_x+body_w-HDR_H//2, body_y+16),
+                              (body_x+10, body_y+body_h-53), (body_x+body_w-HDR_H//2, body_y+body_h-53)]
+            chip_cx = ba_cx;  chip_cy = body_y + SA + ps // 2
+            # Connectors: horizontal stack on BOTTOM edge (SB side), eth closest to SA (left)
+            gl = ba_cx - group_h // 2
+            usb1_cy = usb2_cy = body_y + body_h - usb_s//2 - 3
+            eth_cy  = body_y + body_h - eth_s//2 - 3
+            eth_cx  = gl + eth_s//2
+            usb1_cx = eth_cx + eth_s//2 + 4 + usb_s//2
+            usb2_cx = usb1_cx + usb_s + 4
             name_cx = ba_cx;  name_cy = chip_cy + chip_s//2 + 6
 
         elif rot == 2:
@@ -2011,49 +2014,54 @@ class BreadboardCanvas(wx.Panel):
                 px, _ = _pin_xy(o)
                 tw, th = dc_.GetTextExtent(name)
                 _, rh = dc_.GetTextExtent('M')
-                row1 = body_y + body_h + 4
-                row2 = row1 + rh + 4
-                dc_.DrawText(name, px - tw//2, row2 if o.cross_gap else row1)
+                if not o.cross_gap:   # outer row: label outside the board (below)
+                    dc_.DrawText(name, px - tw//2, body_y + body_h + 2)
+                else:                 # inner row: label inside board (above header strip)
+                    dc_.DrawText(name, px - tw//2, body_y + body_h - HDR_H - rh - 2)
 
             ba_y = body_y;  ba_h = body_h - HDR_H;  ba_cy = ba_y + ba_h // 2
-            hole_positions = [(body_x+16, body_y+10), (mx-ps-22, body_y+10),
-                              (body_x+16, body_y+body_h-HDR_H//2), (mx-ps-22, body_y+body_h-HDR_H//2)]
-            chip_cx = body_x + (SB + ps) // 2;  chip_cy = ba_y + ba_h * 2 // 3
+            hole_positions = [(body_x+53, body_y+10), (body_x+body_w-16, body_y+10),
+                              (body_x+53, body_y+body_h-HDR_H//2), (body_x+body_w-16, body_y+body_h-HDR_H//2)]
+            chip_cx = body_x + (SB + ps) // 2;  chip_cy = ba_y + ba_h // 2
             gt = ba_cy - group_h // 2
             usb1_cx = usb2_cx = body_x + usb_s//2 + 3
             eth_cx  = body_x + eth_s//2 + 3
-            usb1_cy = gt + usb_s//2;  usb2_cy = usb1_cy + usb_s + 4
-            eth_cy  = usb2_cy + usb_s//2 + 4 + eth_s//2
-            name_cx = chip_cx;  name_cy = chip_cy - chip_s//2 - nh_placeholder = 0
+            eth_cy  = gt + eth_s//2
+            usb2_cy = gt + eth_s + 4 + usb_s//2
+            usb1_cy = usb2_cy + usb_s + 4
+            name_cx = chip_cx;  name_cy = chip_cy - chip_s//2 - 30
 
         else:  # rot == 3
-            # GPIO LEFT — col→down, gap→right, board extends rightward
-            ps = max_col * Pp
+            # GPIO LEFT — col→up, gap→right, board extends rightward; SA@bottom SB@top
+            ps = max_col * P
             body_h = ps + SA + SB;  body_w = _RPi_BOARD_H
-            body_x = mx - PAD;  body_y = my - SB - ps
-            hdr_rx = body_x;  hdr_ry = my - PAD
+            body_x = mx - PAD;  body_y = my + SA - body_h
+            hdr_rx = body_x;  hdr_ry = my - ps - PAD
             hdr_rw = HDR_H;  hdr_rh = ps + PAD * 2
 
-            def _pin_xy(o): return (mx + (GAP if o.cross_gap else 0), my + o.col_delta * Pp)
+            def _pin_xy(o): return (mx + (GAP if o.cross_gap else 0), my - o.col_delta * P)
 
             def _label(dc_, o, name):
                 _, py = _pin_xy(o)
                 tw, th = dc_.GetTextExtent(name)
-                _, rh = dc_.GetTextExtent('M')
-                col1 = body_x - 3 - rh
-                col2 = col1 - rh - 4
-                dc_.DrawText(name, (col2 - tw) if o.cross_gap else (col1 - tw), py - th//2)
+                if not o.cross_gap:   # outer row: label outside the board (left)
+                    dc_.DrawText(name, body_x - tw - 3, py - th//2)
+                else:                 # inner row: label inside board (right of header strip)
+                    dc_.DrawText(name, body_x + HDR_H + 2, py - th//2)
 
             ba_x = body_x + HDR_H;  ba_w = body_w - HDR_H;  ba_cx = ba_x + ba_w // 2
             ba_cy = body_y + body_h // 2
-            hole_positions = [(body_x+16, body_y+16), (body_x+body_w-16, body_y+16),
-                              (body_x+16, body_y+body_h-16), (mx+ps+22, body_y+body_h-16)]
-            chip_cx = ba_cx;  chip_cy = body_y + body_h - (SB + ps) // 2 - SB // 3
-            gt = body_y + body_h - SB + (SB - group_h) // 2
-            usb1_cy = gt + usb_s//2;  usb2_cy = usb1_cy + usb_s + 4
-            eth_cy  = usb2_cy + usb_s//2 + 4 + eth_s//2
-            usb1_cx = usb2_cx = ba_cx;  eth_cx = ba_cx
-            name_cx = ba_cx;  name_cy = chip_cy + chip_s//2 + 6
+            hole_positions = [(body_x+HDR_H//2, body_y+53), (body_x+body_w-10, body_y+53),
+                              (body_x+HDR_H//2, body_y+body_h-16), (body_x+body_w-10, body_y+body_h-16)]
+            chip_cx = ba_cx;  chip_cy = body_y + SB + ps // 2
+            # Connectors: horizontal stack on TOP edge (SB side), eth rightmost (closest to GPIO reading right→left)
+            gl = ba_cx - group_h // 2
+            usb1_cy = usb2_cy = body_y + usb_s//2 + 3
+            eth_cy  = body_y + eth_s//2 + 3
+            usb1_cx = gl + usb_s//2
+            usb2_cx = usb1_cx + usb_s + 4
+            eth_cx  = usb2_cx + usb_s//2 + 4 + eth_s//2
+            name_cx = ba_cx;  name_cy = chip_cy - chip_s//2 - 30
 
         # ── Ghost ─────────────────────────────────────────────────────────
         if ghost:
@@ -2344,15 +2352,19 @@ class BreadboardCanvas(wx.Panel):
         result: Dict[Tuple[str, int], Tuple[int, int]] = {}
         if comp_def.type_id == 'RPi_Pico':
             GAP = self._body_h(comp_def)   # 8px row gap
+            rot = int(flipped) % 4
+            P  = MODULE_PIN_PITCH
             for pin_num, offset in comp_def.pin_offsets.items():
                 inner = offset.cross_gap
-                if flipped:
-                    # 90° rotation: col_delta runs downward using portrait pitch
-                    x = mx + (GAP if inner else 0)
-                    y = my + offset.col_delta * _RPi_PORTRAIT_PITCH
-                else:
-                    x = mx + offset.col_delta * MODULE_PIN_PITCH
-                    y = my + (GAP if inner else 0)
+                c = offset.col_delta
+                if rot == 0:
+                    x = mx + c * P;     y = my + (GAP if inner else 0)
+                elif rot == 1:
+                    x = mx - (GAP if inner else 0);  y = my + c * P
+                elif rot == 2:
+                    x = mx - c * P;     y = my - (GAP if inner else 0)
+                else:   # rot == 3
+                    x = mx + (GAP if inner else 0);  y = my - c * P
                 result[(ref, pin_num)] = (x, y)
             return result
         bh = self._body_h(comp_def)
