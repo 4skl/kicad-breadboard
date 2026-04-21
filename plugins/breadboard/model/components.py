@@ -415,6 +415,45 @@ ARDUINO_NANO = ComponentDef(
 )
 
 # ---------------------------------------------------------------------------
+# Teensy 4.1
+#   48 pins, 24 per side, 2.54mm pitch → 24 breadboard columns.
+#   USB end = pin 1 side.  Green PCB board.
+#   Not in KiCad standard library.
+#
+# Left  (1-24): 0,1,2,3,4,5,6,7,8,9,10,11,12,3V3,GND,A10,A11,A12,A13,28,29,30,31,32
+# Right (48→25): VIN,GND,3V3,A9,A8,A7,A6,A5,A4,A3,A2,A1,A0,13,AGND,38,37,36,35,34,33,41,40,39
+# ---------------------------------------------------------------------------
+
+def _teensy41_offsets() -> Dict[int, PinOffset]:
+    left  = {n: PinOffset(n - 1,      cross_gap=False) for n in range(1,  25)}
+    right = {n: PinOffset(48 - n,     cross_gap=True)  for n in range(25, 49)}
+    return {**left, **right}
+
+TEENSY_41 = ComponentDef(
+    type_id='Teensy_41',
+    display_name='Teensy 4.1',
+    ref_prefix='MCU',
+    pin_offsets=_teensy41_offsets(),
+    pin_names={
+        # Left side (USB end → far end), pins 1-24
+        1:  '0',    2:  '1',    3:  '2',    4:  '3',    5:  '4',
+        6:  '5',    7:  '6',    8:  '7',    9:  '8',    10: '9',
+        11: '10',   12: '11',   13: '12',   14: '3V3',  15: 'GND',
+        16: 'A10',  17: 'A11',  18: 'A12',  19: 'A13',  20: '28',
+        21: '29',   22: '30',   23: '31',   24: '32',
+        # Right side (USB end → far end), pins 48→25 (col 0→23)
+        48: 'VIN',  47: 'GND',  46: '3V3',  45: 'A9',   44: 'A8',
+        43: 'A7',   42: 'A6',   41: 'A5',   40: 'A4',   39: 'A3',
+        38: 'A2',   37: 'A1',   36: 'A0',   35: '13',   34: 'AGND',
+        33: '38',   32: '37',   31: '36',   30: '35',   29: '34',
+        28: '33',   27: '41',   26: '40',   25: '39',
+    },
+    color='#1a6b2e',   # Teensy green
+    is_dip=False,
+    is_module=True,
+)
+
+# ---------------------------------------------------------------------------
 # Raspberry Pi — standard 40-pin GPIO header (BCM numbering).
 # Even pins (2,4,6,…,40): col_delta=(pin-2)//2, cross_gap=False (outer/edge row — 5V at edge)
 # Odd pins  (1,3,5,…,39): col_delta=(pin-1)//2, cross_gap=True  (inner row)
@@ -494,6 +533,7 @@ ALL_DEFS: Dict[str, ComponentDef] = {
         NPN_BJT, PNP_BJT, JFET_N, JFET_P, BS170,
         TL081, RC4558, TL084, OPAMP_SPICE,
         ARDUINO_NANO,
+        TEENSY_41,
         RASPBERRY_PI_PICO,
     ]
 }
@@ -518,6 +558,8 @@ def guess_type_id(ref: str, value: str, symbol: str, lib: str = '') -> Optional[
     #          Arduino_Nano_ESP32, Arduino_Nano_RP2040_Connect, etc.
     if 'ARDUINO' in v or 'ARDUINO' in s:
         return 'Arduino_Nano'
+    if 'TEENSY' in v or 'TEENSY' in s:
+        return 'Teensy_41'
     # RPi Pico: any board using the standard 40-pin Pico header.
     # Catches: RaspberryPi_Pico, RaspberryPi_Pico_W, RaspberryPi_Pico_Debug,
     #          RaspberryPi_Pico_Extensive, RP2040, RP2350A/B, RP2354A/B, etc.
