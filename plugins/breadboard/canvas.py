@@ -616,6 +616,7 @@ class BreadboardCanvas(wx.Panel):
         self._drag_label_start_offset: Tuple[int, int] = (0, 0)
 
         self._rpi_long_labels: bool = False   # toggle for RPi alt-function pin names
+        self._dip_fn_labels:   bool = False   # toggle for DIP IC pin-function labels
 
         # Callbacks
         self.on_placed: Optional[callable] = None
@@ -814,6 +815,10 @@ class BreadboardCanvas(wx.Panel):
 
     def set_rpi_long_labels(self, long: bool) -> None:
         self._rpi_long_labels = long
+        self.Refresh()
+
+    def set_dip_fn_labels(self, on: bool) -> None:
+        self._dip_fn_labels = on
         self.Refresh()
 
     def set_wire_color(self, color: Optional[str]) -> None:
@@ -1028,14 +1033,32 @@ class BreadboardCanvas(wx.Panel):
                 self._sync_module_pins(self._drag_comp)
             else:
                 new_anchor = self.layout.nearest_hole(px, py)
-                if isinstance(new_anchor, TieHole):
-                    if p:
-                        if comp_def:
+                if p and comp_def:
+                    if comp_def.pin_count == 2 and not comp_def.is_dip:
+                        # Preserve orientation (diagonal or rail-connected) by keeping the
+                        # pixel offset between the two pins and snapping pin2 to the nearest
+                        # hole at that translated position.  Works for TieHole, RailHole, or
+                        # Terminal on either pin — no assumption about hole types.
+                        old_p1_xy = self.layout.hole_xy(p.pin_holes.get(1))
+                        old_p2_xy = self.layout.hole_xy(p.pin_holes.get(2))
+                        new_p1_xy = self.layout.hole_xy(new_anchor) if new_anchor else None
+                        if old_p1_xy and old_p2_xy and new_p1_xy:
+                            dx = old_p2_xy[0] - old_p1_xy[0]
+                            dy = old_p2_xy[1] - old_p1_xy[1]
+                            new_p2 = self.layout.nearest_hole(new_p1_xy[0] + dx,
+                                                              new_p1_xy[1] + dy)
+                            if new_p2 is not None:
+                                p.pin_holes = {1: new_anchor, 2: new_p2}
+                        elif isinstance(new_anchor, TieHole):
                             try:
-                                new_pins = comp_def.place(new_anchor, flipped=p.flipped)
-                                p.pin_holes = new_pins
+                                p.pin_holes = comp_def.place(new_anchor, flipped=p.flipped)
                             except (AssertionError, IndexError, KeyError):
                                 pass
+                    elif isinstance(new_anchor, TieHole):
+                        try:
+                            p.pin_holes = comp_def.place(new_anchor, flipped=p.flipped)
+                        except (AssertionError, IndexError, KeyError):
+                            pass
             self._drag_comp = None
             self.Refresh()
 
@@ -1735,23 +1758,59 @@ class BreadboardCanvas(wx.Panel):
                         dot_y = body_rect.GetBottom() - 6
                     dc.DrawCircle(pin1_xy[0], dot_y, 3)
 
-            # Pin number labels inside the body, flush to the edge near each leg
-            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                               wx.FONTWEIGHT_NORMAL))
-            dc.SetTextForeground('#cccccc')
-            for pin_num, hole in placed.pin_holes.items():
-                xy = lay.hole_xy(hole)
-                if xy is None:
-                    continue
-                label = str(pin_num)
-                tw, th = dc.GetTextExtent(label)
-                hx = xy[0]
-                if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
-                    # Top-side pin: label just inside the top edge of the body
-                    dc.DrawText(label, hx - tw // 2, body_rect.GetTop() + 2)
-                elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
-                    # Bottom-side pin: label just inside the bottom edge of the body
-                    dc.DrawText(label, hx - tw // 2, body_rect.GetBottom() - th - 2)
+            # Pin labels inside the body — pin numbers normally, rotated function names when toggled
+            fn_map = (self.netlist.pinfunction_map(ref)
+                      if self._dip_fn_labels and self.netlist else {})
+            if fn_map:
+                # Rotated text via GraphicsContext.
+                # Top-side labels lean right (75° CW), bottom-side lean left (105° CCW),
+                # so same-column labels cross rather than overlap — much more readable for
+                # long function names (e.g. CD4033B).  DrawText(0, -th/2) centres the label
+                # horizontally around the pin's x position regardless of angle (derivation:
+                # screen_x_centre = tx - sinθ*(ly + th/2) = tx iff ly = -th/2).
+                _ANGLE_TOP = math.pi * 105 / 180  # 105° CW  → down-left
+                _ANGLE_BOT = math.pi * 75 / 180   # 75° CCW  → up-right
+                _half_h = body_rect.GetHeight() / 2
+                gc_lbl = wx.GraphicsContext.Create(dc)
+                font_fn = wx.Font(4, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                  wx.FONTWEIGHT_NORMAL)
+                gc_lbl.SetFont(gc_lbl.CreateFont(font_fn, wx.Colour('#cccccc')))
+                for pin_num, hole in placed.pin_holes.items():
+                    xy = lay.hole_xy(hole)
+                    if xy is None:
+                        continue
+                    label = fn_map.get(pin_num) or str(pin_num)
+                    tw, th = gc_lbl.GetTextExtent(label)
+                    hx = float(xy[0])
+                    is_top = isinstance(hole, TieHole) and hole.row in TOP_ROWS
+                    is_bot = isinstance(hole, TieHole) and hole.row in BOT_ROWS
+                    if not is_top and not is_bot:
+                        continue
+                    gc_lbl.PushState()
+                    tilt = tw > _half_h
+                    if is_top:
+                        gc_lbl.Translate(hx, float(body_rect.GetTop() + 2))
+                        gc_lbl.Rotate(_ANGLE_TOP if tilt else math.pi / 2)
+                    else:
+                        gc_lbl.Translate(hx, float(body_rect.GetBottom() - 2))
+                        gc_lbl.Rotate(-(_ANGLE_BOT if tilt else math.pi / 2))
+                    gc_lbl.DrawText(label, 0, -th / 2)
+                    gc_lbl.PopState()
+            else:
+                dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.SetTextForeground('#cccccc')
+                for pin_num, hole in placed.pin_holes.items():
+                    xy = lay.hole_xy(hole)
+                    if xy is None:
+                        continue
+                    label = str(pin_num)
+                    tw, th = dc.GetTextExtent(label)
+                    hx = xy[0]
+                    if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
+                        dc.DrawText(label, hx - tw // 2, body_rect.GetTop() + 2)
+                    elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
+                        dc.DrawText(label, hx - tw // 2, body_rect.GetBottom() - th - 2)
 
             # Ref + value label centered in the IC body
             cx = body_rect.GetX() + body_rect.GetWidth() // 2
@@ -1883,8 +1942,8 @@ class BreadboardCanvas(wx.Panel):
                     tw, th = dc.GetTextExtent(pin_name)
                     dc.DrawText(pin_name, xy[0] - tw // 2, body_rect.GetBottom() + 1)
 
-        # Reference label (skipped for DIP ICs — they draw ref+value inside the body above)
-        if not comp_def.is_dip:
+        # Reference label (skipped for DIP ICs and capacitors — they draw labels inside the body)
+        if not comp_def.is_dip and placed.type_id != 'C':
             dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
             dc.SetTextForeground('#ffffff' if placed.type_id == 'POT' else '#222222')
@@ -2544,7 +2603,21 @@ class BreadboardCanvas(wx.Panel):
 
             gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-            gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+
+            if placed.type_id == 'C':
+                # Polyester film cap — flat rectangular body, no rounding
+                gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
+                # Value markings: "C5 100nF" centred on the body
+                comp = self.netlist.components.get(ref) if self.netlist else None
+                font_small = wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                     wx.FONTWEIGHT_BOLD)
+                gc.SetFont(gc.CreateFont(font_small, wx.Colour('#ffffff')))
+                val_lbl = comp.value if comp else ''
+                label = f'{ref} {val_lbl}' if val_lbl else ref
+                lw, lh = gc.GetTextExtent(label)
+                gc.DrawText(label, -lw / 2, -lh / 2)
+            else:
+                gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
             if placed.type_id == 'R' and self.netlist:
                 comp = self.netlist.components.get(ref)
@@ -2855,9 +2928,9 @@ class BreadboardCanvas(wx.Panel):
                                 max(xs) - min(xs) + 8, max(ys) - min(ys) + 12)
 
             if comp_def.is_dip and not comp_def.is_module:
-                # Ghost legs (IC pins only; module boards use pads, not through-hole legs)
-                dc.SetBrush(wx.Brush('#88888866'))
-                dc.SetPen(wx.Pen('#88888866', 1))
+                # Ghost legs — use a plain light colour; dc alpha is unreliable on GTK
+                dc.SetBrush(wx.Brush(wx.Colour(0xaa, 0xaa, 0xaa)))
+                dc.SetPen(wx.Pen(wx.Colour(0xaa, 0xaa, 0xaa), 1))
                 for pin, hole in pin_holes.items():
                     xy = lay.hole_xy(hole)
                     if xy is None:
@@ -2868,9 +2941,18 @@ class BreadboardCanvas(wx.Panel):
                     elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
                         dc.DrawRectangle(hx - 1, body_rect.GetBottom() - 1, 3, 7)
 
-            dc.SetBrush(wx.Brush(wx.Colour(comp_def.color + '88')))
-            dc.SetPen(wx.Pen('#88888888', 1, wx.PENSTYLE_DOT))
-            dc.DrawRoundedRectangle(body_rect, 4)
+            # Body via GraphicsContext — avoids PENSTYLE_DOT invisibility on GTK
+            # and handles alpha correctly (dc colour strings don't support 8-digit hex)
+            base = wx.Colour(comp_def.color)
+            ghost_fill = wx.Colour(base.Red(), base.Green(), base.Blue(), 0x88)
+            gc = wx.GraphicsContext.Create(dc)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_fill)))
+            gc.SetPen(gc.CreatePen(
+                wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88))
+                .Width(1).Style(wx.PENSTYLE_DOT)))
+            gc.DrawRoundedRectangle(float(body_rect.GetX()), float(body_rect.GetY()),
+                                    float(body_rect.GetWidth()), float(body_rect.GetHeight()),
+                                    4.0)
 
             # Pin-1 orientation marker (DIP: dot on body edge; POT: dot on top edge)
             p1_hole = pin_holes.get(1)
@@ -2985,7 +3067,10 @@ class BreadboardCanvas(wx.Panel):
         body_h = 14.0
         gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
         gc.SetPen(gc.CreatePen(border_pen))
-        gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+        if comp_def.type_id == 'C':
+            gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
+        else:
+            gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
     def _draw_wire_start_indicator(self, dc: wx.DC) -> None:
         xy = self.layout.hole_xy(self._wire_start)

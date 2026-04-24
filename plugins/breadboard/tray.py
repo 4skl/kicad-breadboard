@@ -95,7 +95,7 @@ class _PaintComponentTray(wx.ScrolledWindow):
         self._cards.clear()
         y = CARD_PAD
         for ref, comp in sorted(netlist.components.items()):
-            type_id  = guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description)
+            type_id  = guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description, comp.pin_count)
             if type_id is None:
                 continue
             comp_def = ALL_DEFS.get(type_id)
@@ -206,6 +206,7 @@ class _PaintComponentTray(wx.ScrolledWindow):
                     dc.SetTextForeground(fg)
                     dc.DrawText('pin functions', cb_x + cb_s + 4, cb_y)
 
+
             # Border
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.SetPen(wx.Pen('#aaaaaa' if placed else '#888888', 1))
@@ -246,6 +247,7 @@ class _PaintComponentTray(wx.ScrolledWindow):
                 if self.on_rpi_label_mode is not None:
                     self.on_rpi_label_mode(card.rpi_long_labels)
                 return
+
 
         if placed or card.comp_def is None:
             return
@@ -419,7 +421,7 @@ class _NativeComponentTray(wx.ScrolledWindow):
 
         y = CARD_PAD
         for ref, comp in sorted(netlist.components.items()):
-            type_id  = guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description)
+            type_id  = guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description, comp.pin_count)
             if type_id is None:
                 continue
             comp_def = ALL_DEFS.get(type_id)

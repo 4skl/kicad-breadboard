@@ -320,15 +320,31 @@ TO92_PINOUT_VARIANTS: Dict[str, List[Tuple[str, Dict[int, PinOffset]]]] = {
 #   Pins 8–14 top side    (row e, cols anchor+6 … anchor)
 # ---------------------------------------------------------------------------
 
-def _dip8_offsets() -> Dict[int, PinOffset]:
-    bot = {i + 1: PinOffset(i,     cross_gap=True)  for i in range(4)}    # pins 1-4, row f
-    top = {i + 5: PinOffset(3 - i, cross_gap=False) for i in range(4)}    # pins 5-8, row e
+def _dip_offsets(n: int) -> Dict[int, PinOffset]:
+    """Generic DIP offset generator for any even pin count n.
+    Pins 1..n/2 → bottom side (row f, cross_gap=True),  col = pin-1.
+    Pins n/2+1..n → top side   (row e, cross_gap=False), col = n-pin.
+    """
+    half = n // 2
+    bot = {i + 1:        PinOffset(i,            cross_gap=True)  for i in range(half)}
+    top = {i + half + 1: PinOffset(half - 1 - i, cross_gap=False) for i in range(half)}
     return {**bot, **top}
 
-def _dip14_offsets() -> Dict[int, PinOffset]:
-    bot = {i + 1: PinOffset(i,     cross_gap=True)  for i in range(7)}    # pins 1-7,  row f
-    top = {i + 8: PinOffset(6 - i, cross_gap=False) for i in range(7)}    # pins 8-14, row e
-    return {**bot, **top}
+def _dip8_offsets()  -> Dict[int, PinOffset]: return _dip_offsets(8)
+def _dip14_offsets() -> Dict[int, PinOffset]: return _dip_offsets(14)
+
+
+def _make_dip(n: int) -> 'ComponentDef':
+    """Create a generic n-pin DIP ComponentDef. Used for unrecognised ICs."""
+    return ComponentDef(
+        type_id=f'DIP{n}',
+        display_name=f'{n}-pin DIP IC',
+        ref_prefix='U',
+        pin_offsets=_dip_offsets(n),
+        pin_names={i: str(i) for i in range(1, n + 1)},
+        color='#1a1a2e',
+        is_dip=True,
+    )
 
 # TL081 — single op-amp, 8-DIP
 # Pinout: 1=Offset_N1, 2=IN-, 3=IN+, 4=V-, 5=Offset_N2, 6=OUT, 7=V+, 8=NC
@@ -570,9 +586,15 @@ ALL_DEFS: Dict[str, ComponentDef] = {
     ]
 }
 
+# Pre-register generic DIP sizes for all common IC packages.
+# Any even pin count not listed here is generated on demand in guess_type_id.
+for _n in [4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 40]:
+    _d = _make_dip(_n)
+    ALL_DEFS[_d.type_id] = _d
+
 
 def guess_type_id(ref: str, value: str, symbol: str, lib: str = '',
-                  description: str = '') -> Optional[str]:
+                  description: str = '', pin_count: int = 0) -> Optional[str]:
     """
     Heuristically map a KiCad component to a ComponentDef type_id.
 
@@ -666,6 +688,12 @@ def guess_type_id(ref: str, value: str, symbol: str, lib: str = '',
             if 'SPICE' in l or 'SIMULATION' in l:
                 return 'OPAMP_SPICE'
             return 'TL081'
+        # Generic DIP fallback: any even-pin-count U-prefix IC gets a standard DIP layout.
+        if pin_count >= 4 and pin_count % 2 == 0:
+            type_id = f'DIP{pin_count}'
+            if type_id not in ALL_DEFS:
+                ALL_DEFS[type_id] = _make_dip(pin_count)
+            return type_id
 
     # Description-based fallback: works for Transistor_BJT / Transistor_FET library
     # parts whose symbol name is the part number (2N2219, BC807, 2N7002, AO3401A…).

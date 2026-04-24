@@ -50,6 +50,7 @@ ID_LOAD        = wx.NewIdRef()
 ID_PREFS       = wx.NewIdRef()
 ID_HELP_UPDATES = wx.NewIdRef()
 ID_HELP_ISSUE   = wx.NewIdRef()
+ID_PIN_FN       = wx.NewIdRef()
 
 # Wire color picker — labels mirror WIRE_COLORS order; first entry means "cycle automatically"
 _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
@@ -390,6 +391,10 @@ class BreadboardWindow(wx.Frame):
         tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
                    shortHelp='Save the breadboard as a PNG image')
         tb.AddSeparator()
+        tb.AddTool(ID_PIN_FN, 'Pin functions', wx.NullBitmap,
+                   shortHelp='Show pin function labels on DIP ICs',
+                   kind=wx.ITEM_CHECK)
+        tb.AddSeparator()
         tb.AddTool(ID_VALIDATE, 'Validate',   wx.NullBitmap,
                    shortHelp='Check if your circuit matches the schematic')
         tb.AddTool(ID_CLEAR_WARNINGS, 'Clear warnings', wx.NullBitmap,
@@ -414,6 +419,7 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_prefs,          id=ID_PREFS)
         self.Bind(wx.EVT_MENU, self._on_check_updates,  id=ID_HELP_UPDATES)
         self.Bind(wx.EVT_MENU, self._on_report_issue,   id=ID_HELP_ISSUE)
+        self.Bind(wx.EVT_TOOL, self._on_pin_fn,          id=ID_PIN_FN)
         self.Bind(wx.EVT_TOOL, self._on_validate,       id=ID_VALIDATE)
         self.Bind(wx.EVT_TOOL, self._on_clear_warnings, id=ID_CLEAR_WARNINGS)
         self.Bind(wx.EVT_TOOL, self._on_clear,          id=ID_CLEAR)
@@ -571,7 +577,7 @@ class BreadboardWindow(wx.Frame):
                     self.board.remove(ref)
                     removed.append(ref)
                 else:
-                    new_type = guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description)
+                    new_type = guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description, comp.pin_count)
                     old_type = self.board.get_placement(ref).type_id
                     if new_type != old_type:
                         self.board.remove(ref)
@@ -920,6 +926,9 @@ class BreadboardWindow(wx.Frame):
             wx.MessageBox('\n'.join(lines), 'Validation issues',
                           wx.OK | wx.ICON_WARNING, self)
 
+    def _on_pin_fn(self, evt) -> None:
+        self.canvas.set_dip_fn_labels(self.toolbar.GetToolState(ID_PIN_FN))
+
     def _on_clear_warnings(self, _evt) -> None:
         self.canvas.clear_highlights()
         self.SetStatusText('Validation markers cleared.', 0)
@@ -1062,7 +1071,7 @@ class BreadboardWindow(wx.Frame):
         n_total = len(self.netlist.components)
         n_shown = sum(
             1 for ref, comp in self.netlist.components.items()
-            if guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description) is not None
+            if guess_type_id(ref, comp.value, comp.symbol, comp.lib, comp.description, comp.pin_count) is not None
         )
         if n_total == 0:
             self.SetStatusText(
