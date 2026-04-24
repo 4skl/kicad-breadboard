@@ -5,10 +5,12 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 ## What it does
 
 - Renders a breadboard in six configurable sizes: mini (170 holes), half (400), full (830), double (2× full stacked), triple (3× full with vertical power rails), or double rails (2× full with vertical power rails on both sides)
-- Parses a KiCad netlist and shows all placeable components in a side tray
-- Two-step placement for 2-pin components: click pin 1, then click pin 2
+- Parses a KiCad netlist and shows all placeable components in a side tray — **any U-prefix IC with an even pin count is supported automatically**, even if it is not in the built-in list (555 timers, 74xx logic gates, CD4xxx, counters, shift registers, …)
+- Two-step placement for 2-pin components: click pin 1, then click pin 2; diagonal placement and power-rail connections are preserved when the component is moved later
 - Single-click placement for DIP ICs and 3-pin components (BJT, POT); DIP bodies show the reference and value (e.g. U1 / RC4558) for quick identification
-- TO-92 / SOT-23 transistors (BJT, JFET, MOSFET) show the current pinout order (e.g. C-B-E or G-S-D) on their card; click `>` to cycle variants before placing
+- **Pin functions toggle** (toolbar): shows the KiCad pin function name (e.g. TRIG, THRESH, GND) on every placed DIP IC instead of pin numbers; short labels stay vertical, long labels angle automatically to avoid overlap
+- TO-92 transistors (BJT, JFET, MOSFET) show the current pinout order (e.g. C-B-E or G-S-D) on their card; click `>` to cycle variants before placing
+- Film capacitors render as flat rectangles with the value printed on the body (e.g. C5 100nF); electrolytic capacitors render as top-down circles with a polarity stripe
 - Draw jumper wires between any two holes (tie strip, rail, or binding post)
 - Validate the board against the schematic: highlights open nets (?) and shorts (⚡)
 - Export the board as a PNG or SVG image
