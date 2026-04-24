@@ -29,8 +29,8 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 | Potentiometer | 3-pin |
 | NPN / PNP BJT | TO-92 |
 | N / P-channel JFET | TO-92 |
-| N-channel MOSFET (generic) | TO-92 / SOT-23 |
-| P-channel MOSFET (generic) | TO-92 / SOT-23 |
+| N-channel MOSFET (generic) | TO-92 |
+| P-channel MOSFET (generic) | TO-92 |
 | BS170 MOSFET | TO-92 |
 | TL081 (single), RC4558 (dual), TL084 (quad) op-amp | DIP-8 / DIP-14 |
 | OPAMP (KiCad Simulation_SPICE) | Logical 5-pin |
@@ -40,11 +40,11 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 Components are identified from the KiCad netlist. The plugin recognises transistors in two ways:
 
 - **Generic symbols** (`Device:NPN`, `Device:PMOS`, `Device:NMOS`, etc.) are detected from their symbol name.
-- **Specific part-number symbols** (`Transistor_BJT:BC547`, `Transistor_FET:2N7002`, `Transistor_FET:AO3401A`, etc.) are detected from the component description exported by KiCad (e.g. *"NPN Transistor"*, *"N-Channel MOSFET"*).
+- **Specific part-number symbols** (`Transistor_BJT:BC547`, `Transistor_FET:2N7002`, etc.) are detected from the component description exported by KiCad (e.g. *"NPN Transistor"*, *"N-Channel MOSFET"*).
 
 This means any BJT or MOSFET from the standard KiCad libraries will appear in the component tray automatically.
 
-### Pinout selection for TO-92 / SOT-23 transistors
+### Pinout selection for TO-92 transistors
 
 Different physical components that share the same schematic symbol can have a different pin order on the actual package. The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **E-B-C** for a BJT, **G-S-D** or **S-G-D** for a MOSFET). Click **`>`** on the card to cycle through the available variants before placing.
 
