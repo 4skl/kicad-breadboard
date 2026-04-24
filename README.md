@@ -269,4 +269,12 @@ python -m plugins.breadboard.standalone path/to/circuit.net
 
 ---
 
+---
+
+## In the press
+
+- [**Hackaday** — *This KiCad Plugin Enables Breadboarding*](https://hackaday.com/2026/04/23/this-kicad-plugin-enables-breadboarding/) (April 2026)
+
+---
+
 Made with ♥ by [nacho.works](https://nacho.works) and [University of Antwerp](https://www.uantwerpen.be/en/), Belgium.

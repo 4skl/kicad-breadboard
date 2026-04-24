@@ -102,8 +102,9 @@ def _val(node: Optional[List]) -> str:
 @dataclass
 class NetlistPin:
     ref: str
-    pin: int         # pin number (0 if non-numeric / named pin)
-    pintype: str = ''  # KiCad pin type, e.g. 'power_in', 'input', 'output', 'passive'
+    pin: int              # pin number (0 if non-numeric / named pin)
+    pintype: str = ''     # KiCad pin type, e.g. 'power_in', 'input', 'output', 'passive'
+    pinfunction: str = '' # KiCad pin function/name from the symbol, e.g. 'OUTPUT', 'GND', 'TRIG'; '~' if unnamed
 
 
 @dataclass
@@ -198,8 +199,9 @@ def parse(path: str | Path) -> Netlist:
                 except ValueError:
                     pin_num = 0
                 pintype = _val(_find(node, 'pintype'))
+                pinfunction = _val(_find(node, 'pinfunction'))
                 if nref:
-                    pins.append(NetlistPin(ref=nref, pin=pin_num, pintype=pintype))
+                    pins.append(NetlistPin(ref=nref, pin=pin_num, pintype=pintype, pinfunction=pinfunction))
             nets.append(Net(code=code, name=name, pins=pins))
 
     return Netlist(components=components, nets=nets)
