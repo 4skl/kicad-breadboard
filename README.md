@@ -35,7 +35,11 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 | P-channel MOSFET (generic) | TO-92 |
 | BS170 MOSFET | TO-92 |
 | TL081 (single), RC4558 (dual), TL084 (quad) op-amp | DIP-8 / DIP-14 |
-| OPAMP (KiCad Simulation_SPICE) | Logical 5-pin |
+| OPAMP (KiCad Simulation_SPICE) | DIP-6 (labelled "SIM") |
+| Arduino Nano (+ Every, ESP32, RP2040 Connect, …) | 30-pin module |
+| Arduino Uno R3 | 32-pin module |
+| Teensy 4.1 | 48-pin module |
+| Raspberry Pi (40-pin GPIO header) | 40-pin module |
 
 ### Transistor detection
 
@@ -276,6 +280,7 @@ python -m plugins.breadboard.standalone path/to/circuit.net
 ## In the press
 
 - [**Hackaday** — *This KiCad Plugin Enables Breadboarding*](https://hackaday.com/2026/04/23/this-kicad-plugin-enables-breadboarding/) (April 2026)
+- [**Adafruit Blog** — *KiCad Breadboard Builder*](https://blog.adafruit.com/2026/04/24/kicad-breadboard-builder/) (April 2026)
 
 ---
 
