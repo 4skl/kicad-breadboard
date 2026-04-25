@@ -70,6 +70,7 @@ from .model import (
     Netlist, guess_type_id,
     validate, IssueKind,
     RPi_PIN_NAMES_LONG,
+    ARDUINO_UNO_FN_NAMES,
 )
 
 # ---------------------------------------------------------------------------
@@ -2439,16 +2440,18 @@ class BreadboardCanvas(wx.Panel):
                 dc.DrawCircle(px, py, PIN_R)
 
         # ── Pin labels (landscape only; portrait is too narrow) ───────────
-        # Arduino Uno labels are gated behind the pin-function toggle to avoid
-        # clutter (it has 32 labels); other modules always show their labels.
-        _show_module_labels = landscape and (
-            comp_def.type_id != 'Arduino_Uno' or self._dip_fn_labels)
-        if _show_module_labels:
+        # Arduino Uno: basic labels always, extended (SPI/I2C/PWM) when toggle on.
+        # Other modules: always show basic labels.
+        if landscape:
+            if comp_def.type_id == 'Arduino_Uno':
+                _name_map = ARDUINO_UNO_FN_NAMES if self._dip_fn_labels else comp_def.pin_names
+            else:
+                _name_map = comp_def.pin_names
             dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
             dc.SetTextForeground('#1a1a1a')
             for pin_num, offset in comp_def.pin_offsets.items():
-                _label(dc, offset, comp_def.pin_names.get(pin_num, str(pin_num)))
+                _label(dc, offset, _name_map.get(pin_num, str(pin_num)))
 
         # ── Board name + ref ──────────────────────────────────────────────
         luma = 0.299 * r + 0.587 * g + 0.114 * b
@@ -2531,23 +2534,27 @@ class BreadboardCanvas(wx.Panel):
                 dc.DrawRectangle(body_x, my - 10*P + HALF - 2,
                                  HH, 5)
 
+            # ATmega328P — drawn in all four rotations.
+            # USB is on the col-0 end; chip goes toward the non-USB side.
+            dc.SetBrush(wx.Brush(wx.Colour('#111111')))
+            dc.SetPen(wx.Pen(wx.Colour('#444444'), 1))
             if landscape:
                 inner_h = body_h - 2 * HH - 2
-
-                # ATmega328P — wide black rectangle spanning almost half the board.
-                # USB is on the col-0 (LEFT) end, so the chip is on the non-USB
-                # (RIGHT) side: 60 % from left for rot==0, 40 % for rot==2.
-                # Shifted toward the inner (power/analog) header strip.
                 chip_w = int(body_w * 0.45)
-                chip_h = max(14, inner_h * 2 // 5)   # shorter to leave room for label
+                chip_h = max(14, inner_h * 2 // 5)
                 chip_cx_u = body_x + int(body_w * (0.60 if rot == 0 else 0.40))
-                # rot 0: inner strip is at bottom  → shift chip down (label fits above)
-                # rot 2: inner strip is at top     → shift chip up  (label fits below)
                 chip_cy_u = inner_cy + (inner_h // 4 if rot == 0 else -inner_h // 4)
-                dc.SetBrush(wx.Brush(wx.Colour('#111111')))
-                dc.SetPen(wx.Pen(wx.Colour('#444444'), 1))
-                dc.DrawRectangle(chip_cx_u - chip_w // 2, chip_cy_u - chip_h // 2,
-                                 chip_w, chip_h)
+            else:  # portrait
+                inner_w = body_w - 2 * HH - 2
+                chip_w = max(14, inner_w * 2 // 5)
+                chip_h = int(body_h * 0.45)
+                # rot 1: col-0 at TOP → chip toward bottom (60 % from top)
+                # rot 3: col-0 at BOTTOM → chip toward top (40 % from top)
+                chip_cy_u = body_y + int(body_h * (0.60 if rot == 1 else 0.40))
+                # Shift toward inner strip: LEFT for rot==1, RIGHT for rot==3
+                chip_cx_u = inner_cx + (-inner_w // 4 if rot == 1 else inner_w // 4)
+            dc.DrawRectangle(chip_cx_u - chip_w // 2, chip_cy_u - chip_h // 2,
+                             chip_w, chip_h)
 
             # USB port (grey) + barrel jack (dark) on the col-0 (LEFT) end,
             # all 4 rotations. Stacked adjacent, centred on the board's short axis.
@@ -2588,44 +2595,39 @@ class BreadboardCanvas(wx.Panel):
             else:
                 dc.DrawRectangle(body_x + bj_off,  body_y + body_h - _OVL, BJ_H,   BJ_PRO)
 
-            # ── Label (drawn last so the chip does not cover it) ───────────
-            # Landscape: white text above the ATmega chip in the open blue area.
-            # Portrait:  short name (full name overflows the narrow 82 px body).
+            # ── Label (drawn last so it renders on top of the chip) ───────────
+            # Position relative to chip edge so chip never obscures the text.
+            # Landscape: full name above (rot 0) or below (rot 2) the chip.
+            # Portrait:  short name; above chip for rot 1, below for rot 3.
             dc.SetTextForeground('#ffffff')
             dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_BOLD))
-            if landscape:
-                _nw, _nh = dc.GetTextExtent(dname)
-                if ref:
-                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                       wx.FONTWEIGHT_NORMAL))
-                    _rw, _rh = dc.GetTextExtent(ref)
-                    _tot = _nh + 2 + _rh
-                    dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                       wx.FONTWEIGHT_BOLD))
-                else:
-                    _rw = _rh = 0
-                    _tot = _nh
-                # Place text above chip for rot 0 (chip near bottom),
-                # below chip for rot 2 (chip near top, inner strip at top).
-                if rot == 0:
-                    _ty = chip_cy_u - chip_h // 2 - _tot - 3
-                else:
-                    _ty = chip_cy_u + chip_h // 2 + 3
-                dc.DrawText(dname, chip_cx_u - _nw//2, _ty)
-                if ref:
-                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                       wx.FONTWEIGHT_NORMAL))
-                    dc.DrawText(ref, chip_cx_u - _rw//2, _ty + _nh + 2)
+            _lbl = dname if landscape else 'Uno R3'
+            _nw, _nh = dc.GetTextExtent(_lbl)
+            if ref:
+                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                _rw, _rh = dc.GetTextExtent(ref)
+                _tot = _nh + 2 + _rh
+                dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_BOLD))
             else:
-                _short = 'Uno R3'
-                _nw, _nh = dc.GetTextExtent(_short)
-                dc.DrawText(_short, text_cx - _nw//2, text_cy - _nh//2)
-                if ref:
-                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                       wx.FONTWEIGHT_NORMAL))
-                    _rw, _rh = dc.GetTextExtent(ref)
-                    dc.DrawText(ref, text_cx - _rw//2, text_cy + _nh//2 + 2)
+                _rw = _rh = 0
+                _tot = _nh
+            # rot 0 (landscape): chip near bottom → label above chip
+            # rot 1 (portrait):  chip near bottom → label above chip
+            # rot 2 (landscape): chip near top    → label below chip
+            # rot 3 (portrait):  chip near top    → label below chip
+            if rot in (0, 1):
+                _ty = chip_cy_u - chip_h // 2 - _tot - 3
+            else:
+                _ty = chip_cy_u + chip_h // 2 + 3
+            _tx = chip_cx_u if landscape else text_cx
+            dc.DrawText(_lbl, _tx - _nw//2, _ty)
+            if ref:
+                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.DrawText(ref, _tx - _rw//2, _ty + _nh + 2)
 
     # ------------------------------------------------------------------
     # Module pin synchronisation helpers

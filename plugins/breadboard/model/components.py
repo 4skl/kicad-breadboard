@@ -527,7 +527,7 @@ ARDUINO_UNO = ComponentDef(
         1:  'NC',      2:  'IOREF',  3:  'RST',   4:  '3V3',   5:  '5V',
         6:  'GND',     7:  'GND',    8:  'VIN',
         9:  'A0',      10: 'A1',     11: 'A2',     12: 'A3',
-        13: 'SDA',     14: 'SCL',
+        13: 'A4',      14: 'A5',
         15: 'RX',      16: 'TX',     17: 'D2',     18: 'D3',    19: 'D4',
         20: 'D5',      21: 'D6',     22: 'D7',     23: 'D8',    24: 'D9',
         25: 'D10',     26: 'D11',    27: 'D12',    28: 'D13',
@@ -537,6 +537,21 @@ ARDUINO_UNO = ComponentDef(
     is_dip=False,
     is_module=True,
 )
+
+# Extended pin-function labels for the Arduino Uno R3, shown when the
+# "Pin functions" toggle is active.  Only pins with notable alternate
+# functions differ from the basic pin_names above.
+ARDUINO_UNO_FN_NAMES: Dict[int, str] = {
+    1:  'NC',       2:  'IOREF',  3:  'RST',   4:  '3V3',   5:  '5V',
+    6:  'GND',      7:  'GND',    8:  'VIN',
+    9:  'A0',       10: 'A1',     11: 'A2',     12: 'A3',
+    13: 'A4/SDA',   14: 'A5/SCL',                           # I2C on analog pins
+    15: 'RX',       16: 'TX',
+    17: 'D2/INT0',  18: 'D3~/INT1', 19: 'D4',
+    20: 'D5~',      21: 'D6~',    22: 'D7',     23: 'D8',
+    24: 'D9~',      25: 'D10~/SS', 26: 'D11~/MOSI', 27: 'D12/MISO', 28: 'D13/SCK',
+    29: 'GND',      30: 'AREF',   31: 'SDA',    32: 'SCL',
+}
 
 # ---------------------------------------------------------------------------
 # Teensy 4.1
