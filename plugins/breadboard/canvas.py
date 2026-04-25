@@ -2439,14 +2439,43 @@ class BreadboardCanvas(wx.Panel):
             else:
                 dc.DrawCircle(px, py, PIN_R)
 
-        # ── Pin labels (landscape only; portrait is too narrow) ───────────
-        # Arduino Uno: basic labels always, extended (SPI/I2C/PWM) when toggle on.
-        # Other modules: always show basic labels.
-        if landscape:
-            if comp_def.type_id == 'Arduino_Uno':
-                _name_map = ARDUINO_UNO_FN_NAMES if self._dip_fn_labels else comp_def.pin_names
-            else:
-                _name_map = comp_def.pin_names
+        # ── Pin labels ────────────────────────────────────────────────────────
+        # Arduino Uno: basic labels always; toggle switches to extended (SPI/I2C/~).
+        # Other modules: always basic. Portrait: horizontal text via _label.
+        # Landscape Uno extended: rotated 90° via GC so adjacent labels don't overlap.
+        if comp_def.type_id == 'Arduino_Uno':
+            _name_map = ARDUINO_UNO_FN_NAMES if self._dip_fn_labels else comp_def.pin_names
+        else:
+            _name_map = comp_def.pin_names
+
+        if landscape and self._dip_fn_labels and comp_def.type_id == 'Arduino_Uno':
+            # 90° rotated labels: each label is ~6 px wide (font height) in x,
+            # so they never overlap on the 18 px pin pitch.
+            # +π/2 = text goes upward (outer strip above board for rot 0, inner above for rot 2)
+            # -π/2 = text goes downward (inner strip below board for rot 0, outer below for rot 2)
+            gc_lbl = wx.GraphicsContext.Create(dc)
+            _font_lbl = wx.Font(4, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                wx.FONTWEIGHT_NORMAL)
+            gc_lbl.SetFont(gc_lbl.CreateFont(_font_lbl, wx.Colour('#1a1a1a')))
+            for pin_num, offset in comp_def.pin_offsets.items():
+                px, _ = _pin_xy(offset)
+                name = _name_map.get(pin_num, str(pin_num))
+                _, th = gc_lbl.GetTextExtent(name)
+                gc_lbl.PushState()
+                outer = not offset.cross_gap
+                # For rot 0: outer → above board (+π/2), inner → below board (-π/2)
+                # For rot 2: outer → below board (-π/2), inner → above board (+π/2)
+                above_board = (outer and rot == 0) or (not outer and rot == 2)
+                if above_board:
+                    gc_lbl.Translate(float(px), float(body_y) - LG)
+                    gc_lbl.Rotate(math.pi / 2)
+                else:
+                    gc_lbl.Translate(float(px), float(body_y + body_h) + LG)
+                    gc_lbl.Rotate(-math.pi / 2)
+                gc_lbl.DrawText(name, 0.0, -float(th) / 2)
+                gc_lbl.PopState()
+        else:
+            # Horizontal labels — works for basic landscape and all portrait rotations
             dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
             dc.SetTextForeground('#1a1a1a')

@@ -110,8 +110,15 @@ class BreadboardWindow(wx.Frame):
         comp_label = wx.StaticText(left_panel, label='Components')
         comp_label.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                    wx.FONTWEIGHT_BOLD))
+        self._pin_fn_cb = wx.CheckBox(left_panel, label='Pin functions')
+        self._pin_fn_cb.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                        wx.FONTWEIGHT_NORMAL))
+        self._pin_fn_cb.SetToolTip(
+            'Show pin function labels on DIP ICs and module headers')
+        self._pin_fn_cb.Bind(wx.EVT_CHECKBOX, self._on_pin_fn)
         self.tray = ComponentTray(left_panel, self.board, self.netlist)
         left_sizer.Add(comp_label, 0, wx.ALL, 6)
+        left_sizer.Add(self._pin_fn_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
         left_panel.SetSizer(left_sizer)
 
@@ -376,24 +383,19 @@ class BreadboardWindow(wx.Frame):
         tb.AddTool(ID_WIRE,   'Draw Wire',    wx.NullBitmap,
                    shortHelp='Draw a jumper wire between two holes',
                    kind=wx.ITEM_RADIO)
+        tb.AddControl(wx.StaticText(tb, label=' '))
+        self._wire_color_choice = wx.Choice(tb, choices=_WIRE_COLOR_LABELS)
+        self._wire_color_choice.SetSelection(0)
+        self._wire_color_choice.SetToolTip(
+            'Wire colour — Auto cycles through colours each wire; pick one to fix it.')
+        self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
+        tb.AddControl(self._wire_color_choice)
         tb.AddTool(ID_DELETE, 'Delete',       wx.NullBitmap,
                    shortHelp='Delete a component or wire',
                    kind=wx.ITEM_RADIO)
         tb.AddSeparator()
-        tb.AddControl(wx.StaticText(tb, label=' Wire colour: '))
-        self._wire_color_choice = wx.Choice(tb, choices=_WIRE_COLOR_LABELS)
-        self._wire_color_choice.SetSelection(0)
-        self._wire_color_choice.SetToolTip(
-            'Auto: cycles through colors each wire. Pick a color to always use it.')
-        self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
-        tb.AddControl(self._wire_color_choice)
-        tb.AddSeparator()
         tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
                    shortHelp='Save the breadboard as a PNG image')
-        tb.AddSeparator()
-        tb.AddTool(ID_PIN_FN, 'Pin functions', wx.NullBitmap,
-                   shortHelp='Show pin function labels on DIP ICs',
-                   kind=wx.ITEM_CHECK)
         tb.AddSeparator()
         tb.AddTool(ID_VALIDATE, 'Validate',   wx.NullBitmap,
                    shortHelp='Check if your circuit matches the schematic')
@@ -419,7 +421,6 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_prefs,          id=ID_PREFS)
         self.Bind(wx.EVT_MENU, self._on_check_updates,  id=ID_HELP_UPDATES)
         self.Bind(wx.EVT_MENU, self._on_report_issue,   id=ID_HELP_ISSUE)
-        self.Bind(wx.EVT_TOOL, self._on_pin_fn,          id=ID_PIN_FN)
         self.Bind(wx.EVT_TOOL, self._on_validate,       id=ID_VALIDATE)
         self.Bind(wx.EVT_TOOL, self._on_clear_warnings, id=ID_CLEAR_WARNINGS)
         self.Bind(wx.EVT_TOOL, self._on_clear,          id=ID_CLEAR)
@@ -927,7 +928,9 @@ class BreadboardWindow(wx.Frame):
                           wx.OK | wx.ICON_WARNING, self)
 
     def _on_pin_fn(self, evt) -> None:
-        self.canvas.set_dip_fn_labels(self.toolbar.GetToolState(ID_PIN_FN))
+        on = self._pin_fn_cb.GetValue()
+        self.canvas.set_dip_fn_labels(on)
+        self.canvas.set_rpi_long_labels(on)
 
     def _on_clear_warnings(self, _evt) -> None:
         self.canvas.clear_highlights()
@@ -965,6 +968,14 @@ class BreadboardWindow(wx.Frame):
         net_path = find_netlist(project_path)
         if not net_path:
             net_path = self._export_netlist(silent=True)
+        else:
+            # Re-export silently if the schematic is newer than the saved netlist,
+            # so components added after the last export appear immediately.
+            sch = find_schematic(project_path)
+            if sch and sch.stat().st_mtime > net_path.stat().st_mtime:
+                exported = self._export_netlist(silent=True)
+                if exported:
+                    net_path = exported
         if net_path:
             self._load_netlist(str(net_path))
 
