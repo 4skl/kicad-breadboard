@@ -396,23 +396,22 @@ TL084 = ComponentDef(
 
 # OPAMP_SPICE — KiCad Simulation_SPICE:OPAMP (kicad_builtin_opamp)
 # Logical 5-pin opamp symbol: 1=IN+, 2=IN-, 3=V+, 4=V-, 5=OUT.
-# Pins are placed at the standard DIP-8 positions matching their pin numbers.
-# Dummy pins 6-8 fill the remaining DIP-8 leg positions so the body draws
-# at the correct width and flipping works correctly.
+# Rendered as a DIP-6 (3-column) body so students can tell it is a simulation
+# model rather than a real IC.  One dummy pin (6) fills the remaining leg.
+# Pin layout (standard DIP counterclockwise from pin 1):
+#   Bottom (cross_gap=True):  1=IN+, 2=IN-, 3=V+   (cols 0-2)
+#   Top    (cross_gap=False): 4=V-,  5=OUT, 6=NC   (cols 2-0)
 OPAMP_SPICE = ComponentDef(
     type_id='OPAMP_SPICE',
     display_name='OPAMP (SPICE)',
     ref_prefix='U',
     pin_offsets={
-        1: PinOffset(0, cross_gap=True),   # IN+  → row f, col+0  (DIP-8 pos 1)
-        2: PinOffset(1, cross_gap=True),   # IN-  → row f, col+1  (DIP-8 pos 2)
-        3: PinOffset(2, cross_gap=True),   # V+   → row f, col+2  (DIP-8 pos 3)
-        4: PinOffset(3, cross_gap=True),   # V-   → row f, col+3  (DIP-8 pos 4)
-        5: PinOffset(3, cross_gap=False),  # OUT  → row e, col+3  (DIP-8 pos 5)
-        # Unused legs — keep DIP-8 body width and flip calculation correct
-        6: PinOffset(2, cross_gap=False),  # NC   → row e, col+2  (DIP-8 pos 6)
-        7: PinOffset(1, cross_gap=False),  # NC   → row e, col+1  (DIP-8 pos 7)
-        8: PinOffset(0, cross_gap=False),  # NC   → row e, col+0  (DIP-8 pos 8)
+        1: PinOffset(0, cross_gap=True),   # IN+ → row f, col+0
+        2: PinOffset(1, cross_gap=True),   # IN- → row f, col+1
+        3: PinOffset(2, cross_gap=True),   # V+  → row f, col+2
+        4: PinOffset(2, cross_gap=False),  # V-  → row e, col+2
+        5: PinOffset(1, cross_gap=False),  # OUT → row e, col+1
+        6: PinOffset(0, cross_gap=False),  # NC  → row e, col+0  (dummy leg)
     },
     pin_names={
         1: 'IN+', 2: 'IN-', 3: 'V+', 4: 'V-', 5: 'OUT',
@@ -456,6 +455,83 @@ ARDUINO_NANO = ComponentDef(
         30: 'VIN',  29: 'GND',  28: 'RST',  27: '5V',   26: 'A7',
         25: 'A6',   24: 'A5',   23: 'A4',   22: 'A3',   21: 'A2',
         20: 'A1',   19: 'A0',   18: 'AREF', 17: '3V3',  16: 'D13',
+    },
+    color='#1a3a8f',   # Arduino blue
+    is_dip=False,
+    is_module=True,
+)
+
+# ---------------------------------------------------------------------------
+# Arduino Uno R3 (KiCad MCU_Module:Arduino_UNO_R3)
+#   32 pins.  Two sides of unequal length:
+#     Digital side  (18 pins): D0/RX … D7, D8 … D13, GND, AREF, SDA, SCL
+#     Power/Analog  (14 pins): SCL/A5 … A0, VIN, GND, GND, 5V, 3V3, RST, IOREF, NC
+#
+#   Represented as 18 columns.  The power/analog side has no legs at cols 6-9,
+#   which corresponds to the physical gap between the analog header and the power
+#   header on the board.  The row is reversed (SCL/A5 at col 0) so that SCL/A5
+#   lines up with D0/RX across the board centre gap.
+#
+#   KiCad pin numbers preserved verbatim so validation works against the netlist.
+#   Digital side → cross_gap=False (row e); Power/Analog → cross_gap=True (row f).
+# ---------------------------------------------------------------------------
+
+ARDUINO_UNO = ComponentDef(
+    type_id='Arduino_Uno',
+    display_name='Arduino Uno R3',
+    ref_prefix='MCU',
+    pin_offsets={
+        # --- Digital side (cross_gap=False, cols 0-17) ---
+        # Col 0 = USB/BJ end; pins read from USB side inward.
+        # Physical order from USB end: SCL, SDA, AREF, GND, D13-D8,
+        #   [notch between col 9 and 10], D7-D2, TX, RX (D0 at col 17).
+        32: PinOffset(0,  cross_gap=False),   # SCL  (nearest USB end)
+        31: PinOffset(1,  cross_gap=False),   # SDA
+        30: PinOffset(2,  cross_gap=False),   # AREF
+        29: PinOffset(3,  cross_gap=False),   # GND
+        28: PinOffset(4,  cross_gap=False),   # D13
+        27: PinOffset(5,  cross_gap=False),   # D12
+        26: PinOffset(6,  cross_gap=False),   # D11
+        25: PinOffset(7,  cross_gap=False),   # D10
+        24: PinOffset(8,  cross_gap=False),   # D9
+        23: PinOffset(9,  cross_gap=False),   # D8
+        22: PinOffset(10, cross_gap=False),   # D7
+        21: PinOffset(11, cross_gap=False),   # D6
+        20: PinOffset(12, cross_gap=False),   # D5
+        19: PinOffset(13, cross_gap=False),   # D4
+        18: PinOffset(14, cross_gap=False),   # D3
+        17: PinOffset(15, cross_gap=False),   # D2
+        16: PinOffset(16, cross_gap=False),   # D1/TX
+        15: PinOffset(17, cross_gap=False),   # D0/RX (farthest from USB end)
+        # --- Power/Analog side (cross_gap=True, cols 3-10 + 12-17) ---
+        # Inner row starts at col 3 (NC) — the leftmost 3 cols are left empty
+        # so the header strip does not visually overlap the USB/BJ connectors.
+        # Gap at col 11 (between VIN at col 10 and A0 at col 12).
+        # Analog pins (A0-A5) are on the RIGHT side; power pins toward the left.
+        1:  PinOffset(3,  cross_gap=True),    # NC
+        2:  PinOffset(4,  cross_gap=True),    # IOREF
+        3:  PinOffset(5,  cross_gap=True),    # RST
+        4:  PinOffset(6,  cross_gap=True),    # 3V3
+        5:  PinOffset(7,  cross_gap=True),    # 5V
+        6:  PinOffset(8,  cross_gap=True),    # GND
+        7:  PinOffset(9,  cross_gap=True),    # GND
+        8:  PinOffset(10, cross_gap=True),    # VIN
+        9:  PinOffset(12, cross_gap=True),    # A0
+        10: PinOffset(13, cross_gap=True),    # A1
+        11: PinOffset(14, cross_gap=True),    # A2
+        12: PinOffset(15, cross_gap=True),    # A3
+        13: PinOffset(16, cross_gap=True),    # SDA/A4
+        14: PinOffset(17, cross_gap=True),    # SCL/A5
+    },
+    pin_names={
+        1:  'NC',      2:  'IOREF',  3:  'RST',   4:  '3V3',   5:  '5V',
+        6:  'GND',     7:  'GND',    8:  'VIN',
+        9:  'A0',      10: 'A1',     11: 'A2',     12: 'A3',
+        13: 'SDA',     14: 'SCL',
+        15: 'RX',      16: 'TX',     17: 'D2',     18: 'D3',    19: 'D4',
+        20: 'D5',      21: 'D6',     22: 'D7',     23: 'D8',    24: 'D9',
+        25: 'D10',     26: 'D11',    27: 'D12',    28: 'D13',
+        29: 'GND',     30: 'AREF',   31: 'SDA',    32: 'SCL',
     },
     color='#1a3a8f',   # Arduino blue
     is_dip=False,
@@ -580,7 +656,7 @@ ALL_DEFS: Dict[str, ComponentDef] = {
         POTENTIOMETER,
         NPN_BJT, PNP_BJT, JFET_N, JFET_P, BS170, NMOS, PMOS,
         TL081, RC4558, TL084, OPAMP_SPICE,
-        ARDUINO_NANO,
+        ARDUINO_NANO, ARDUINO_UNO,
         TEENSY_41,
         RASPBERRY_PI_PICO,
     ]
@@ -610,10 +686,13 @@ def guess_type_id(ref: str, value: str, symbol: str, lib: str = '',
     d = description.upper()
 
     # Board modules — all KiCad variants map to a single standard layout.
-    # Arduino: any Arduino board with a Nano-compatible 30-pin header.
+    # Arduino Uno R3: 32-pin symbol; symbol name contains "UNO".
+    # Arduino Nano + variants: everything else with "ARDUINO" in name.
     # Catches: Arduino_Nano_v2.x, Arduino_Nano_v3.x, Arduino_Nano_Every,
     #          Arduino_Nano_ESP32, Arduino_Nano_RP2040_Connect, etc.
     if 'ARDUINO' in v or 'ARDUINO' in s:
+        if 'UNO' in s or 'UNO' in v:
+            return 'Arduino_Uno'
         return 'Arduino_Nano'
     if 'TEENSY' in v or 'TEENSY' in s:
         return 'Teensy_41'

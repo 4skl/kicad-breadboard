@@ -97,17 +97,15 @@ MODULE_HEADER_H  = 10   # height of the black header strip along each long edge
 
 # Per-type inner body height (px between top and bottom pin-row centres).
 _MODULE_BODY_H: Dict[str, int] = {
-    'Arduino_Nano': 42,
-    'RPi_Pico':      PITCH,  # 2×20 header: rows one grid-step apart so both land on tie holes
+    'Arduino_Nano': 3 * PITCH,  # rows three grid-steps apart — aligns to hole grid in any rotation
+    'Arduino_Uno':  4 * PITCH,  # rows four grid-steps apart — aligns to hole grid in any rotation
+    'RPi_Pico':         PITCH,  # rows one grid-step apart — aligns to hole grid in any rotation
 }
 _RPi_BOARD_H         = 140  # total RPi board height for landscape orientation
 _RPi_PORTRAIT_PITCH  = 10  # pin pitch for portrait orientations (smaller than 18 to keep board compact)
 
-# USB-style connector protruding from the left (pin-1) end of Arduino Nano.
-# Each tuple: (rel_cy, conn_w, conn_h)
-_MODULE_CONNECTORS: Dict[str, tuple] = {
-    'Arduino_Nano': (0.5, 10, 14),   # Mini-USB
-}
+# Per-module connector specs reserved for future use; Nano USB is drawn inline.
+_MODULE_CONNECTORS: Dict[str, tuple] = {}
 RAIL_H = 18         # height of each power rail colour strip
 RAIL_GAP = 18       # gap between rail area and tie-strip area
 CENTER_GAP = 28     # gap between top and bottom tie-strip banks
@@ -872,7 +870,7 @@ class BreadboardCanvas(wx.Panel):
             if self._ghost is not None and (
                     self._ghost.comp_def.pin_count != 2 or self._place_pin1 is None):
                 cd = self._ghost.comp_def
-                n_rots = 4 if cd.type_id == 'RPi_Pico' else 2
+                n_rots = 4 if cd.is_module else 2
                 self._ghost.flipped = (self._ghost.flipped + 1) % n_rots
                 self.Refresh()
             elif self._selected_ref is not None:
@@ -1192,8 +1190,7 @@ class BreadboardCanvas(wx.Panel):
             return
 
         if comp_def.is_module:
-            n_rots = 4 if comp_def.type_id == 'RPi_Pico' else 2
-            placed.flipped = (placed.flipped + 1) % n_rots
+            placed.flipped = (placed.flipped + 1) % 4
             self._sync_module_pins(ref)
             self.Refresh()
             return
@@ -1816,7 +1813,10 @@ class BreadboardCanvas(wx.Panel):
             cx = body_rect.GetX() + body_rect.GetWidth() // 2
             cy = body_rect.GetY() + body_rect.GetHeight() // 2
             comp_nl = self.netlist.components.get(ref) if self.netlist else None
-            value_str = comp_nl.value if comp_nl else ''
+            if placed.type_id == 'OPAMP_SPICE':
+                value_str = 'SIM'
+            else:
+                value_str = comp_nl.value if comp_nl else ''
             dc.SetTextForeground('#ffffff')
             dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_BOLD))
@@ -2213,182 +2213,419 @@ class BreadboardCanvas(wx.Panel):
                              ref: str, mx: int, my: int,
                              selected: bool, ghost: bool = False,
                              flipped: bool = False) -> None:
-        """
-        Draw a free-floating PCB module in horizontal orientation (Arduino Nano).
+        """Draw a free-floating PCB module (Arduino Nano / Uno / Teensy …).
 
-        (mx, my) = canvas position of pin 1 (top-left corner of the top pin row).
-        col_delta → x offset;  cross_gap → bottom row;  flipped → swaps top/bottom.
-
-        Layout:
-          labels above  ── top pin row at y = my
-          ┌─────── black header strip ────────────────────────────────────┐
-          │                   PCB BODY (board color)                      │
-          └─────── black header strip ────────────────────────────────────┘
-          labels below  ── bottom pin row at y = my + bh_inner
-        USB connector protrudes from the left (pin-1) end.
+        rotation = int(flipped) % 4:
+          0 = header top+bottom, board extends right  (landscape, USB/conn on left)
+          1 = header left+right, board extends down   (portrait 90° CW,  conn on top)
+          2 = header top+bottom, board extends left   (landscape 180°,   conn on right)
+          3 = header left+right, board extends up     (portrait 270° CW, conn on bottom)
+        (mx, my) = pin-1 canvas position in all orientations.
         """
-        bh_inner = self._body_h(comp_def)
+        rot      = int(flipped) % 4
+        bh       = self._body_h(comp_def)   # inner gap between the two header rows (px)
         max_col  = max((o.col_delta for o in comp_def.pin_offsets.values()), default=0)
-        body_w   = max_col * MODULE_PIN_PITCH + MODULE_BODY_PAD * 2
-        body_h   = bh_inner + MODULE_BODY_PAD * 2
-
-        body_x = mx - MODULE_BODY_PAD
-        body_y = my - MODULE_BODY_PAD
-        body_rect = wx.Rect(body_x, body_y, body_w, body_h)
-
+        P        = MODULE_PIN_PITCH
+        PAD      = MODULE_BODY_PAD
+        HH       = MODULE_HEADER_H
+        PIN_R    = MODULE_PIN_R
+        LG       = MODULE_LABEL_GAP
         board_color  = wx.Colour(comp_def.color)
         border_color = wx.Colour('#1a1a1a')
         pad_color    = wx.Colour('#c8c8c8')
-        HH = MODULE_HEADER_H   # height of the black header strip
+        r, g, b  = board_color.Red(), board_color.Green(), board_color.Blue()
+        is_nano  = comp_def.type_id == 'Arduino_Nano'
 
-        def _pin_xy(offset) -> Tuple[int, int]:
-            x = mx + offset.col_delta * MODULE_PIN_PITCH
-            on_bottom = offset.cross_gap ^ flipped
-            y = my + (bh_inner if on_bottom else 0)
-            return x, y
+        # ── Per-rotation geometry ──────────────────────────────────────────
+        ps = max_col * P   # pin span in the long direction
+
+        # USB connector short dimension: narrower than the full board short side.
+        # Centered on the board's short axis; protrudes 12 px, overlaps 4 px.
+        USB_SHORT = 22   # px — short side of the USB rectangle
+
+        if rot == 0:
+            # Landscape: outer row top, inner row bottom; board extends right.
+            # USB connector is on the col-max / D13 end (RIGHT side).
+            body_x = mx - PAD;       body_y = my - PAD
+            body_w = ps + PAD * 2;   body_h = bh + PAD * 2
+            hdr1 = (body_x + 1, body_y,              body_w - 2, HH)   # top (outer)
+            hdr2 = (body_x + 1, body_y + body_h - HH, body_w - 2, HH) # bottom (inner)
+            silk1 = (body_x+2, body_y+HH,          body_x+body_w-2, body_y+HH)
+            silk2 = (body_x+2, body_y+body_h-HH,   body_x+body_w-2, body_y+body_h-HH)
+
+            def _pin_xy(o):
+                return mx + o.col_delta * P, my + (bh if o.cross_gap else 0)
+
+            def _label(dc_, o, name):
+                px, py = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                if not o.cross_gap:  # outer / top: label above board
+                    dc_.DrawText(name, px - tw//2, body_y - th - 2)
+                else:                # inner / bottom: label below
+                    dc_.DrawText(name, px - tw//2, py + PIN_R + LG)
+
+            inner_cx = body_x + body_w // 2
+            inner_cy = body_y + body_h // 2
+            text_cx  = inner_cx
+            text_cy  = inner_cy
+            # USB protrudes RIGHT (D13 / col-max end)
+            _uy = body_y + (body_h - USB_SHORT) // 2
+            usb_rect = (body_x + body_w - 4, _uy, 16, USB_SHORT)
+
+        elif rot == 1:
+            # Portrait 90° CW: outer row right, inner row left; board extends down.
+            # USB connector is on the col-max / D13 end (BOTTOM side).
+            body_x = mx - bh - PAD;  body_y = my - PAD
+            body_w = bh + PAD * 2;   body_h = ps + PAD * 2
+            hdr1 = (body_x + body_w - HH, body_y + 1, HH, body_h - 2)  # right (outer)
+            hdr2 = (body_x,               body_y + 1, HH, body_h - 2)  # left  (inner)
+            silk1 = (body_x+body_w-HH, body_y+2, body_x+body_w-HH, body_y+body_h-2)
+            silk2 = (body_x+HH,        body_y+2, body_x+HH,        body_y+body_h-2)
+
+            def _pin_xy(o):
+                return mx - (bh if o.cross_gap else 0), my + o.col_delta * P
+
+            def _label(dc_, o, name):
+                px, py = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                if not o.cross_gap:  # outer / right: label right of board
+                    dc_.DrawText(name, body_x + body_w + 2, py - th//2)
+                else:                # inner / left: label right of inner strip
+                    dc_.DrawText(name, body_x + HH + 2, py - th//2)
+
+            inner_cx = body_x + body_w // 2
+            inner_cy = body_y + body_h // 2
+            text_cx  = inner_cx
+            text_cy  = inner_cy
+            # USB protrudes DOWN (D13 / col-max end)
+            _ux = body_x + (body_w - USB_SHORT) // 2
+            usb_rect = (_ux, body_y + body_h - 4, USB_SHORT, 16)
+
+        elif rot == 2:
+            # Landscape 180°: outer row bottom, inner row top; board extends left.
+            # USB connector is on the col-max / D13 end (LEFT side, since cols go left).
+            body_x = mx - ps - PAD;  body_y = my - bh - PAD
+            body_w = ps + PAD * 2;   body_h = bh + PAD * 2
+            hdr1 = (body_x + 1, body_y + body_h - HH, body_w - 2, HH) # bottom (outer)
+            hdr2 = (body_x + 1, body_y,               body_w - 2, HH) # top    (inner)
+            silk1 = (body_x+2, body_y+body_h-HH,   body_x+body_w-2, body_y+body_h-HH)
+            silk2 = (body_x+2, body_y+HH,          body_x+body_w-2, body_y+HH)
+
+            def _pin_xy(o):
+                return mx - o.col_delta * P, my - (bh if o.cross_gap else 0)
+
+            def _label(dc_, o, name):
+                px, py = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                if not o.cross_gap:  # outer / bottom: label below board
+                    dc_.DrawText(name, px - tw//2, py + PIN_R + LG)
+                else:                # inner / top: label above board
+                    dc_.DrawText(name, px - tw//2, body_y - th - 2)
+
+            inner_cx = body_x + body_w // 2
+            inner_cy = body_y + body_h // 2
+            text_cx  = inner_cx
+            text_cy  = inner_cy
+            # USB protrudes LEFT (D13 / col-max end, since rot==2 cols go left)
+            _uy = body_y + (body_h - USB_SHORT) // 2
+            usb_rect = (body_x - 12, _uy, 16, USB_SHORT)
+
+        else:  # rot == 3
+            # Portrait 270° CW: outer row left, inner row right; board extends up.
+            # USB connector is on the col-max / D13 end (TOP side, since cols go up).
+            body_x = mx - PAD;        body_y = my - ps - PAD
+            body_w = bh + PAD * 2;    body_h = ps + PAD * 2
+            hdr1 = (body_x,               body_y + 1, HH, body_h - 2)  # left  (outer)
+            hdr2 = (body_x + body_w - HH, body_y + 1, HH, body_h - 2)  # right (inner)
+            silk1 = (body_x+HH,        body_y+2, body_x+HH,        body_y+body_h-2)
+            silk2 = (body_x+body_w-HH, body_y+2, body_x+body_w-HH, body_y+body_h-2)
+
+            def _pin_xy(o):
+                return mx + (bh if o.cross_gap else 0), my - o.col_delta * P
+
+            def _label(dc_, o, name):
+                px, py = _pin_xy(o)
+                tw, th = dc_.GetTextExtent(name)
+                if not o.cross_gap:  # outer / left: label left of board
+                    dc_.DrawText(name, body_x - tw - 2, py - th//2)
+                else:                # inner / right: label left of inner strip
+                    dc_.DrawText(name, body_x + body_w - HH - tw - 2, py - th//2)
+
+            inner_cx = body_x + body_w // 2
+            inner_cy = body_y + body_h // 2
+            text_cx  = inner_cx
+            text_cy  = inner_cy
+            # USB protrudes UP (D13 / col-max end, since rot==3 cols go up)
+            _ux = body_x + (body_w - USB_SHORT) // 2
+            usb_rect = (_ux, body_y - 12, USB_SHORT, 16)
+
+        landscape = rot in (0, 2)
 
         # ── Ghost mode ───────────────────────────────────────────────────
         if ghost:
-            r, g, b = board_color.Red(), board_color.Green(), board_color.Blue()
-            ghost_fill = wx.Colour(min(255, r + 70), min(255, g + 70), min(255, b + 70))
-            dc.SetBrush(wx.Brush(ghost_fill))
+            gfill = wx.Colour(min(255, r+70), min(255, g+70), min(255, b+70))
+            dc.SetBrush(wx.Brush(gfill))
             dc.SetPen(wx.Pen(wx.Colour('#888888'), 1, wx.PENSTYLE_DOT))
-            dc.DrawRoundedRectangle(body_rect, 3)
-            # Dark header strips
+            dc.DrawRoundedRectangle(body_x, body_y, body_w, body_h, 3)
             dc.SetBrush(wx.Brush(wx.Colour('#555555')))
             dc.SetPen(wx.TRANSPARENT_PEN)
-            dc.DrawRectangle(body_x + 1, body_y,              body_w - 2, HH)
-            dc.DrawRectangle(body_x + 1, body_y + body_h - HH, body_w - 2, HH)
-            # Pads
+            dc.DrawRectangle(*hdr1)
+            dc.DrawRectangle(*hdr2)
             dc.SetBrush(wx.Brush(wx.Colour('#aaaaaa')))
             dc.SetPen(wx.Pen(wx.Colour('#777777'), 1))
             for pin_num, offset in comp_def.pin_offsets.items():
                 px, py = _pin_xy(offset)
                 if pin_num == 1:
-                    dc.DrawRectangle(px - MODULE_PIN_R, py - MODULE_PIN_R,
-                                     MODULE_PIN_R * 2, MODULE_PIN_R * 2)
+                    dc.DrawRectangle(px - PIN_R, py - PIN_R, PIN_R*2, PIN_R*2)
                 else:
-                    dc.DrawCircle(px, py, MODULE_PIN_R)
-            # Labels
-            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                               wx.FONTWEIGHT_NORMAL))
-            dc.SetTextForeground('#555555')
-            for pin_num, offset in comp_def.pin_offsets.items():
-                name = comp_def.pin_names.get(pin_num, str(pin_num))
-                px, py = _pin_xy(offset)
-                tw, th = dc.GetTextExtent(name)
-                on_bottom = offset.cross_gap ^ flipped
-                if on_bottom:
-                    dc.DrawText(name, px - tw // 2,
-                                py + MODULE_PIN_R + MODULE_LABEL_GAP)
-                else:
-                    dc.DrawText(name, px - tw // 2,
-                                py - MODULE_PIN_R - MODULE_LABEL_GAP - th)
+                    dc.DrawCircle(px, py, PIN_R)
+            if landscape:
+                dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.SetTextForeground('#555555')
+                for pin_num, offset in comp_def.pin_offsets.items():
+                    _label(dc, offset, comp_def.pin_names.get(pin_num, str(pin_num)))
             return
 
-        # ── Placed module ────────────────────────────────────────────────
-
-        # USB connector — protrudes from the left (pin-1) end of the board
-        conn_spec = _MODULE_CONNECTORS.get(comp_def.type_id)
-        if conn_spec:
-            rel_cy, cw, ch = conn_spec
-            conn_x = body_x - cw
-            conn_y = body_y + int(body_h * rel_cy) - ch // 2
-            # Outer metal shell
-            dc.SetBrush(wx.Brush(wx.Colour('#d0d0d0')))
-            dc.SetPen(wx.Pen(wx.Colour('#888888'), 1))
-            dc.DrawRoundedRectangle(conn_x, conn_y, cw, ch, 2)
-            # Inner opening (dark recess)
-            dc.SetBrush(wx.Brush(wx.Colour('#444444')))
-            dc.SetPen(wx.TRANSPARENT_PEN)
-            margin = max(1, ch // 5)
-            dc.DrawRoundedRectangle(conn_x + 1, conn_y + margin,
-                                    cw - 2, ch - 2 * margin, 1)
-            # Highlight line on top edge of shell
-            dc.SetPen(wx.Pen(wx.Colour('#f0f0f0'), 1))
-            dc.DrawLine(conn_x + 2, conn_y + 1, conn_x + cw - 2, conn_y + 1)
-
-        # Selection halo
+        # ── Selection halo ────────────────────────────────────────────────
         if selected:
-            halo = wx.Rect(body_x - 4, body_y - 4, body_w + 8, body_h + 8)
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.SetPen(wx.Pen('#00ccff', 3))
-            dc.DrawRoundedRectangle(halo, 6)
+            dc.DrawRoundedRectangle(body_x - 4, body_y - 4, body_w + 8, body_h + 8, 6)
 
-        # PCB body
+        # ── PCB body ──────────────────────────────────────────────────────
         dc.SetBrush(wx.Brush(board_color))
         dc.SetPen(wx.Pen(border_color, 1))
-        dc.DrawRoundedRectangle(body_rect, 3)
+        dc.DrawRoundedRectangle(body_x, body_y, body_w, body_h, 3)
 
-        # Black pin-header strips along top and bottom long edges
+        # ── USB / connector block (protrudes from the pin-1 end) ──────────
+        if is_nano:
+            dc.SetBrush(wx.Brush(wx.Colour('#d8d8d8')))
+            dc.SetPen(wx.Pen(wx.Colour('#aaaaaa'), 1))
+            dc.DrawRectangle(*usb_rect)
+
+        # ── Black header strips ───────────────────────────────────────────
         dc.SetBrush(wx.Brush(wx.Colour('#1c1c1c')))
         dc.SetPen(wx.TRANSPARENT_PEN)
-        dc.DrawRectangle(body_x + 1, body_y,               body_w - 2, HH)
-        dc.DrawRectangle(body_x + 1, body_y + body_h - HH, body_w - 2, HH)
+        dc.DrawRectangle(*hdr1)
+        dc.DrawRectangle(*hdr2)
 
-        # Thin bright silkscreen line inside each header strip (gives depth)
-        r, g, b = board_color.Red(), board_color.Green(), board_color.Blue()
-        silk_c = wx.Colour(min(255, r + 60), min(255, g + 60), min(255, b + 60))
+        # ── Silkscreen lines (depth accent inside each strip) ─────────────
+        silk_c = wx.Colour(min(255, r+60), min(255, g+60), min(255, b+60))
         dc.SetPen(wx.Pen(silk_c, 1))
-        dc.DrawLine(body_x + 2, body_y + HH,           body_x + body_w - 2, body_y + HH)
-        dc.DrawLine(body_x + 2, body_y + body_h - HH,  body_x + body_w - 2, body_y + body_h - HH)
+        dc.DrawLine(*silk1)
+        dc.DrawLine(*silk2)
 
-        # Header pads — silver circles, square for pin 1
+        # ── ATmega / SoC chip — diamond in the inner area (landscape only) ─
+        if landscape and is_nano:
+            chip_r = 10
+            dc.SetBrush(wx.Brush(wx.Colour('#111111')))
+            dc.SetPen(wx.Pen(wx.Colour('#444444'), 1))
+            dc.DrawPolygon([
+                wx.Point(inner_cx,          inner_cy - chip_r),
+                wx.Point(inner_cx + chip_r, inner_cy),
+                wx.Point(inner_cx,          inner_cy + chip_r),
+                wx.Point(inner_cx - chip_r, inner_cy),
+            ])
+
+        # ── Header pads ───────────────────────────────────────────────────
         dc.SetBrush(wx.Brush(pad_color))
         dc.SetPen(wx.Pen(wx.Colour('#888888'), 1))
         for pin_num, offset in comp_def.pin_offsets.items():
             px, py = _pin_xy(offset)
             if pin_num == 1:
-                dc.DrawRectangle(px - MODULE_PIN_R, py - MODULE_PIN_R,
-                                 MODULE_PIN_R * 2, MODULE_PIN_R * 2)
+                dc.DrawRectangle(px - PIN_R, py - PIN_R, PIN_R*2, PIN_R*2)
             else:
-                dc.DrawCircle(px, py, MODULE_PIN_R)
+                dc.DrawCircle(px, py, PIN_R)
 
-        # Pin name labels above (top row) and below (bottom row)
-        dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                           wx.FONTWEIGHT_NORMAL))
-        dc.SetTextForeground('#1a1a1a')
-        for pin_num, offset in comp_def.pin_offsets.items():
-            name = comp_def.pin_names.get(pin_num, str(pin_num))
-            px, py = _pin_xy(offset)
-            tw, th = dc.GetTextExtent(name)
-            on_bottom = offset.cross_gap ^ flipped
-            if on_bottom:
-                dc.DrawText(name, px - tw // 2, py + MODULE_PIN_R + MODULE_LABEL_GAP)
-            else:
-                dc.DrawText(name, px - tw // 2, py - MODULE_PIN_R - MODULE_LABEL_GAP - th)
+        # ── Pin labels (landscape only; portrait is too narrow) ───────────
+        # Arduino Uno labels are gated behind the pin-function toggle to avoid
+        # clutter (it has 32 labels); other modules always show their labels.
+        _show_module_labels = landscape and (
+            comp_def.type_id != 'Arduino_Uno' or self._dip_fn_labels)
+        if _show_module_labels:
+            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#1a1a1a')
+            for pin_num, offset in comp_def.pin_offsets.items():
+                _label(dc, offset, comp_def.pin_names.get(pin_num, str(pin_num)))
 
-        # Board name + ref — horizontal text centred in the inner PCB area
-        inner_y  = body_y + HH + 1
-        inner_h  = body_h - HH * 2 - 2
-        inner_cx = body_x + body_w // 2
-        inner_cy = inner_y + inner_h // 2
-
+        # ── Board name + ref ──────────────────────────────────────────────
         luma = 0.299 * r + 0.587 * g + 0.114 * b
-        text_c = '#ffffff' if luma < 160 else '#222222'
-        dc.SetTextForeground(text_c)
-
-        dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                           wx.FONTWEIGHT_BOLD))
         dname = comp_def.display_name
-        nw, nh = dc.GetTextExtent(dname)
+        # Arduino Uno defers its label to the extras block (the chip is drawn
+        # after this section and would cover the text otherwise).
+        if comp_def.type_id != 'Arduino_Uno':
+            dc.SetTextForeground('#ffffff' if luma < 160 else '#222222')
+            dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_BOLD))
+            nw, nh = dc.GetTextExtent(dname)
 
-        if ref:
-            dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                               wx.FONTWEIGHT_NORMAL))
-            rw, rh = dc.GetTextExtent(ref)
-            gap = 2
-            total_h = nh + gap + rh
+            if ref:
+                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                rw, rh = dc.GetTextExtent(ref)
+                gap = 2
+                total_h = nh + gap + rh
+                dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_BOLD))
+                dc.DrawText(dname, text_cx - nw//2, text_cy - total_h//2)
+                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+                dc.DrawText(ref,   text_cx - rw//2, text_cy - total_h//2 + nh + gap)
+            else:
+                dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_BOLD))
+                dc.DrawText(dname, text_cx - nw//2, text_cy - nh//2)
+
+        # ── Arduino Uno extras: split strips + ATmega + USB + barrel jack ──
+        if comp_def.type_id == 'Arduino_Uno':
+            HALF = P // 2
+
+            # Erase gaps in the inner header strip (new layout: cols 0-2 empty,
+            # col 11 empty between VIN at col 10 and A0 at col 12).
+            dc.SetBrush(wx.Brush(board_color))
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            if rot == 0:   # inner strip at bottom; cols go right
+                # Left buffer: cols 0-2 have no inner pins
+                dc.DrawRectangle(body_x, body_y + body_h - HH - 1,
+                                 PAD + 3*P - HALF, HH + 2)
+                # Gap at col 11 (between VIN col 10 and A0 col 12)
+                dc.DrawRectangle(mx + 10*P + HALF, body_y + body_h - HH - 1,
+                                 P, HH + 2)
+            elif rot == 1: # inner strip on left; cols go down
+                # Left buffer: cols 0-2 have no inner pins
+                dc.DrawRectangle(body_x - 1, body_y,
+                                 HH + 2, PAD + 3*P - HALF)
+                # Gap at col 11
+                dc.DrawRectangle(body_x - 1, my + 10*P + HALF,
+                                 HH + 2, P)
+            elif rot == 2: # inner strip at top; cols go left
+                # Left buffer: cols 0-2 are on the right side (col 0 = mx)
+                dc.DrawRectangle(mx - 3*P + HALF, body_y - 1,
+                                 PAD + 3*P - HALF, HH + 2)
+                # Gap at col 11
+                dc.DrawRectangle(mx - 12*P + HALF, body_y - 1,
+                                 P, HH + 2)
+            else:          # inner strip on right; cols go up
+                # Left buffer: cols 0-2 are at the bottom (col 0 = my)
+                dc.DrawRectangle(body_x + body_w - HH - 1, my - 3*P + HALF,
+                                 HH + 2, PAD + 3*P - HALF)
+                # Gap at col 11
+                dc.DrawRectangle(body_x + body_w - HH - 1, my - 12*P + HALF,
+                                 HH + 2, P)
+
+            # Fill the notch in the outer (digital) header strip between D8 (col 9)
+            # and D7 (col 10) — centred at col 9.5 from the USB end.
+            dc.SetBrush(wx.Brush(wx.Colour('#1c1c1c')))
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            if rot == 0:   # outer strip at top; notch at mx + 9*P + HALF
+                dc.DrawRectangle(mx + 9*P + HALF - 2, body_y, 5, HH)
+            elif rot == 1: # outer strip on right; notch at my + 9*P + HALF
+                dc.DrawRectangle(body_x + body_w - HH, my + 9*P + HALF - 2,
+                                 HH, 5)
+            elif rot == 2: # outer strip at bottom; notch at mx - 9*P - HALF
+                dc.DrawRectangle(mx - 10*P + HALF - 2, body_y + body_h - HH,
+                                 5, HH)
+            else:          # outer strip on left; notch at my - 9*P - HALF
+                dc.DrawRectangle(body_x, my - 10*P + HALF - 2,
+                                 HH, 5)
+
+            if landscape:
+                inner_h = body_h - 2 * HH - 2
+
+                # ATmega328P — wide black rectangle spanning almost half the board.
+                # USB is on the col-0 (LEFT) end, so the chip is on the non-USB
+                # (RIGHT) side: 60 % from left for rot==0, 40 % for rot==2.
+                # Shifted toward the inner (power/analog) header strip.
+                chip_w = int(body_w * 0.45)
+                chip_h = max(14, inner_h * 2 // 5)   # shorter to leave room for label
+                chip_cx_u = body_x + int(body_w * (0.60 if rot == 0 else 0.40))
+                # rot 0: inner strip is at bottom  → shift chip down (label fits above)
+                # rot 2: inner strip is at top     → shift chip up  (label fits below)
+                chip_cy_u = inner_cy + (inner_h // 4 if rot == 0 else -inner_h // 4)
+                dc.SetBrush(wx.Brush(wx.Colour('#111111')))
+                dc.SetPen(wx.Pen(wx.Colour('#444444'), 1))
+                dc.DrawRectangle(chip_cx_u - chip_w // 2, chip_cy_u - chip_h // 2,
+                                 chip_w, chip_h)
+
+            # USB port (grey) + barrel jack (dark) on the col-0 (LEFT) end,
+            # all 4 rotations. Stacked adjacent, centred on the board's short axis.
+            # Connectors sit mostly on the module with only a small stub protruding.
+            _OVL    = 8     # how far connector rect starts inside the board edge
+            USB_PRO = 22    # total rect length (square USB: 22 × 22)
+            BJ_PRO  = 22    # same length as USB
+            USB_H   = 22    # USB connector short side (square)
+            BJ_H    = 14    # barrel jack short side (thinner than USB)
+            GAP     = 6     # gap between USB and barrel jack
+
+            # Centre of the board's SHORT axis for connector positioning.
+            # In landscape body_h is the short dimension; in portrait body_w is.
+            short_mid = body_h // 2 if landscape else body_w // 2
+            stack   = USB_H + GAP + BJ_H          # 22 + 6 + 14 = 42 px
+            usb_off = short_mid - stack // 2       # offset from body_y / body_x
+            bj_off  = usb_off + USB_H + GAP
+
+            dc.SetBrush(wx.Brush(wx.Colour('#d8d8d8')))
+            dc.SetPen(wx.Pen(wx.Colour('#aaaaaa'), 1))
+            if rot == 0:    # col-0 end is LEFT
+                dc.DrawRectangle(body_x - USB_PRO + _OVL, body_y + usb_off, USB_PRO, USB_H)
+            elif rot == 1:  # col-0 end is TOP
+                dc.DrawRectangle(body_x + usb_off, body_y - USB_PRO + _OVL, USB_H, USB_PRO)
+            elif rot == 2:  # col-0 end is RIGHT
+                dc.DrawRectangle(body_x + body_w - _OVL, body_y + usb_off, USB_PRO, USB_H)
+            else:           # col-0 end is BOTTOM
+                dc.DrawRectangle(body_x + usb_off, body_y + body_h - _OVL, USB_H, USB_PRO)
+
+            dc.SetBrush(wx.Brush(wx.Colour('#555555')))
+            dc.SetPen(wx.Pen(wx.Colour('#333333'), 1))
+            if rot == 0:
+                dc.DrawRectangle(body_x - BJ_PRO + _OVL, body_y + bj_off,  BJ_PRO, BJ_H)
+            elif rot == 1:
+                dc.DrawRectangle(body_x + bj_off,  body_y - BJ_PRO + _OVL, BJ_H,   BJ_PRO)
+            elif rot == 2:
+                dc.DrawRectangle(body_x + body_w - _OVL, body_y + bj_off,  BJ_PRO, BJ_H)
+            else:
+                dc.DrawRectangle(body_x + bj_off,  body_y + body_h - _OVL, BJ_H,   BJ_PRO)
+
+            # ── Label (drawn last so the chip does not cover it) ───────────
+            # Landscape: white text above the ATmega chip in the open blue area.
+            # Portrait:  short name (full name overflows the narrow 82 px body).
+            dc.SetTextForeground('#ffffff')
             dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_BOLD))
-            dc.DrawText(dname, inner_cx - nw // 2, inner_cy - total_h // 2)
-            dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                               wx.FONTWEIGHT_NORMAL))
-            dc.DrawText(ref,   inner_cx - rw // 2, inner_cy - total_h // 2 + nh + gap)
-        else:
-            dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                               wx.FONTWEIGHT_BOLD))
-            dc.DrawText(dname, inner_cx - nw // 2, inner_cy - nh // 2)
+            if landscape:
+                _nw, _nh = dc.GetTextExtent(dname)
+                if ref:
+                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_NORMAL))
+                    _rw, _rh = dc.GetTextExtent(ref)
+                    _tot = _nh + 2 + _rh
+                    dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_BOLD))
+                else:
+                    _rw = _rh = 0
+                    _tot = _nh
+                # Place text above chip for rot 0 (chip near bottom),
+                # below chip for rot 2 (chip near top, inner strip at top).
+                if rot == 0:
+                    _ty = chip_cy_u - chip_h // 2 - _tot - 3
+                else:
+                    _ty = chip_cy_u + chip_h // 2 + 3
+                dc.DrawText(dname, chip_cx_u - _nw//2, _ty)
+                if ref:
+                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_NORMAL))
+                    dc.DrawText(ref, chip_cx_u - _rw//2, _ty + _nh + 2)
+            else:
+                _short = 'Uno R3'
+                _nw, _nh = dc.GetTextExtent(_short)
+                dc.DrawText(_short, text_cx - _nw//2, text_cy - _nh//2)
+                if ref:
+                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_NORMAL))
+                    _rw, _rh = dc.GetTextExtent(ref)
+                    dc.DrawText(ref, text_cx - _rw//2, text_cy + _nh//2 + 2)
 
     # ------------------------------------------------------------------
     # Module pin synchronisation helpers
@@ -2427,10 +2664,18 @@ class BreadboardCanvas(wx.Panel):
                 result[(ref, pin_num)] = (x, y)
             return result
         bh = self._body_h(comp_def)
+        P  = MODULE_PIN_PITCH
+        rot = int(flipped) % 4
         for pin_num, offset in comp_def.pin_offsets.items():
-            x = mx + offset.col_delta * MODULE_PIN_PITCH
-            on_bottom = offset.cross_gap ^ flipped
-            y = my + (bh if on_bottom else 0)
+            c, cg = offset.col_delta, offset.cross_gap
+            if rot == 0:
+                x, y = mx + c * P,          my + (bh if cg else 0)
+            elif rot == 1:
+                x, y = mx - (bh if cg else 0), my + c * P
+            elif rot == 2:
+                x, y = mx - c * P,          my - (bh if cg else 0)
+            else:  # rot == 3
+                x, y = mx + (bh if cg else 0), my - c * P
             result[(ref, pin_num)] = (x, y)
         return result
 
