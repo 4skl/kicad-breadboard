@@ -298,14 +298,17 @@ class _NativeCard(wx.Panel):
                                                   wx.FONTWEIGHT_NORMAL))
                 if len(variants) > 1:
                     btn_x = CARD_W - _BTN_W - _BTN_RIGHT_PAD
-                    self._cycle_lbl = wx.StaticText(
-                        self, label='>', pos=(btn_x + 3, 31))
+                    self._cycle_lbl = wx.Button(
+                        self, label='>', pos=(btn_x, 28),
+                        size=(_BTN_W, _BTN_H + 2))
                     self._cycle_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                                                      wx.FONTSTYLE_NORMAL,
                                                      wx.FONTWEIGHT_BOLD))
         for w in filter(None, [self, self._swatch, self._ref_lbl, self._val_lbl,
-                                self._pinout_lbl, self._cycle_lbl]):
+                                self._pinout_lbl]):
             w.Bind(wx.EVT_LEFT_DOWN, self._on_click)
+        if self._cycle_lbl is not None:
+            self._cycle_lbl.Bind(wx.EVT_BUTTON, self._on_cycle_btn)
 
         self._apply_colors()
 
@@ -338,13 +341,14 @@ class _NativeCard(wx.Panel):
             if self._pinout_lbl:
                 self._pinout_lbl.SetLabel(variants[self.pinout_idx][0])
 
+    def _on_cycle_btn(self, _evt) -> None:
+        placed = self.board.get_placement(self.ref) is not None
+        if not placed:
+            self._cycle_pinout()
+
     def _on_click(self, evt: wx.MouseEvent) -> None:
         placed = self.board.get_placement(self.ref) is not None
         if placed or self.comp_def is None:
-            return
-
-        if evt.GetEventObject() is self._cycle_lbl:
-            self._cycle_pinout()
             return
 
         comp_def = self.comp_def
