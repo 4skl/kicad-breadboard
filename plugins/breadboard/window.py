@@ -351,7 +351,11 @@ class BreadboardWindow(wx.Frame):
 
         self._tray_panel = tray_panel
         self._tray_sizer = tray_sizer
-        tray_panel.SetSizer(tray_sizer)
+        _right_sep = wx.StaticLine(tray_panel, style=wx.LI_VERTICAL)
+        tray_outer = wx.BoxSizer(wx.HORIZONTAL)
+        tray_outer.Add(_right_sep, 0, wx.EXPAND)
+        tray_outer.Add(tray_sizer, 1, wx.EXPAND)
+        tray_panel.SetSizer(tray_outer)
 
         inner_splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
         inner_splitter.SetMinimumPaneSize(150)
