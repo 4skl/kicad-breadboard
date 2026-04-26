@@ -2417,8 +2417,8 @@ class BreadboardCanvas(wx.Panel):
         dc.DrawLine(*silk1)
         dc.DrawLine(*silk2)
 
-        # ── ATmega / SoC chip — diamond in the inner area (landscape only) ─
-        if landscape and is_nano:
+        # ── ATmega / SoC chip — diamond in the inner area ────────────────
+        if is_nano:
             chip_r = 10
             dc.SetBrush(wx.Brush(wx.Colour('#111111')))
             dc.SetPen(wx.Pen(wx.Colour('#444444'), 1))
@@ -2488,27 +2488,64 @@ class BreadboardCanvas(wx.Panel):
         # Arduino Uno defers its label to the extras block (the chip is drawn
         # after this section and would cover the text otherwise).
         if comp_def.type_id != 'Arduino_Uno':
-            dc.SetTextForeground('#ffffff' if luma < 160 else '#222222')
-            dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                               wx.FONTWEIGHT_BOLD))
-            nw, nh = dc.GetTextExtent(dname)
-
-            if ref:
-                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                   wx.FONTWEIGHT_NORMAL))
-                rw, rh = dc.GetTextExtent(ref)
-                gap = 2
-                total_h = nh + gap + rh
-                dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                   wx.FONTWEIGHT_BOLD))
-                dc.DrawText(dname, text_cx - nw//2, text_cy - total_h//2)
-                dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                   wx.FONTWEIGHT_NORMAL))
-                dc.DrawText(ref,   text_cx - rw//2, text_cy - total_h//2 + nh + gap)
+            txt_color = wx.Colour('#ffffff' if luma < 160 else '#222222')
+            if not landscape:
+                # Portrait: the inner area is too narrow for horizontal text — rotate 90°.
+                # rot==1 cols go down → label reads top-to-bottom (+90°, i.e. π/2).
+                # rot==3 cols go up   → label reads bottom-to-top (-90°, i.e. -π/2).
+                angle = math.pi / 2 if rot == 1 else -math.pi / 2
+                gc_nm = wx.GraphicsContext.Create(dc)
+                _fn = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+                _fr = wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+                gc_nm.SetFont(gc_nm.CreateFont(_fn, txt_color))
+                nw, nh = gc_nm.GetTextExtent(dname)
+                if ref:
+                    gc_nm.SetFont(gc_nm.CreateFont(_fr, txt_color))
+                    rw, rh = gc_nm.GetTextExtent(ref)
+                    gap = 2
+                    total = nw + gap + rw   # total along the rotated x axis
+                    # Draw name
+                    gc_nm.SetFont(gc_nm.CreateFont(_fn, txt_color))
+                    gc_nm.PushState()
+                    gc_nm.Translate(float(text_cx), float(text_cy))
+                    gc_nm.Rotate(angle)
+                    gc_nm.DrawText(dname, -total / 2, -nh / 2)
+                    gc_nm.PopState()
+                    # Draw ref
+                    gc_nm.SetFont(gc_nm.CreateFont(_fr, txt_color))
+                    gc_nm.PushState()
+                    gc_nm.Translate(float(text_cx), float(text_cy))
+                    gc_nm.Rotate(angle)
+                    gc_nm.DrawText(ref, -total / 2 + nw + gap, -rh / 2)
+                    gc_nm.PopState()
+                else:
+                    gc_nm.PushState()
+                    gc_nm.Translate(float(text_cx), float(text_cy))
+                    gc_nm.Rotate(angle)
+                    gc_nm.DrawText(dname, -nw / 2, -nh / 2)
+                    gc_nm.PopState()
             else:
+                dc.SetTextForeground(txt_color)
                 dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                    wx.FONTWEIGHT_BOLD))
-                dc.DrawText(dname, text_cx - nw//2, text_cy - nh//2)
+                nw, nh = dc.GetTextExtent(dname)
+
+                if ref:
+                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_NORMAL))
+                    rw, rh = dc.GetTextExtent(ref)
+                    gap = 2
+                    total_h = nh + gap + rh
+                    dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_BOLD))
+                    dc.DrawText(dname, text_cx - nw//2, text_cy - total_h//2)
+                    dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_NORMAL))
+                    dc.DrawText(ref,   text_cx - rw//2, text_cy - total_h//2 + nh + gap)
+                else:
+                    dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_BOLD))
+                    dc.DrawText(dname, text_cx - nw//2, text_cy - nh//2)
 
         # ── Arduino Uno extras: split strips + ATmega + USB + barrel jack ──
         if comp_def.type_id == 'Arduino_Uno':
