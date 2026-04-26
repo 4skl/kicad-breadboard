@@ -12,7 +12,7 @@ A KiCad 9 / 10 plugin for introductory analog electronics courses at the Univers
 
 ## Installation
 
-> Built on CachyOS — tested on CachyOS, Ubuntu, and Windows.
+> Built on [CachyOS](https://cachyos.org) — tested on CachyOS, Ubuntu, and Windows.
 
 **1. Clone the repository**
 ```bash
