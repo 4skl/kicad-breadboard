@@ -1,8 +1,70 @@
 # KiCad Breadboard Builder <img src="images/icon.png" height="45">
 
-A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the University of Antwerp. Students draw a schematic in Eeschema, then use this plugin to wire up the same circuit on a virtual breadboard — placing components, drawing jumper wires, and validating their work against the schematic.
+A KiCad 9 / 10 plugin for introductory analog electronics courses at the University of Antwerp. Draw your schematic in Eeschema, then wire it up on a virtual breadboard and validate it against the schematic.
 
-## What it does
+![breadboard](images/breadboard.png)
+
+**In the press:**
+[Hackaday — *This KiCad Plugin Enables Breadboarding*](https://hackaday.com/2026/04/23/this-kicad-plugin-enables-breadboarding/) · [Adafruit Blog — *KiCad Breadboard Builder*](https://blog.adafruit.com/2026/04/24/kicad-breadboard-builder/)
+
+---
+
+## Installation
+
+> Built on CachyOS — tested on CachyOS, Ubuntu, and Windows.
+
+**1. Clone the repository**
+```bash
+git clone https://github.com/kerstensrobin/kicad-breadboard.git
+```
+
+**2. Run the install script**
+
+Linux / macOS:
+```bash
+cd kicad-breadboard
+bash install.sh
+```
+Windows: double-click `install.bat`.
+
+The script detects your KiCad version and creates the plugin link automatically. If something goes wrong, see [Manual installation](#manual-installation) below.
+
+**3. Refresh plugins in KiCad**
+
+Open any project in the **PCB Editor** → **Tools → External Plugins → Refresh Plugins**. A breadboard icon appears in the right-hand toolbar.
+
+> The plugin only appears inside the PCB Editor, not the schematic editor — this is a KiCad limitation.
+
+**4. Open your project**
+
+Click the toolbar button. The plugin finds the netlist (`.net`) automatically. If you have not exported one yet, use **"Update from schematic"** in the toolbar — this calls `kicad-cli` to export it without leaving the window.
+
+---
+
+## Workflow
+
+Draw your schematic in Eeschema:
+
+![schematic](images/schematic.png)
+
+Switch to the PCB Editor — a breadboard icon appears in the toolbar:
+
+![icon](images/pcbeditor.png)
+
+Place components and draw jumper wires on the virtual breadboard:
+
+![breadboard](images/breadboard.png)
+
+Click **Validate** to check your build against the schematic. Open nets and short circuits are highlighted:
+
+![shortcircuit](images/shortcircuit.png)
+
+---
+
+## Reference
+
+<details>
+<summary>Features</summary>
 
 - Renders a breadboard in six configurable sizes: mini (170 holes), half (400), full (830), double (2× full stacked), triple (3× full with vertical power rails), or double rails (2× full with vertical power rails on both sides)
 - Parses a KiCad netlist and shows all placeable components in a side tray — **any U-prefix IC with an even pin count is supported automatically**, even if it is not in the built-in list (555 timers, 74xx logic gates, CD4xxx, counters, shift registers, …)
@@ -19,7 +81,10 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 - Instrument probes: place function-generator, oscilloscope (1–4 channels), and PSU connection points on the board; drag their labels freely for better visibility
 - Preferences dialog (`File → Preferences…`) controls instruments, display, board layout, and export format; settings can be saved as defaults and restored on startup
 
-## Supported components
+</details>
+
+<details>
+<summary>Supported components</summary>
 
 | Component | Package |
 |---|---|
@@ -38,7 +103,6 @@ A KiCad 9 / 10 Action Plugin for introductory analog electronics courses at the 
 | OPAMP (KiCad Simulation_SPICE) | DIP-6 (labelled "SIM") |
 | Arduino Nano (+ Every, ESP32, RP2040 Connect, …) | 30-pin module |
 | Arduino Uno R3 | 32-pin module |
-| Teensy 4.1 | 48-pin module |
 | Raspberry Pi (40-pin GPIO header) | 40-pin module |
 
 ### Transistor detection
@@ -65,45 +129,10 @@ Different physical components that share the same schematic symbol can have a di
 | P-ch MOSFET | G-S-D | Check datasheet for your specific part |
 | BS170 | S-G-D | — (fixed, single pinout) |
 
----
+</details>
 
-## Installation in KiCad 9 or 10
-
-### Step 1 — Clone the repository
-
-```bash
-git clone https://github.com/kerstensrobin/kicad-breadboard.git
-```
-
-### Step 2 — Run the install script
-
-**Linux / macOS:**
-```bash
-cd kicad-breadboard
-bash install.sh
-```
-
-**Windows:** double-click `install.bat`.
-
-The script detects your KiCad version, creates the plugin link, and tells you what to do next. If something goes wrong, see [Manual installation](#manual-installation) below.
-
-### Step 3 — Refresh plugins in KiCad
-
-1. Open KiCad and open any project in the **PCB Editor** (pcbnew).
-2. In the menu: **Tools → External Plugins → Refresh Plugins**.
-3. A breadboard icon appears in the right-hand toolbar (or under **Tools → External Plugins → Breadboard Builder**).
-
-> The plugin only appears inside the PCB Editor, not the schematic editor — this is a KiCad limitation for Python plugins.
-
-### Step 4 — Open your project
-
-Click the toolbar button (or menu entry). The plugin will automatically find the netlist (`.net`) in the same folder as the open PCB file.
-
-If you have not exported a netlist yet, use **"Update from schematic"** in the toolbar — this calls `kicad-cli` to export one automatically.
-
----
-
-## Toolbar buttons
+<details>
+<summary>Toolbar buttons</summary>
 
 | Button | Action |
 |---|---|
@@ -114,7 +143,10 @@ If you have not exported a netlist yet, use **"Update from schematic"** in the t
 | Clear warnings | Dismiss `?` / `⚡` validation markers |
 | Clear board | Remove all placed components and wires |
 
-## Hotkeys
+</details>
+
+<details>
+<summary>Hotkeys</summary>
 
 | Key | Action |
 |---|---|
@@ -134,9 +166,10 @@ If you have not exported a netlist yet, use **"Update from schematic"** in the t
 | Middle drag | Pan |
 | Ctrl+Home | Fit view |
 
----
+</details>
 
-## Preferences
+<details>
+<summary>Preferences</summary>
 
 Open **File → Preferences…** to configure the plugin. Settings take effect immediately when you click OK. Use **Save as default** to persist them to `~/.config/kicad_bbrd/prefs.json` and restore them automatically on next launch.
 
@@ -174,9 +207,10 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 | Branding image | Path to a custom PNG/SVG/JPG image; leave blank to use the built-in default |
 | Show binding posts on board | Toggle the circular binding-post terminals on the canvas |
 
----
+</details>
 
-## Side panel
+<details>
+<summary>Side panel — binding posts & instruments</summary>
 
 ### Binding posts
 
@@ -201,34 +235,10 @@ The **Function generator**, **Oscilloscope**, and **Power supply (PSU)** section
 - In **Delete mode** (D), hover over a probe flag and click to remove it.
 - In **Select mode**, drag a probe flag to reposition the label. A leaderline connects the label back to its hole. The label position is saved in the session file.
 
----
+</details>
 
-## Example workflow
-
-- Draw a schematic.
-
-![schematic](images/schematic.png)
-
-- Go to the PCB editor (using the green button on the toolbar, or by using Tools → Switch to PCB editor)
-At the top, a new breadboard icon appeared (in the toolbar, next to the CLI input icon). Clicking this will take you to the Breadboard Builder.
-
-![icon](images/pcbeditor.png)
-
-- The Breadboard Builder will open!
-
-![breadboard](images/breadboard.png)
-
-- Here, you can select which component you want to place and click "Validate" to check if your build contains errors. If it does, it will indicate missing connections and short circuits on the relevant pins as illustrated below.
-
-![shortcircuit](images/shortcircuit.png)
-
-That's it! Have fun!
-
-> **Help menu:** use **Help → Check for updates…** to compare your installed version against the latest release on GitHub, or **Help → Report issue…** to open a pre-filled GitHub issue with your system information attached.
-
----
-
-## Manual installation
+<details>
+<summary>Manual installation</summary>
 
 If the install script doesn't work, you can link or copy the plugin folder manually.
 
@@ -262,9 +272,10 @@ New-Item -ItemType Junction `
 
 Or simply **copy** the `plugins/breadboard/` folder into the scripting plugins directory.
 
----
+</details>
 
-## Standalone mode (development / no KiCad needed)
+<details>
+<summary>Standalone mode</summary>
 
 > Standalone mode is intended for UI development only. For the full workflow use the plugin inside KiCad as described above.
 
@@ -274,14 +285,7 @@ cd /path/to/kicad-breadboard
 python -m plugins.breadboard.standalone path/to/circuit.net
 ```
 
----
-
----
-
-## In the press
-
-- [**Hackaday** — *This KiCad Plugin Enables Breadboarding*](https://hackaday.com/2026/04/23/this-kicad-plugin-enables-breadboarding/) (April 2026)
-- [**Adafruit Blog** — *KiCad Breadboard Builder*](https://blog.adafruit.com/2026/04/24/kicad-breadboard-builder/) (April 2026)
+</details>
 
 ---
 
