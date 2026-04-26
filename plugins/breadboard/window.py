@@ -299,7 +299,7 @@ class BreadboardWindow(wx.Frame):
             return lbl
 
         info_top = wx.lib.stattext.GenStaticText(tray_panel,
-                                  label='\nRelease: Yufka\nMade with \u2665 by')
+                                  label=f'\nRelease: {PLUGIN_VERSION}\nMade with \u2665 by')
         info_top.SetFont(info_font)
         info_top.SetForegroundColour('#666666')
 
