@@ -2419,7 +2419,7 @@ class BreadboardCanvas(wx.Panel):
 
         # ── ATmega / SoC chip — diamond in the inner area ────────────────
         if is_nano:
-            chip_r = 10
+            chip_r = 14
             dc.SetBrush(wx.Brush(wx.Colour('#111111')))
             dc.SetPen(wx.Pen(wx.Colour('#444444'), 1))
             dc.DrawPolygon([
@@ -2493,7 +2493,9 @@ class BreadboardCanvas(wx.Panel):
                 # Portrait: the inner area is too narrow for horizontal text — rotate 90°.
                 # rot==1 cols go down → label reads top-to-bottom (+90°, i.e. π/2).
                 # rot==3 cols go up   → label reads bottom-to-top (-90°, i.e. -π/2).
-                angle = math.pi / 2 if rot == 1 else -math.pi / 2
+                # Offset 24 px along the board's long axis to clear the chip diamond.
+                angle  = math.pi / 2 if rot == 1 else -math.pi / 2
+                lbl_cy = float(text_cy) + (24 if rot == 1 else -24)
                 gc_nm = wx.GraphicsContext.Create(dc)
                 _fn = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
                 _fr = wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
@@ -2507,20 +2509,20 @@ class BreadboardCanvas(wx.Panel):
                     # Draw name
                     gc_nm.SetFont(gc_nm.CreateFont(_fn, txt_color))
                     gc_nm.PushState()
-                    gc_nm.Translate(float(text_cx), float(text_cy))
+                    gc_nm.Translate(float(text_cx), lbl_cy)
                     gc_nm.Rotate(angle)
                     gc_nm.DrawText(dname, -total / 2, -nh / 2)
                     gc_nm.PopState()
                     # Draw ref
                     gc_nm.SetFont(gc_nm.CreateFont(_fr, txt_color))
                     gc_nm.PushState()
-                    gc_nm.Translate(float(text_cx), float(text_cy))
+                    gc_nm.Translate(float(text_cx), lbl_cy)
                     gc_nm.Rotate(angle)
                     gc_nm.DrawText(ref, -total / 2 + nw + gap, -rh / 2)
                     gc_nm.PopState()
                 else:
                     gc_nm.PushState()
-                    gc_nm.Translate(float(text_cx), float(text_cy))
+                    gc_nm.Translate(float(text_cx), lbl_cy)
                     gc_nm.Rotate(angle)
                     gc_nm.DrawText(dname, -nw / 2, -nh / 2)
                     gc_nm.PopState()
