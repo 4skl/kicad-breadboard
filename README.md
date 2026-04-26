@@ -154,6 +154,7 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 | Setting | Description |
 |---|---|
 | Show signal labels | Draw net names next to holes on the board |
+| Show hotkey reference | Show or hide the hotkey reference panel at the bottom of the right side panel |
 
 ### Export
 
