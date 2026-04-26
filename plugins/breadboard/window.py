@@ -32,7 +32,7 @@ from .model import (
     PROBE_NAMES, PROBE_META,
 )
 
-PLUGIN_VERSION = 'Yufka'
+PLUGIN_VERSION = 'Wotou'
 REPO           = 'kerstensrobin/kicad-breadboard'
 
 # Toolbar button IDs
@@ -390,9 +390,10 @@ class BreadboardWindow(wx.Frame):
             'Wire colour — Auto cycles through colours each wire; pick one to fix it.')
         self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
         tb.AddControl(self._wire_color_choice)
+        tb.AddSeparator()
         tb.AddTool(ID_DELETE, 'Delete',       wx.NullBitmap,
                    shortHelp='Delete a component or wire',
-                   kind=wx.ITEM_RADIO)
+                   kind=wx.ITEM_CHECK)
         tb.AddSeparator()
         tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
                    shortHelp='Save the breadboard as a PNG image')
@@ -433,16 +434,17 @@ class BreadboardWindow(wx.Frame):
     # ------------------------------------------------------------------
 
     def _set_mode(self, mode: str) -> None:
-        """Switch canvas mode and keep toolbar radio state in sync."""
+        """Switch canvas mode and keep toolbar state in sync."""
         self.canvas.set_mode(mode)
+        # Select/Wire are ITEM_RADIO (same group); Delete is ITEM_CHECK — toggle all explicitly.
+        self.toolbar.ToggleTool(ID_SELECT, mode == MODE_SELECT)
+        self.toolbar.ToggleTool(ID_WIRE,   mode == MODE_WIRE)
+        self.toolbar.ToggleTool(ID_DELETE, mode == MODE_DELETE)
         if mode == MODE_SELECT:
-            self.toolbar.ToggleTool(ID_SELECT, True)
             self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
         elif mode == MODE_WIRE:
-            self.toolbar.ToggleTool(ID_WIRE, True)
             self.SetStatusText('Mode: Draw Wire — click start, click end  [Esc] cancel', 1)
         elif mode == MODE_DELETE:
-            self.toolbar.ToggleTool(ID_DELETE, True)
             self.SetStatusText('Mode: Delete — click component or wire  [Esc] cancel', 1)
 
     def _on_select(self, _evt) -> None:
