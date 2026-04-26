@@ -2531,6 +2531,8 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                    wx.FONTWEIGHT_BOLD))
                 nw, nh = dc.GetTextExtent(dname)
+                # Nano: shift label above the chip diamond (chip_r=14 + margin).
+                lbl_cy = text_cy - (22 if is_nano else 0)
 
                 if ref:
                     dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -2540,14 +2542,14 @@ class BreadboardCanvas(wx.Panel):
                     total_h = nh + gap + rh
                     dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                        wx.FONTWEIGHT_BOLD))
-                    dc.DrawText(dname, text_cx - nw//2, text_cy - total_h//2)
+                    dc.DrawText(dname, text_cx - nw//2, lbl_cy - total_h//2)
                     dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                        wx.FONTWEIGHT_NORMAL))
-                    dc.DrawText(ref,   text_cx - rw//2, text_cy - total_h//2 + nh + gap)
+                    dc.DrawText(ref,   text_cx - rw//2, lbl_cy - total_h//2 + nh + gap)
                 else:
                     dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                        wx.FONTWEIGHT_BOLD))
-                    dc.DrawText(dname, text_cx - nw//2, text_cy - nh//2)
+                    dc.DrawText(dname, text_cx - nw//2, lbl_cy - nh//2)
 
         # ── Arduino Uno extras: split strips + ATmega + USB + barrel jack ──
         if comp_def.type_id == 'Arduino_Uno':
