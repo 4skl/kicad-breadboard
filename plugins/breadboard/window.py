@@ -120,7 +120,7 @@ class BreadboardWindow(wx.Frame):
         self.canvas = BreadboardCanvas(inner_splitter, self.board, self.netlist)
 
         # --- Left panel: component tray only ---
-        left_panel = wx.Panel(main_panel, style=wx.BORDER_SIMPLE)
+        left_panel = wx.Panel(main_panel)
         left_panel.SetMinSize((130, -1))
         left_sizer = wx.BoxSizer(wx.VERTICAL)
         comp_label = wx.StaticText(left_panel, label='Components')
@@ -138,8 +138,11 @@ class BreadboardWindow(wx.Frame):
         left_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
         left_panel.SetSizer(left_sizer)
 
+        _left_sep = wx.StaticLine(main_panel, style=wx.LI_VERTICAL)
+
         main_sizer = wx.BoxSizer(wx.HORIZONTAL)
         main_sizer.Add(left_panel, 0, wx.EXPAND)
+        main_sizer.Add(_left_sep, 0, wx.EXPAND)
         main_sizer.Add(inner_splitter, 1, wx.EXPAND)
 
         outer_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -148,7 +151,7 @@ class BreadboardWindow(wx.Frame):
         main_panel.SetSizer(outer_sizer)
 
         # --- Right panel: binding posts, instruments, hotkeys ---
-        tray_panel = wx.Panel(inner_splitter, style=wx.BORDER_SIMPLE)
+        tray_panel = wx.Panel(inner_splitter)
         tray_panel.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
         tray_sizer = wx.BoxSizer(wx.VERTICAL)
 
