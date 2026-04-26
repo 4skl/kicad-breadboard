@@ -2468,10 +2468,10 @@ class BreadboardCanvas(wx.Panel):
                 above_board = (outer and rot == 0) or (not outer and rot == 2)
                 if above_board:
                     gc_lbl.Translate(float(px), float(body_y) - LG)
-                    gc_lbl.Rotate(math.pi / 2)
+                    gc_lbl.Rotate(-math.pi / 2)   # -90°: text grows upward (away from board)
                 else:
                     gc_lbl.Translate(float(px), float(body_y + body_h) + LG)
-                    gc_lbl.Rotate(-math.pi / 2)
+                    gc_lbl.Rotate(math.pi / 2)    # +90°: text grows downward (away from board)
                 gc_lbl.DrawText(name, 0.0, -float(th) / 2)
                 gc_lbl.PopState()
         else:
