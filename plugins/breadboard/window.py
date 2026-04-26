@@ -238,7 +238,8 @@ class BreadboardWindow(wx.Frame):
         self._instr_panel.SetSizer(instr_sizer)
         tray_sizer.Add(self._instr_panel, 0, wx.EXPAND)
 
-        tray_sizer.Add(wx.StaticLine(tray_panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+        self._hotkey_line = wx.StaticLine(tray_panel)
+        tray_sizer.Add(self._hotkey_line, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
         hk_font = wx.Font(8, wx.FONTFAMILY_DEFAULT,
                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
@@ -316,12 +317,12 @@ class BreadboardWindow(wx.Frame):
         left_col.Add(left_grid, 0)
         left_col.AddStretchSpacer(1)
 
-        hotkey_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        hotkey_sizer.Add(left_col, 0, wx.RIGHT | wx.EXPAND, 12)
-        hotkey_sizer.Add(right_sizer, 0)
+        self._hotkey_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self._hotkey_sizer.Add(left_col, 0, wx.RIGHT | wx.EXPAND, 12)
+        self._hotkey_sizer.Add(right_sizer, 0)
 
         tray_sizer.AddStretchSpacer(1)
-        tray_sizer.Add(hotkey_sizer, 0, wx.ALL, 6)
+        tray_sizer.Add(self._hotkey_sizer, 0, wx.ALL, 6)
 
         self._tray_panel = tray_panel
         self._tray_sizer = tray_sizer
@@ -727,6 +728,12 @@ class BreadboardWindow(wx.Frame):
             self._tray_sizer.Show(self._instr_panel, p.instruments_enabled)
             self._tray_panel.Layout()
 
+        # Hotkeys panel visibility
+        if p.show_hotkeys != old.show_hotkeys:
+            self._tray_sizer.Show(self._hotkey_line,  p.show_hotkeys)
+            self._tray_sizer.Show(self._hotkey_sizer, p.show_hotkeys)
+            self._tray_panel.Layout()
+
         # Oscilloscope channel count
         if p.scope_channels != old.scope_channels:
             for w in self._ch2_widgets:
@@ -800,6 +807,8 @@ class BreadboardWindow(wx.Frame):
                                           p.show_branding)
         self.canvas._pan_initialized = False
         self._tray_sizer.Show(self._binding_panel, p.show_binding_posts)
+        self._tray_sizer.Show(self._hotkey_line,   p.show_hotkeys)
+        self._tray_sizer.Show(self._hotkey_sizer,  p.show_hotkeys)
         self._tray_panel.Layout()
 
     # ------------------------------------------------------------------
@@ -1155,6 +1164,9 @@ class PreferencesDialog(wx.Dialog):
         self._cb_labels = wx.CheckBox(self, label='Show signal labels')
         self._cb_labels.SetValue(prefs.show_net_labels)
         sizer.Add(self._cb_labels, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        self._cb_hotkeys = wx.CheckBox(self, label='Show hotkey reference panel')
+        self._cb_hotkeys.SetValue(prefs.show_hotkeys)
+        sizer.Add(self._cb_hotkeys, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
@@ -1273,6 +1285,7 @@ class PreferencesDialog(wx.Dialog):
             scope_channels=self._sc_scope.GetValue(),
             psu_channels=self._sc_psu.GetValue(),
             show_net_labels=self._cb_labels.IsChecked(),
+            show_hotkeys=self._cb_hotkeys.IsChecked(),
             show_binding_posts=self._cb_binding.IsChecked(),
             export_format='svg' if self._rb_svg.GetValue() else 'png',
             board_layout=_layout_map[self._ch_layout.GetSelection()],
