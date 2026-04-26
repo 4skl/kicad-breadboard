@@ -2291,8 +2291,8 @@ class BreadboardCanvas(wx.Panel):
                 tw, th = dc_.GetTextExtent(name)
                 if not o.cross_gap:  # outer / right: label right of board
                     dc_.DrawText(name, body_x + body_w + 2, py - th//2)
-                else:                # inner / left: label right of inner strip
-                    dc_.DrawText(name, body_x + HH + 2, py - th//2)
+                else:                # inner / left: label left of inner strip (outside board)
+                    dc_.DrawText(name, body_x - tw - 2, py - th//2)
 
             inner_cx = body_x + body_w // 2
             inner_cy = body_y + body_h // 2
@@ -2349,8 +2349,8 @@ class BreadboardCanvas(wx.Panel):
                 tw, th = dc_.GetTextExtent(name)
                 if not o.cross_gap:  # outer / left: label left of board
                     dc_.DrawText(name, body_x - tw - 2, py - th//2)
-                else:                # inner / right: label left of inner strip
-                    dc_.DrawText(name, body_x + body_w - HH - tw - 2, py - th//2)
+                else:                # inner / right: label right of inner strip (outside board)
+                    dc_.DrawText(name, body_x + body_w + 2, py - th//2)
 
             inner_cx = body_x + body_w // 2
             inner_cy = body_y + body_h // 2
