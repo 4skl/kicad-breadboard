@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional
 
 import wx
+
+_RESOURCES = Path(__file__).parent / 'resources'
 import wx.lib.stattext
 
 from .canvas import BreadboardCanvas, CanvasLayout, MODE_SELECT, MODE_WIRE, MODE_DELETE, WIRE_COLORS
@@ -78,11 +80,25 @@ class BreadboardWindow(wx.Frame):
         self._init_canvas_from_prefs()
         self._bind_events()
 
+        self._set_icon()
+
         if project_path:
             self._auto_load_netlist(project_path)
 
         self.Centre()
         self.Show()
+        self.Raise()
+
+    def _set_icon(self) -> None:
+        ico_path = _RESOURCES / 'icon.ico'
+        png_path = _RESOURCES / 'icon.png'
+        if ico_path.exists():
+            self.SetIcon(wx.Icon(str(ico_path)))
+        elif png_path.exists():
+            bmp = wx.Bitmap(str(png_path), wx.BITMAP_TYPE_PNG)
+            icon = wx.Icon()
+            icon.CopyFromBitmap(bmp)
+            self.SetIcon(icon)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -97,14 +113,14 @@ class BreadboardWindow(wx.Frame):
         # not re-composite the left panel at a wrong position during rapid
         # canvas repaints (a wx.SplitterWindow rendering artefact on GTK).
         main_panel = wx.Panel(self)
-        main_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        _toolbar_sep = wx.StaticLine(main_panel)
 
         inner_splitter = wx.SplitterWindow(main_panel, style=wx.SP_LIVE_UPDATE)
 
         self.canvas = BreadboardCanvas(inner_splitter, self.board, self.netlist)
 
         # --- Left panel: component tray only ---
-        left_panel = wx.Panel(main_panel)
+        left_panel = wx.Panel(main_panel, style=wx.BORDER_SIMPLE)
         left_panel.SetMinSize((130, -1))
         left_sizer = wx.BoxSizer(wx.VERTICAL)
         comp_label = wx.StaticText(left_panel, label='Components')
@@ -122,12 +138,18 @@ class BreadboardWindow(wx.Frame):
         left_sizer.Add(self.tray, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
         left_panel.SetSizer(left_sizer)
 
+        main_sizer = wx.BoxSizer(wx.HORIZONTAL)
         main_sizer.Add(left_panel, 0, wx.EXPAND)
         main_sizer.Add(inner_splitter, 1, wx.EXPAND)
-        main_panel.SetSizer(main_sizer)
+
+        outer_sizer = wx.BoxSizer(wx.VERTICAL)
+        outer_sizer.Add(_toolbar_sep, 0, wx.EXPAND)
+        outer_sizer.Add(main_sizer, 1, wx.EXPAND)
+        main_panel.SetSizer(outer_sizer)
 
         # --- Right panel: binding posts, instruments, hotkeys ---
-        tray_panel = wx.Panel(inner_splitter)
+        tray_panel = wx.Panel(inner_splitter, style=wx.BORDER_SIMPLE)
+        tray_panel.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
         tray_sizer = wx.BoxSizer(wx.VERTICAL)
 
         # --- Binding-post assignment section ---
@@ -374,6 +396,7 @@ class BreadboardWindow(wx.Frame):
 
     def _build_toolbar(self) -> None:
         tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_TEXT | wx.TB_NOICONS)
+        tb.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
 
         tb.AddTool(ID_UPDATE, 'Update from schematic', wx.NullBitmap,
                    shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')

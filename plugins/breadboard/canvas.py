@@ -1354,8 +1354,8 @@ class BreadboardCanvas(wx.Panel):
         if lay.board_layout in ('triple', 'double_rails'):
             self._draw_vert_rails(dc)
 
-        self._draw_wires(dc)
         self._draw_components(dc)
+        self._draw_wires(dc)
         if self.show_binding_posts:
             self._draw_terminals(dc)
         self._draw_probes(dc)
@@ -2561,7 +2561,7 @@ class BreadboardCanvas(wx.Panel):
             # Erase gaps in the inner header strip (new layout: cols 0-2 empty,
             # col 11 empty between VIN at col 10 and A0 at col 12).
             dc.SetBrush(wx.Brush(board_color))
-            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.SetPen(wx.Pen(board_color, 1))
             if rot == 0:   # inner strip at bottom; cols go right
                 # Left buffer: cols 0-2 have no inner pins
                 dc.DrawRectangle(body_x, body_y + body_h - HH - 1,
