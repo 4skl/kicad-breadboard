@@ -5,7 +5,8 @@ A KiCad 9 / 10 plugin for introductory analog electronics courses at the Univers
 ![breadboard](images/breadboard.png)
 
 **In the press:**
-[Hackaday — *This KiCad Plugin Enables Breadboarding*](https://hackaday.com/2026/04/23/this-kicad-plugin-enables-breadboarding/) · [Adafruit Blog — *KiCad Breadboard Builder*](https://blog.adafruit.com/2026/04/24/kicad-breadboard-builder/)
+- [Hackaday — *This KiCad Plugin Enables Breadboarding*](https://hackaday.com/2026/04/23/this-kicad-plugin-enables-breadboarding/)
+- [Adafruit Blog — *KiCad Breadboard Builder*](https://blog.adafruit.com/2026/04/24/kicad-breadboard-builder/)
 
 ---
 
@@ -61,10 +62,7 @@ Click **Validate** to check your build against the schematic. Open nets and shor
 
 ---
 
-## Reference
-
-<details>
-<summary>Features</summary>
+## Features
 
 - Renders a breadboard in six configurable sizes: mini (170 holes), half (400), full (830), double (2× full stacked), triple (3× full with vertical power rails), or double rails (2× full with vertical power rails on both sides)
 - Parses a KiCad netlist and shows all placeable components in a side tray — **any U-prefix IC with an even pin count is supported automatically**, even if it is not in the built-in list (555 timers, 74xx logic gates, CD4xxx, counters, shift registers, …)
@@ -81,44 +79,26 @@ Click **Validate** to check your build against the schematic. Open nets and shor
 - Instrument probes: place function-generator, oscilloscope (1–4 channels), and PSU connection points on the board; drag their labels freely for better visibility
 - Preferences dialog (`File → Preferences…`) controls instruments, display, board layout, and export format; settings can be saved as defaults and restored on startup
 
-</details>
+---
+
+## Supported components
+
+If your schematic uses the standard KiCad libraries, the plugin picks up your components automatically — no manual configuration needed.
+
+**Passives & discretes** — resistors (with colour bands), capacitors (film and electrolytic), inductors, diodes, Zener diodes, LEDs, and potentiometers from the `Device:` library are all recognised.
+
+**Transistors** — every BJT, JFET, and MOSFET in the standard `Device:`, `Transistor_BJT:`, and `Transistor_FET:` libraries is supported, whether you use a generic symbol (`Device:NPN`) or a specific part number (`Transistor_BJT:BC547`). Detection is based on the symbol name and the component description KiCad exports, so any part the library describes as *"NPN Transistor"* or *"N-Channel MOSFET"* will appear in the tray automatically.
+
+**ICs** — any U-prefix component with an even pin count is placed as a DIP IC. The following op-amps additionally show named pin labels: TL081 (DIP-8), RC4558 (DIP-8), TL084 (DIP-14), and OPAMP / KiCad Simulation_SPICE (DIP-6, labelled "SIM").
+
+**Modules** — Arduino Nano (+ Every, ESP32, RP2040 Connect, …), Arduino Uno R3, and Raspberry Pi (40-pin GPIO header).
 
 <details>
-<summary>Supported components</summary>
+<summary>Pinout selection for TO-92 transistors</summary>
 
-| Component | Package |
-|---|---|
-| Resistor (with colour bands) | Axial |
-| Capacitor, electrolytic capacitor | Radial |
-| Inductor | Axial |
-| Diode, Zener diode | Axial (1N4001 style) |
-| LED | 5 mm round |
-| Potentiometer | 3-pin |
-| NPN / PNP BJT | TO-92 |
-| N / P-channel JFET | TO-92 |
-| N-channel MOSFET (generic) | TO-92 |
-| P-channel MOSFET (generic) | TO-92 |
-| BS170 MOSFET | TO-92 |
-| TL081 (single), RC4558 (dual), TL084 (quad) op-amp | DIP-8 / DIP-14 |
-| OPAMP (KiCad Simulation_SPICE) | DIP-6 (labelled "SIM") |
-| Arduino Nano (+ Every, ESP32, RP2040 Connect, …) | 30-pin module |
-| Arduino Uno R3 | 32-pin module |
-| Raspberry Pi (40-pin GPIO header) | 40-pin module |
+The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **E-B-C** for a BJT, **G-S-D** or **S-G-D** for a MOSFET). Click **`>`** to cycle through variants before placing.
 
-### Transistor detection
-
-Components are identified from the KiCad netlist. The plugin recognises transistors in two ways:
-
-- **Generic symbols** (`Device:NPN`, `Device:PMOS`, `Device:NMOS`, etc.) are detected from their symbol name.
-- **Specific part-number symbols** (`Transistor_BJT:BC547`, `Transistor_FET:2N7002`, etc.) are detected from the component description exported by KiCad (e.g. *"NPN Transistor"*, *"N-Channel MOSFET"*).
-
-This means any BJT or MOSFET from the standard KiCad libraries will appear in the component tray automatically.
-
-### Pinout selection for TO-92 transistors
-
-Different physical components that share the same schematic symbol can have a different pin order on the actual package. The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **E-B-C** for a BJT, **G-S-D** or **S-G-D** for a MOSFET). Click **`>`** on the card to cycle through the available variants before placing.
-
-**Always verify the pinout against your component's datasheet.** The default shown is a common convention, but it may not match your specific part:
+**Always verify the pinout against your component's datasheet.**
 
 | Type | Default (plugin) | Example parts that need a different variant |
 |---|---|---|
@@ -130,6 +110,10 @@ Different physical components that share the same schematic symbol can have a di
 | BS170 | S-G-D | — (fixed, single pinout) |
 
 </details>
+
+---
+
+## Reference
 
 <details>
 <summary>Toolbar buttons</summary>
