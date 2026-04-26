@@ -2493,9 +2493,9 @@ class BreadboardCanvas(wx.Panel):
                 # Portrait: the inner area is too narrow for horizontal text — rotate 90°.
                 # rot==1 cols go down → label reads top-to-bottom (+90°, i.e. π/2).
                 # rot==3 cols go up   → label reads bottom-to-top (-90°, i.e. -π/2).
-                # Offset 24 px along the board's long axis to clear the chip diamond.
+                # Offset ps//4 px toward USB end (col-max) to sit between diamond and USB.
                 angle  = math.pi / 2 if rot == 1 else -math.pi / 2
-                lbl_cy = float(text_cy) + (24 if rot == 1 else -24)
+                lbl_cy = float(text_cy) + (ps // 4) * (1 if rot == 1 else -1)
                 gc_nm = wx.GraphicsContext.Create(dc)
                 _fn = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
                 _fr = wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
