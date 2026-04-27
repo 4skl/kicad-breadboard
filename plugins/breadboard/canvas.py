@@ -46,6 +46,14 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_BRAND_IMAGE = os.path.join(_HERE, 'resources', 'kicad_bbrd.png')
 
 
+def _make_gc(dc: 'wx.DC') -> 'wx.GraphicsContext | None':
+    """Return a GraphicsContext for dc, or None if dc doesn't support it (e.g. SVGFileDC)."""
+    try:
+        return wx.GraphicsContext.Create(dc)
+    except Exception:
+        return None
+
+
 def _parse_svg_size(path: str):
     """Return (width, height) from SVG viewBox attribute, or (100.0, 100.0) as fallback."""
     import re
@@ -1769,31 +1777,47 @@ class BreadboardCanvas(wx.Panel):
                 _ANGLE_TOP = math.pi * 105 / 180  # 105° CW  → down-left
                 _ANGLE_BOT = math.pi * 75 / 180   # 75° CCW  → up-right
                 _half_h = body_rect.GetHeight() / 2
-                gc_lbl = wx.GraphicsContext.Create(dc)
-                font_fn = wx.Font(4, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                  wx.FONTWEIGHT_NORMAL)
-                gc_lbl.SetFont(gc_lbl.CreateFont(font_fn, wx.Colour('#cccccc')))
-                for pin_num, hole in placed.pin_holes.items():
-                    xy = lay.hole_xy(hole)
-                    if xy is None:
-                        continue
-                    label = fn_map.get(pin_num) or str(pin_num)
-                    tw, th = gc_lbl.GetTextExtent(label)
-                    hx = float(xy[0])
-                    is_top = isinstance(hole, TieHole) and hole.row in TOP_ROWS
-                    is_bot = isinstance(hole, TieHole) and hole.row in BOT_ROWS
-                    if not is_top and not is_bot:
-                        continue
-                    gc_lbl.PushState()
-                    tilt = tw > _half_h
-                    if is_top:
-                        gc_lbl.Translate(hx, float(body_rect.GetTop() + 2))
-                        gc_lbl.Rotate(_ANGLE_TOP if tilt else math.pi / 2)
-                    else:
-                        gc_lbl.Translate(hx, float(body_rect.GetBottom() - 2))
-                        gc_lbl.Rotate(-(_ANGLE_BOT if tilt else math.pi / 2))
-                    gc_lbl.DrawText(label, 0, -th / 2)
-                    gc_lbl.PopState()
+                gc_lbl = _make_gc(dc)
+                if gc_lbl is not None:
+                    font_fn = wx.Font(4, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                      wx.FONTWEIGHT_NORMAL)
+                    gc_lbl.SetFont(gc_lbl.CreateFont(font_fn, wx.Colour('#cccccc')))
+                    for pin_num, hole in placed.pin_holes.items():
+                        xy = lay.hole_xy(hole)
+                        if xy is None:
+                            continue
+                        label = fn_map.get(pin_num) or str(pin_num)
+                        tw, th = gc_lbl.GetTextExtent(label)
+                        hx = float(xy[0])
+                        is_top = isinstance(hole, TieHole) and hole.row in TOP_ROWS
+                        is_bot = isinstance(hole, TieHole) and hole.row in BOT_ROWS
+                        if not is_top and not is_bot:
+                            continue
+                        gc_lbl.PushState()
+                        tilt = tw > _half_h
+                        if is_top:
+                            gc_lbl.Translate(hx, float(body_rect.GetTop() + 2))
+                            gc_lbl.Rotate(_ANGLE_TOP if tilt else math.pi / 2)
+                        else:
+                            gc_lbl.Translate(hx, float(body_rect.GetBottom() - 2))
+                            gc_lbl.Rotate(-(_ANGLE_BOT if tilt else math.pi / 2))
+                        gc_lbl.DrawText(label, 0, -th / 2)
+                        gc_lbl.PopState()
+                else:
+                    dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_NORMAL))
+                    dc.SetTextForeground('#cccccc')
+                    for pin_num, hole in placed.pin_holes.items():
+                        xy = lay.hole_xy(hole)
+                        if xy is None:
+                            continue
+                        label = fn_map.get(pin_num) or str(pin_num)
+                        tw, th = dc.GetTextExtent(label)
+                        hx = xy[0]
+                        if isinstance(hole, TieHole) and hole.row in TOP_ROWS:
+                            dc.DrawText(label, hx - tw // 2, body_rect.GetTop() + 2)
+                        elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
+                            dc.DrawText(label, hx - tw // 2, body_rect.GetBottom() - th - 2)
             else:
                 dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                    wx.FONTWEIGHT_NORMAL))
@@ -1869,19 +1893,31 @@ class BreadboardCanvas(wx.Panel):
                 for px, ax in zip(pin_xs, attach_xs):
                     dc.DrawLine(px, pin_y, int(ax), int(flat_y))
 
-                # D-shaped body via GraphicsContext path
+                # D-shaped body
                 dome_up = in_top != placed.flipped
-                gc = wx.GraphicsContext.Create(dc)
-                path = gc.CreatePath()
-                path.MoveToPoint(cx_mid - body_half, flat_y)
-                path.AddLineToPoint(cx_mid + body_half, flat_y)
-                path.AddArc(cx_mid, flat_y, r_body, 0.0, math.pi, not dome_up)
-                path.CloseSubpath()
-
-                gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(comp_def.color))))
-                gc.SetPen(gc.CreatePen(
-                    wx.GraphicsPenInfo(wx.Colour('#333333')).Width(2 if selected else 1)))
-                gc.DrawPath(path)
+                dc.SetBrush(wx.Brush(wx.Colour(comp_def.color)))
+                dc.SetPen(wx.Pen('#333333', 2 if selected else 1))
+                gc = _make_gc(dc)
+                if gc is not None:
+                    path = gc.CreatePath()
+                    path.MoveToPoint(cx_mid - body_half, flat_y)
+                    path.AddLineToPoint(cx_mid + body_half, flat_y)
+                    path.AddArc(cx_mid, flat_y, r_body, 0.0, math.pi, not dome_up)
+                    path.CloseSubpath()
+                    gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(comp_def.color))))
+                    gc.SetPen(gc.CreatePen(
+                        wx.GraphicsPenInfo(wx.Colour('#333333')).Width(2 if selected else 1)))
+                    gc.DrawPath(path)
+                else:
+                    # Fallback: dc.DrawArc for SVGFileDC and other non-GC DCs
+                    if dome_up:
+                        dc.DrawArc(int(cx_mid + body_half), int(flat_y),
+                                   int(cx_mid - body_half), int(flat_y),
+                                   int(cx_mid), int(flat_y))
+                    else:
+                        dc.DrawArc(int(cx_mid - body_half), int(flat_y),
+                                   int(cx_mid + body_half), int(flat_y),
+                                   int(cx_mid), int(flat_y))
 
                 # Ref label centered in the dome (use dc for screen coords)
                 dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -2453,27 +2489,27 @@ class BreadboardCanvas(wx.Panel):
             # so they never overlap on the 18 px pin pitch.
             # +π/2 = text goes upward (outer strip above board for rot 0, inner above for rot 2)
             # -π/2 = text goes downward (inner strip below board for rot 0, outer below for rot 2)
-            gc_lbl = wx.GraphicsContext.Create(dc)
-            _font_lbl = wx.Font(4, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                wx.FONTWEIGHT_NORMAL)
-            gc_lbl.SetFont(gc_lbl.CreateFont(_font_lbl, wx.Colour('#1a1a1a')))
-            for pin_num, offset in comp_def.pin_offsets.items():
-                px, _ = _pin_xy(offset)
-                name = _name_map.get(pin_num, str(pin_num))
-                _, th = gc_lbl.GetTextExtent(name)
-                gc_lbl.PushState()
-                outer = not offset.cross_gap
-                # For rot 0: outer → above board (+π/2), inner → below board (-π/2)
-                # For rot 2: outer → below board (-π/2), inner → above board (+π/2)
-                above_board = (outer and rot == 0) or (not outer and rot == 2)
-                if above_board:
-                    gc_lbl.Translate(float(px), float(body_y) - LG)
-                    gc_lbl.Rotate(-math.pi / 2)   # -90°: text grows upward (away from board)
-                else:
-                    gc_lbl.Translate(float(px), float(body_y + body_h) + LG)
-                    gc_lbl.Rotate(math.pi / 2)    # +90°: text grows downward (away from board)
-                gc_lbl.DrawText(name, 0.0, -float(th) / 2)
-                gc_lbl.PopState()
+            gc_lbl = _make_gc(dc)
+            if gc_lbl is not None:
+                _font_lbl = wx.Font(4, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                    wx.FONTWEIGHT_NORMAL)
+                gc_lbl.SetFont(gc_lbl.CreateFont(_font_lbl, wx.Colour('#1a1a1a')))
+                for pin_num, offset in comp_def.pin_offsets.items():
+                    px, _ = _pin_xy(offset)
+                    name = _name_map.get(pin_num, str(pin_num))
+                    _, th = gc_lbl.GetTextExtent(name)
+                    gc_lbl.PushState()
+                    outer = not offset.cross_gap
+                    above_board = (outer and rot == 0) or (not outer and rot == 2)
+                    if above_board:
+                        gc_lbl.Translate(float(px), float(body_y) - LG)
+                        gc_lbl.Rotate(-math.pi / 2)
+                    else:
+                        gc_lbl.Translate(float(px), float(body_y + body_h) + LG)
+                        gc_lbl.Rotate(math.pi / 2)
+                    gc_lbl.DrawText(name, 0.0, -float(th) / 2)
+                    gc_lbl.PopState()
+            # else: skip rotated labels on DCs that don't support GraphicsContext
         else:
             # Horizontal labels — works for basic landscape and all portrait rotations
             dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -2496,36 +2532,36 @@ class BreadboardCanvas(wx.Panel):
                 # Offset ps//4 px toward USB end (col-max) to sit between diamond and USB.
                 angle  = math.pi / 2 if rot == 1 else -math.pi / 2
                 lbl_cy = float(text_cy) + (ps // 4) * (1 if rot == 1 else -1)
-                gc_nm = wx.GraphicsContext.Create(dc)
-                _fn = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-                _fr = wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
-                gc_nm.SetFont(gc_nm.CreateFont(_fn, txt_color))
-                nw, nh = gc_nm.GetTextExtent(dname)
-                if ref:
-                    gc_nm.SetFont(gc_nm.CreateFont(_fr, txt_color))
-                    rw, rh = gc_nm.GetTextExtent(ref)
-                    gap = 2
-                    total = nw + gap + rw   # total along the rotated x axis
-                    # Draw name
+                gc_nm = _make_gc(dc)
+                if gc_nm is not None:
+                    _fn = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+                    _fr = wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
                     gc_nm.SetFont(gc_nm.CreateFont(_fn, txt_color))
-                    gc_nm.PushState()
-                    gc_nm.Translate(float(text_cx), lbl_cy)
-                    gc_nm.Rotate(angle)
-                    gc_nm.DrawText(dname, -total / 2, -nh / 2)
-                    gc_nm.PopState()
-                    # Draw ref
-                    gc_nm.SetFont(gc_nm.CreateFont(_fr, txt_color))
-                    gc_nm.PushState()
-                    gc_nm.Translate(float(text_cx), lbl_cy)
-                    gc_nm.Rotate(angle)
-                    gc_nm.DrawText(ref, -total / 2 + nw + gap, -rh / 2)
-                    gc_nm.PopState()
-                else:
-                    gc_nm.PushState()
-                    gc_nm.Translate(float(text_cx), lbl_cy)
-                    gc_nm.Rotate(angle)
-                    gc_nm.DrawText(dname, -nw / 2, -nh / 2)
-                    gc_nm.PopState()
+                    nw, nh = gc_nm.GetTextExtent(dname)
+                    if ref:
+                        gc_nm.SetFont(gc_nm.CreateFont(_fr, txt_color))
+                        rw, rh = gc_nm.GetTextExtent(ref)
+                        gap = 2
+                        total = nw + gap + rw
+                        gc_nm.SetFont(gc_nm.CreateFont(_fn, txt_color))
+                        gc_nm.PushState()
+                        gc_nm.Translate(float(text_cx), lbl_cy)
+                        gc_nm.Rotate(angle)
+                        gc_nm.DrawText(dname, -total / 2, -nh / 2)
+                        gc_nm.PopState()
+                        gc_nm.SetFont(gc_nm.CreateFont(_fr, txt_color))
+                        gc_nm.PushState()
+                        gc_nm.Translate(float(text_cx), lbl_cy)
+                        gc_nm.Rotate(angle)
+                        gc_nm.DrawText(ref, -total / 2 + nw + gap, -rh / 2)
+                        gc_nm.PopState()
+                    else:
+                        gc_nm.PushState()
+                        gc_nm.Translate(float(text_cx), lbl_cy)
+                        gc_nm.Rotate(angle)
+                        gc_nm.DrawText(dname, -nw / 2, -nh / 2)
+                        gc_nm.PopState()
+                # else: skip rotated name on DCs that don't support GraphicsContext
             else:
                 dc.SetTextForeground(txt_color)
                 dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -2808,57 +2844,71 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
 
             # All rotated details via GC; -x direction = cathode (pin 1 = K)
-            gc = wx.GraphicsContext.Create(dc)
-            gc.Translate(mx, my)
-            gc.Rotate(angle)
+            gc = _make_gc(dc)
+            if gc is not None:
+                gc.Translate(mx, my)
+                gc.Rotate(angle)
 
-            # Outer circle body
-            gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
-            _circ = gc.CreatePath()
-            _circ.AddEllipse(-r, -r, 2 * r, 2 * r)
-            gc.FillPath(_circ)
+                # Outer circle body
+                gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
+                _circ = gc.CreatePath()
+                _circ.AddEllipse(-r, -r, 2 * r, 2 * r)
+                gc.FillPath(_circ)
 
-            # Cathode marker: dark arc segment on the -x (cathode/K) side
-            stripe_x = r * 0.62
-            y_isect  = math.sqrt(r * r - stripe_x * stripe_x)
-            theta    = math.atan2(y_isect, stripe_x)
-            sp = gc.CreatePath()
-            sp.MoveToPoint(-stripe_x, -y_isect)
-            sp.AddArc(0, 0, r, -(math.pi - theta), math.pi - theta, False)
-            sp.AddLineToPoint(-stripe_x, -y_isect)
-            sp.CloseSubpath()
-            gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#111111'))))
-            gc.FillPath(sp)
+                # Cathode marker: dark arc segment on the -x (cathode/K) side
+                stripe_x = r * 0.62
+                y_isect  = math.sqrt(r * r - stripe_x * stripe_x)
+                theta    = math.atan2(y_isect, stripe_x)
+                sp = gc.CreatePath()
+                sp.MoveToPoint(-stripe_x, -y_isect)
+                sp.AddArc(0, 0, r, -(math.pi - theta), math.pi - theta, False)
+                sp.AddLineToPoint(-stripe_x, -y_isect)
+                sp.CloseSubpath()
+                gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#111111'))))
+                gc.FillPath(sp)
 
-            # Inner lens: radial gradient from bright highlight to lens_color,
-            # giving a dome/shine-through appearance distinct from the electrolytic.
-            bc = body_color
-            lens_color = wx.Colour(
-                min(255, int(bc.Red()   + (255 - bc.Red())   * 0.35)),
-                min(255, int(bc.Green() + (255 - bc.Green()) * 0.35)),
-                min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.35)),
-            )
-            highlight = wx.Colour(
-                min(255, int(bc.Red()   + (255 - bc.Red())   * 0.82)),
-                min(255, int(bc.Green() + (255 - bc.Green()) * 0.82)),
-                min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.82)),
-            )
-            fx, fy = -r_inner * 0.25, -r_inner * 0.25
-            lens_grad = gc.CreateRadialGradientBrush(
-                0, 0, fx, fy, r_inner, highlight, lens_color)
-            gc.SetBrush(lens_grad)
-            _lens = gc.CreatePath()
-            _lens.AddEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
-            gc.FillPath(_lens)
+                # Inner lens: radial gradient from bright highlight to lens_color
+                bc = body_color
+                lens_color = wx.Colour(
+                    min(255, int(bc.Red()   + (255 - bc.Red())   * 0.35)),
+                    min(255, int(bc.Green() + (255 - bc.Green()) * 0.35)),
+                    min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.35)),
+                )
+                highlight = wx.Colour(
+                    min(255, int(bc.Red()   + (255 - bc.Red())   * 0.82)),
+                    min(255, int(bc.Green() + (255 - bc.Green()) * 0.82)),
+                    min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.82)),
+                )
+                fx, fy = -r_inner * 0.25, -r_inner * 0.25
+                lens_grad = gc.CreateRadialGradientBrush(
+                    0, 0, fx, fy, r_inner, highlight, lens_color)
+                gc.SetBrush(lens_grad)
+                _lens = gc.CreatePath()
+                _lens.AddEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
+                gc.FillPath(_lens)
 
-            # Outer circle border (on top of everything)
-            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
-            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-            gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
+                # Outer circle border (on top of everything)
+                gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+                gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
 
-            # Inner concentric ring (lens edge)
-            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(1)))
-            gc.DrawEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
+                # Inner concentric ring (lens edge)
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(1)))
+                gc.DrawEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
+            else:
+                # Fallback for SVGFileDC: plain circle + cathode stripe rectangle
+                dc.SetBrush(wx.Brush(body_color))
+                dc.SetPen(wx.Pen(border_color, pen_w))
+                dc.DrawCircle(int(mx), int(my), int(r))
+                # Cathode stripe: dark rect on pin-1 (x1) side
+                stripe_x = int(r * 0.62)
+                dc.SetBrush(wx.Brush('#111111'))
+                dc.SetPen(wx.Pen('#111111', 0))
+                dc.DrawRectangle(int(x1) - 1, int(my - math.sqrt(r*r - stripe_x**2)),
+                                 int(stripe_x + 2), int(2 * math.sqrt(r*r - stripe_x**2)))
+                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetPen(wx.Pen(border_color, pen_w))
+                dc.DrawCircle(int(mx), int(my), int(r))
         elif placed.type_id == 'C_POL':
             # Electrolytic capacitor — top-down view: circle with a black stripe
             # on the negative (pin-2) side and a "+" marker on the positive side.
@@ -2872,33 +2922,48 @@ class BreadboardCanvas(wx.Panel):
             dc.SetPen(wx.TRANSPARENT_PEN)
             dc.DrawCircle(int(mx), int(my), int(r))
             # Rotated details via GraphicsContext
-            gc = wx.GraphicsContext.Create(dc)
-            gc.Translate(mx, my)
-            gc.Rotate(angle)
-            # Black stripe on pin-2 (−) side — circular arc segment so it
-            # follows the circle edge exactly
             stripe_x = r * 0.55
-            y_isect  = math.sqrt(r * r - stripe_x * stripe_x)
-            theta    = math.atan2(y_isect, stripe_x)   # angle to intersection pts
-            sp = gc.CreatePath()
-            sp.MoveToPoint(stripe_x, -y_isect)          # top intersection
-            sp.AddArc(0, 0, r, -theta, theta, True)     # arc CW → right side of circle
-            sp.AddLineToPoint(stripe_x, -y_isect)       # close up the left edge
-            sp.CloseSubpath()
-            stripe = wx.Colour('#111111')
-            gc.SetBrush(gc.CreateBrush(wx.Brush(stripe)))
-            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(stripe).Width(0)))
-            gc.DrawPath(sp)
-            # Redraw circle border on top
-            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
-            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-            gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
-            # "+" text on pin-1 (+) side
-            font = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                           wx.FONTWEIGHT_BOLD)
-            gc.SetFont(gc.CreateFont(font, wx.WHITE))
-            tw, th = gc.GetTextExtent('+')
-            gc.DrawText('+', -r + 3, -th / 2)
+            gc = _make_gc(dc)
+            if gc is not None:
+                gc.Translate(mx, my)
+                gc.Rotate(angle)
+                # Black stripe on pin-2 (−) side — circular arc segment
+                y_isect  = math.sqrt(r * r - stripe_x * stripe_x)
+                theta    = math.atan2(y_isect, stripe_x)
+                sp = gc.CreatePath()
+                sp.MoveToPoint(stripe_x, -y_isect)
+                sp.AddArc(0, 0, r, -theta, theta, True)
+                sp.AddLineToPoint(stripe_x, -y_isect)
+                sp.CloseSubpath()
+                stripe = wx.Colour('#111111')
+                gc.SetBrush(gc.CreateBrush(wx.Brush(stripe)))
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(stripe).Width(0)))
+                gc.DrawPath(sp)
+                # Redraw circle border on top
+                gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+                gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
+                # "+" text on pin-1 (+) side
+                font = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_BOLD)
+                gc.SetFont(gc.CreateFont(font, wx.WHITE))
+                tw, th = gc.GetTextExtent('+')
+                gc.DrawText('+', -r + 3, -th / 2)
+            else:
+                # Fallback: simple stripe rectangle on pin-2 side, then redraw border
+                y_isect = math.sqrt(r * r - stripe_x * stripe_x)
+                dc.SetBrush(wx.Brush('#111111'))
+                dc.SetPen(wx.Pen('#111111', 0))
+                dc.DrawRectangle(int(mx + stripe_x), int(my - y_isect),
+                                 int(r - stripe_x), int(2 * y_isect))
+                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetPen(wx.Pen(border_color, pen_w))
+                dc.DrawCircle(int(mx), int(my), int(r))
+                dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_BOLD))
+                dc.SetTextForeground('#ffffff')
+                tw, th = dc.GetTextExtent('+')
+                dc.DrawText('+', int(mx - r + 3), int(my - th // 2))
         else:
             # Axial pill (R, C, L, D, D_Zener, C_POL …)
             # Body occupies the middle half of the span (25%–75%)
@@ -2913,56 +2978,91 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawLine(int(x1), int(y1), int(bx1), int(by1))
             dc.DrawLine(int(bx2), int(by2), int(x2), int(y2))
 
-            # Body via GraphicsContext so it rotates with the component
-            gc = wx.GraphicsContext.Create(dc)
-            gc.Translate(mx, my)
-            gc.Rotate(angle)
-
+            # Body — via GraphicsContext for rotation; DC fallback for SVGFileDC
+            gc = _make_gc(dc)
             body_w = body_half * 2
             body_h = 14.0
+            bx = int(mx - body_half)
+            by = int(my - body_h / 2)
 
-            gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
-            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+            if gc is not None:
+                gc.Translate(mx, my)
+                gc.Rotate(angle)
+                gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
 
-            if placed.type_id == 'C':
-                # Polyester film cap — flat rectangular body, no rounding
-                gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
-                # Value markings: "C5 100nF" centred on the body
-                comp = self.netlist.components.get(ref) if self.netlist else None
-                font_small = wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                     wx.FONTWEIGHT_BOLD)
-                gc.SetFont(gc.CreateFont(font_small, wx.Colour('#ffffff')))
-                val_lbl = comp.value if comp else ''
-                label = f'{ref} {val_lbl}' if val_lbl else ref
-                lw, lh = gc.GetTextExtent(label)
-                gc.DrawText(label, -lw / 2, -lh / 2)
+                if placed.type_id == 'C':
+                    gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
+                    comp = self.netlist.components.get(ref) if self.netlist else None
+                    font_small = wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                         wx.FONTWEIGHT_BOLD)
+                    gc.SetFont(gc.CreateFont(font_small, wx.Colour('#ffffff')))
+                    val_lbl = comp.value if comp else ''
+                    label = f'{ref} {val_lbl}' if val_lbl else ref
+                    lw, lh = gc.GetTextExtent(label)
+                    gc.DrawText(label, -lw / 2, -lh / 2)
+                else:
+                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+
+                if placed.type_id == 'R' and self.netlist:
+                    comp = self.netlist.components.get(ref)
+                    ohms = _parse_ohms(comp.value) if comp else None
+                    bands = _resistor_bands(ohms) if ohms is not None else None
+                    if bands:
+                        positions = [
+                            -body_half + 3,
+                            -body_half + 9,
+                            -body_half + 15,
+                            body_half - 8,
+                        ]
+                        no_pen = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(0, 0, 0, 0)).Width(0))
+                        gc.SetPen(no_pen)
+                        for bx_pos, bcolor in zip(positions, bands):
+                            gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
+                            gc.DrawRectangle(bx_pos, -body_h / 2 + 1, 5, body_h - 2)
+
+                elif placed.type_id in ('D', 'D_Zener'):
+                    gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#cccccc'))))
+                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#cccccc')).Width(1)))
+                    gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
+
             else:
-                gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+                # Fallback for SVGFileDC: components are always horizontal on a breadboard
+                dc.SetBrush(wx.Brush(body_color))
+                dc.SetPen(wx.Pen(border_color, pen_w))
+                if placed.type_id == 'C':
+                    dc.DrawRectangle(bx, by, int(body_w), int(body_h))
+                    comp = self.netlist.components.get(ref) if self.netlist else None
+                    val_lbl = comp.value if comp else ''
+                    label = f'{ref} {val_lbl}' if val_lbl else ref
+                    dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_BOLD))
+                    dc.SetTextForeground('#ffffff')
+                    tw, th = dc.GetTextExtent(label)
+                    dc.DrawText(label, int(mx) - tw // 2, int(my) - th // 2)
+                else:
+                    dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
 
-            if placed.type_id == 'R' and self.netlist:
-                comp = self.netlist.components.get(ref)
-                ohms = _parse_ohms(comp.value) if comp else None
-                bands = _resistor_bands(ohms) if ohms is not None else None
-                if bands:
-                    # Band x-positions in local coords; pin-1 end is at -body_half
-                    positions = [
-                        -body_half + 3,
-                        -body_half + 9,
-                        -body_half + 15,
-                        body_half - 8,   # tolerance band, near pin-2 end
-                    ]
-                    no_pen = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(0, 0, 0, 0)).Width(0))
-                    gc.SetPen(no_pen)
-                    for bx_pos, bcolor in zip(positions, bands):
-                        gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
-                        gc.DrawRectangle(bx_pos, -body_h / 2 + 1, 5, body_h - 2)
+                if placed.type_id == 'R' and self.netlist:
+                    comp = self.netlist.components.get(ref)
+                    ohms = _parse_ohms(comp.value) if comp else None
+                    bands = _resistor_bands(ohms) if ohms is not None else None
+                    if bands:
+                        positions = [
+                            int(mx - body_half) + 3,
+                            int(mx - body_half) + 9,
+                            int(mx - body_half) + 15,
+                            int(mx + body_half) - 8,
+                        ]
+                        dc.SetPen(wx.Pen(wx.Colour(0, 0, 0, 0), 0))
+                        for band_x, bcolor in zip(positions, bands):
+                            dc.SetBrush(wx.Brush(wx.Colour(bcolor)))
+                            dc.DrawRectangle(band_x, by + 1, 5, int(body_h) - 2)
 
-            elif placed.type_id in ('D', 'D_Zener'):
-                # Cathode stripe near pin-1 end (negative x in local coords)
-                # Pin 1 = K (cathode) per KiCad Device:D convention
-                gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#cccccc'))))
-                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#cccccc')).Width(1)))
-                gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
+                elif placed.type_id in ('D', 'D_Zener'):
+                    dc.SetBrush(wx.Brush('#cccccc'))
+                    dc.SetPen(wx.Pen('#cccccc', 1))
+                    dc.DrawRectangle(bx, by, 4, int(body_h))
 
     def _draw_probe_flag(self, dc: wx.DC,
                           hx: int, hy: int,
