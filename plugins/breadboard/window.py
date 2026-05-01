@@ -54,10 +54,39 @@ ID_PREFS       = wx.NewIdRef()
 ID_HELP_UPDATES = wx.NewIdRef()
 ID_HELP_ISSUE   = wx.NewIdRef()
 ID_PIN_FN       = wx.NewIdRef()
+ID_ZOOM_IN      = wx.NewIdRef()
+ID_ZOOM_OUT     = wx.NewIdRef()
+ID_ZOOM_FIT     = wx.NewIdRef()
+ID_EESCHEMA     = wx.NewIdRef()
+ID_UNDO         = wx.NewIdRef()
+ID_REDO         = wx.NewIdRef()
 
 # Wire color picker — labels mirror WIRE_COLORS order; first entry means "cycle automatically"
 _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
 _WIRE_COLOR_LABELS = ['Auto'] + _WIRE_COLOR_NAMES
+
+_KICAD_ICON_ARCHIVE = '/usr/share/kicad/resources/images.tar.gz'
+_icon_cache: dict = {}
+
+def _kicad_icon(name: str) -> 'wx.Bitmap':
+    """Load a 24×24 PNG from the KiCad icon archive; returns NullBitmap on any error."""
+    if name in _icon_cache:
+        return _icon_cache[name]
+    import io, tarfile
+    try:
+        with tarfile.open(_KICAD_ICON_ARCHIVE) as tf:
+            member = tf.extractfile(f'./{name}')
+            if member is None:
+                _icon_cache[name] = wx.NullBitmap
+                return wx.NullBitmap
+            data = member.read()
+        img = wx.Image(io.BytesIO(data), wx.BITMAP_TYPE_PNG)
+        bmp = wx.Bitmap(img)
+        _icon_cache[name] = bmp
+        return bmp
+    except Exception:
+        _icon_cache[name] = wx.NullBitmap
+        return wx.NullBitmap
 
 
 class BreadboardWindow(wx.Frame):
@@ -403,17 +432,39 @@ class BreadboardWindow(wx.Frame):
         self.SetMenuBar(menu_bar)
 
     def _build_toolbar(self) -> None:
-        tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_TEXT | wx.TB_NOICONS)
+        tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_TEXT)
         tb.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
+        tb.SetToolBitmapSize((24, 24))
 
-        tb.AddTool(ID_UPDATE, 'Update from schematic', wx.NullBitmap,
-                   shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
+        # File
+        tb.AddTool(ID_OPEN, 'Open', _kicad_icon('directory_open_24.png'),
+                   shortHelp='Open a KiCad netlist (.net)  [Ctrl+O]')
+        tb.AddTool(ID_SAVE, 'Save', _kicad_icon('save_24.png'),
+                   shortHelp='Save current session (.kicad_bbrd)  [Ctrl+S]')
         tb.AddSeparator()
-        tb.AddTool(ID_SELECT, 'Select / Move', wx.NullBitmap,
-                   shortHelp='Select and move placed components',
+
+        # Edit history (no undo stack yet — buttons are disabled placeholders)
+        tb.AddTool(ID_UNDO, 'Undo', _kicad_icon('undo_24.png'),
+                   shortHelp='Undo  (not yet available)')
+        tb.AddTool(ID_REDO, 'Redo', _kicad_icon('redo_24.png'),
+                   shortHelp='Redo  (not yet available)')
+        tb.AddSeparator()
+
+        # Zoom
+        tb.AddTool(ID_ZOOM_IN,  'Zoom In',  _kicad_icon('zoom_in_24.png'),
+                   shortHelp='Zoom in  [+]')
+        tb.AddTool(ID_ZOOM_OUT, 'Zoom Out', _kicad_icon('zoom_out_24.png'),
+                   shortHelp='Zoom out  [-]')
+        tb.AddTool(ID_ZOOM_FIT, 'Fit View', _kicad_icon('zoom_fit_in_page_24.png'),
+                   shortHelp='Fit board in view  [Ctrl+Home]')
+        tb.AddSeparator()
+
+        # Interaction modes
+        tb.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png'),
+                   shortHelp='Select and move placed components  [Esc]',
                    kind=wx.ITEM_RADIO)
-        tb.AddTool(ID_WIRE,   'Draw Wire',    wx.NullBitmap,
-                   shortHelp='Draw a jumper wire between two holes',
+        tb.AddTool(ID_WIRE, 'Wire', _kicad_icon('add_line_24.png'),
+                   shortHelp='Draw a jumper wire between two holes  [W]',
                    kind=wx.ITEM_RADIO)
         tb.AddControl(wx.StaticText(tb, label=' '))
         self._wire_color_choice = wx.Choice(tb, choices=_WIRE_COLOR_LABELS)
@@ -423,20 +474,34 @@ class BreadboardWindow(wx.Frame):
         self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
         tb.AddControl(self._wire_color_choice)
         tb.AddSeparator()
-        tb.AddTool(ID_DELETE, 'Delete',       wx.NullBitmap,
-                   shortHelp='Delete a component or wire',
+        tb.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png'),
+                   shortHelp='Delete a component or wire  [D]',
                    kind=wx.ITEM_CHECK)
         tb.AddSeparator()
-        tb.AddTool(ID_EXPORT,   'Export image', wx.NullBitmap,
+
+        # Schematic
+        tb.AddTool(ID_UPDATE, 'Update', _kicad_icon('update_pcb_from_sch_24.png'),
+                   shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
+        tb.AddTool(ID_EESCHEMA, 'Schematic', _kicad_icon('icon_eeschema_24_24.png'),
+                   shortHelp='Open schematic in Eeschema')
+        tb.AddSeparator()
+
+        # Validate and export
+        tb.AddTool(ID_VALIDATE, 'Validate', _kicad_icon('checked_ok_24.png'),
+                   shortHelp='Check if your circuit matches the schematic')
+        tb.AddTool(ID_CLEAR_WARNINGS, 'Clear ERC', _kicad_icon('ercwarn_24.png'),
+                   shortHelp='Dismiss validation warning/short markers')
+        tb.AddTool(ID_EXPORT, 'Export', _kicad_icon('export_png_24.png'),
                    shortHelp='Save the breadboard as a PNG image')
         tb.AddSeparator()
-        tb.AddTool(ID_VALIDATE, 'Validate',   wx.NullBitmap,
-                   shortHelp='Check if your circuit matches the schematic')
-        tb.AddTool(ID_CLEAR_WARNINGS, 'Clear warnings', wx.NullBitmap,
-                   shortHelp='Dismiss validation warning/short markers')
-        tb.AddTool(ID_CLEAR,  'Clear board',  wx.NullBitmap,
+        tb.AddTool(ID_CLEAR, 'Clear Board', wx.NullBitmap,
                    shortHelp='Remove all placed components and wires')
+
         tb.Realize()
+
+        tb.EnableTool(ID_UNDO, False)
+        tb.EnableTool(ID_REDO, False)
+
         self.toolbar = tb
 
     def _bind_events(self) -> None:
@@ -446,11 +511,16 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_load,     id=ID_LOAD)
         self.Bind(wx.EVT_MENU, lambda _: self.Close(), id=wx.ID_EXIT)
         self.Bind(wx.EVT_TOOL, self._on_open,     id=ID_OPEN)
+        self.Bind(wx.EVT_TOOL, self._on_save,     id=ID_SAVE)
         self.Bind(wx.EVT_TOOL, self._on_update,   id=ID_UPDATE)
         self.Bind(wx.EVT_TOOL, self._on_export,   id=ID_EXPORT)
         self.Bind(wx.EVT_TOOL, self._on_select,   id=ID_SELECT)
         self.Bind(wx.EVT_TOOL, self._on_wire,     id=ID_WIRE)
         self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
+        self.Bind(wx.EVT_TOOL, self._on_zoom_in,  id=ID_ZOOM_IN)
+        self.Bind(wx.EVT_TOOL, self._on_zoom_out, id=ID_ZOOM_OUT)
+        self.Bind(wx.EVT_TOOL, self._on_zoom_fit, id=ID_ZOOM_FIT)
+        self.Bind(wx.EVT_TOOL, self._on_eeschema, id=ID_EESCHEMA)
         self.Bind(wx.EVT_MENU, self._on_prefs,          id=ID_PREFS)
         self.Bind(wx.EVT_MENU, self._on_check_updates,  id=ID_HELP_UPDATES)
         self.Bind(wx.EVT_MENU, self._on_report_issue,   id=ID_HELP_ISSUE)
@@ -492,6 +562,33 @@ class BreadboardWindow(wx.Frame):
 
     def _on_delete(self, _evt) -> None:
         self._set_mode(MODE_DELETE)
+
+    def _on_zoom_in(self, _evt) -> None:
+        self.canvas.zoom_center(1.2)
+
+    def _on_zoom_out(self, _evt) -> None:
+        self.canvas.zoom_center(1 / 1.2)
+
+    def _on_zoom_fit(self, _evt) -> None:
+        self.canvas._fit_view()
+
+    def _on_eeschema(self, _evt) -> None:
+        import subprocess, shutil
+        sch = find_schematic(self._project_path) if self._project_path else None
+        if not sch:
+            wx.MessageBox(
+                'No schematic (.kicad_sch) found.\nOpen a netlist first to set the project folder.',
+                'Open Schematic', wx.OK | wx.ICON_INFORMATION, self,
+            )
+            return
+        exe = shutil.which('eeschema') or shutil.which('kicad') or 'eeschema'
+        try:
+            subprocess.Popen([exe, str(sch)])
+        except FileNotFoundError:
+            wx.MessageBox(
+                f'eeschema not found on PATH.\nSchematic: {sch}',
+                'Open Schematic', wx.OK | wx.ICON_ERROR, self,
+            )
 
     def _on_char_hook(self, evt: wx.KeyEvent) -> None:
         key = evt.GetKeyCode()
@@ -1266,10 +1363,19 @@ class PreferencesDialog(wx.Dialog):
         post_row = wx.BoxSizer(wx.HORIZONTAL)
         post_row.Add(wx.StaticText(self, label='Binding posts side:'), 0,
                      wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
-        self._ch_post_side = wx.Choice(self, choices=['Left', 'Right', 'Top', 'Bottom'])
-        _side_map = ['left', 'right', 'top', 'bottom']
+        self._ch_post_side = wx.Choice(self, choices=[
+            'Left', 'Right',
+            'Top Left', 'Top Center', 'Top Right',
+            'Bottom Left', 'Bottom Center', 'Bottom Right',
+        ])
+        _side_map = ['left', 'right', 'top_left', 'top_center', 'top_right',
+                     'bottom_left', 'bottom_center', 'bottom_right']
+        # Normalize legacy values that may be stored in prefs
+        _ps = prefs.binding_post_side
+        if _ps == 'top':    _ps = 'top_right'
+        if _ps == 'bottom': _ps = 'bottom_right'
         self._ch_post_side.SetSelection(
-            _side_map.index(prefs.binding_post_side) if prefs.binding_post_side in _side_map else 0)
+            _side_map.index(_ps) if _ps in _side_map else 0)
         post_row.Add(self._ch_post_side, 0)
         sizer.Add(post_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
@@ -1338,7 +1444,8 @@ class PreferencesDialog(wx.Dialog):
 
     def get_prefs(self) -> Preferences:
         _layout_map = ['mini', 'half', 'full', 'double', 'triple', 'double_rails']
-        _side_map   = ['left', 'right', 'top', 'bottom']
+        _side_map   = ['left', 'right', 'top_left', 'top_center', 'top_right',
+                       'bottom_left', 'bottom_center', 'bottom_right']
         return Preferences(
             instruments_enabled=self._cb_instr.IsChecked(),
             auto_gnd=self._cb_auto_gnd.IsChecked(),
