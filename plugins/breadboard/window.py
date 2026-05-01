@@ -71,7 +71,7 @@ class BreadboardWindow(wx.Frame):
         )
 
         self.prefs = load_prefs()
-        self.board = Breadboard(layout=self.prefs.board_layout)
+        self.board = Breadboard(layout=self.prefs.board_layout, rail_split=self.prefs.rail_split)
         self.netlist: Optional[Netlist] = None
         self._project_path: Optional[str] = project_path
         self._netlist_path: Optional[str] = None   # last successfully loaded .net file
@@ -501,6 +501,12 @@ class BreadboardWindow(wx.Frame):
             self._set_mode(MODE_DELETE)
         elif key == wx.WXK_ESCAPE:
             self._set_mode(MODE_SELECT)
+        elif key == wx.WXK_HOME and evt.ControlDown():
+            self.canvas._fit_view()
+        elif key in (ord('+'), ord('='), wx.WXK_NUMPAD_ADD):
+            self.canvas.zoom_center(1.2)
+        elif key in (ord('-'), wx.WXK_NUMPAD_SUBTRACT):
+            self.canvas.zoom_center(1 / 1.2)
         else:
             evt.Skip()
 
@@ -523,7 +529,7 @@ class BreadboardWindow(wx.Frame):
                 wx.YES_NO | wx.ICON_QUESTION, self,
             ) != wx.YES:
                 return
-            self.board = Breadboard(layout=self.prefs.board_layout)
+            self.board = Breadboard(layout=self.prefs.board_layout, rail_split=self.prefs.rail_split)
             self.canvas.reload_board(self.board)
             self.tray.board = self.board
             self.tray.refresh_placed()
@@ -724,7 +730,7 @@ class BreadboardWindow(wx.Frame):
         if saved_layout != self.prefs.board_layout:
             self.prefs.board_layout = saved_layout
         self.canvas.layout = CanvasLayout(saved_layout, self.prefs.binding_post_side,
-                                          self.prefs.show_branding)
+                                          self.prefs.show_branding, self.prefs.rail_split)
         self.canvas._populate_module_pins()
         self.canvas._pan_initialized = False
 
@@ -812,18 +818,24 @@ class BreadboardWindow(wx.Frame):
                 proceed = (ans == wx.YES)
             if proceed:
                 from .model import Breadboard
-                self.board = Breadboard(layout=p.board_layout)
+                self.board = Breadboard(layout=p.board_layout, rail_split=p.rail_split)
                 self.canvas.reload_board(self.board)
                 self.tray.board = self.board
                 self.tray.refresh_placed()
                 self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
-                                                  p.show_branding)
+                                                  p.show_branding, p.rail_split)
                 self.canvas._pan_initialized = False
+
+        # Rail split toggle — rebuilds static topology and layout, placements unchanged
+        if p.rail_split != old.rail_split:
+            self.board.set_rail_split(p.rail_split)
+            self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
+                                              p.show_branding, p.rail_split)
 
         # Binding post side or branding (canvas layout only, no data change)
         if p.binding_post_side != old.binding_post_side or p.show_branding != old.show_branding:
             self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
-                                              p.show_branding)
+                                              p.show_branding, p.rail_split)
             self.canvas._pan_initialized = False
 
         # Baseboard
@@ -848,7 +860,7 @@ class BreadboardWindow(wx.Frame):
         self.canvas.show_branding      = p.show_branding
         self.canvas.branding_image     = p.branding_image
         self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
-                                          p.show_branding)
+                                          p.show_branding, p.rail_split)
         self.canvas._pan_initialized = False
         self._tray_sizer.Show(self._binding_panel, p.show_binding_posts)
         self._tray_sizer.Show(self._hotkey_line,   p.show_hotkeys)
@@ -996,7 +1008,7 @@ class BreadboardWindow(wx.Frame):
             'Clear all placed components and wires?', 'Confirm',
             wx.YES_NO | wx.ICON_QUESTION, self
         ) == wx.YES:
-            self.board = Breadboard(layout=self.prefs.board_layout)
+            self.board = Breadboard(layout=self.prefs.board_layout, rail_split=self.prefs.rail_split)
             # Re-apply GND assignments
             _gnd_net = next((n for n in ('0', 'GND') if self.netlist and self.netlist.net_by_name(n)), None)
             if _gnd_net:
@@ -1247,6 +1259,10 @@ class PreferencesDialog(wx.Dialog):
         layout_row.Add(self._ch_layout, 1, wx.EXPAND)
         sizer.Add(layout_row, 0, wx.EXPAND | wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
+        self._cb_rail_split = wx.CheckBox(self, label='Power rails split in the middle (electrically disconnected)')
+        self._cb_rail_split.SetValue(prefs.rail_split)
+        sizer.Add(self._cb_rail_split, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
         post_row = wx.BoxSizer(wx.HORIZONTAL)
         post_row.Add(wx.StaticText(self, label='Binding posts side:'), 0,
                      wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
@@ -1338,4 +1354,5 @@ class PreferencesDialog(wx.Dialog):
             baseboard_color=self._cp_base.GetColour().GetAsString(wx.C2S_HTML_SYNTAX),
             show_branding=self._cb_branding.IsChecked(),
             branding_image=self._tc_brand_img.GetValue(),
+            rail_split=self._cb_rail_split.IsChecked(),
         )

@@ -119,8 +119,6 @@ RAIL_H = 18         # height of each power rail colour strip
 RAIL_GAP = 18       # gap between rail area and tie-strip area
 CENTER_GAP = 28     # gap between top and bottom tie-strip banks
 MARGIN = 20         # outer margin
-RAIL_BREAK_PX = 58  # extra pixel gap at the mid-board split (wider than group gaps)
-RAIL_GROUP_GAP = 22 # extra gap inserted between each group of 5 rail holes
 SECTION_GAP = 0     # stacked board sections touch — no gap between them
 VERT_STRIP_X = 54   # x-width allocated for the two vertical rails (triple layout)
 BRAND_STRIP = 80    # extra space (px) added on the binding-post side for the brand image
@@ -244,14 +242,16 @@ class CanvasLayout:
     """
 
     def __init__(self, board_layout: str = 'full', binding_post_side: str = 'left',
-                 show_branding: bool = False):
+                 show_branding: bool = False, rail_split: bool = True):
         self.board_layout    = board_layout
         self.binding_post_side = binding_post_side
+        self.rail_split      = rail_split
         _col_map = {'mini': MINI_COLUMNS, 'half': HALF_COLUMNS}
         self.columns  = _col_map.get(board_layout, COLUMNS)
         self.sections = {'half': 1, 'full': 1, 'double': 2, 'triple': 3, 'double_rails': 2}.get(board_layout, 1)
         self.has_rails = board_layout not in RAILLESS_LAYOUTS
-        self.rail_len  = min(RAIL_LEN, self.columns) if self.has_rails else 0
+        _rail_len_map = {'half': 24}   # 24 holes/rail: cols 2–29, 1-col padding each end
+        self.rail_len  = _rail_len_map.get(board_layout, min(RAIL_LEN, self.columns)) if self.has_rails else 0
 
         # --- Relative y layout for one section (relative to section top = 0) ---
         self._row_rel: Dict[str, int] = {}
@@ -451,14 +451,17 @@ class CanvasLayout:
         return self.board_left + (col - 1) * PITCH
 
     def rail_x(self, index: int) -> int:
-        """x pixel of rail hole index (1-based), with group-of-5 and mid-board gaps."""
-        n_gaps = (index - 1) // 5
-        if index > RAIL_SPLIT:
-            n_gaps -= 1
-        x = self.board_left + (index - 1) * PITCH + n_gaps * RAIL_GROUP_GAP
-        if index > RAIL_SPLIT:
-            x += RAIL_BREAK_PX
-        return x
+        """x pixel of rail hole index (1-based).
+
+        Holes sit on the column grid starting at col 2 (1-col inset each end), in
+        groups of 5 with every 6th column left empty as a visual divider.  An extra
+        2-column gap at RAIL_SPLIT gives a 3-column gap at the electrical mid-rail
+        disconnect vs the normal 1-column inter-group gap.
+        """
+        col = ((index - 1) // 5) * 6 + (index - 1) % 5 + 2
+        if self.rail_split and index > RAIL_SPLIT:
+            col += 2
+        return self.board_left + (col - 1) * PITCH
 
     def hole_xy(self, hole: Hole) -> Optional[Tuple[int, int]]:
         """Return (x, y) centre of a hole, or None if not renderable."""
@@ -855,6 +858,17 @@ class BreadboardCanvas(wx.Panel):
         self._pan_y = (ch - bh * self._zoom) / 2
         self.Refresh()
 
+    def zoom_center(self, factor: float) -> None:
+        """Zoom in (factor > 1) or out (factor < 1) centred on the canvas."""
+        cw, ch = self.GetClientSize()
+        cx, cy = cw / 2, ch / 2
+        new_zoom = max(0.15, min(5.0, self._zoom * factor))
+        scale = new_zoom / self._zoom
+        self._pan_x = cx - (cx - self._pan_x) * scale
+        self._pan_y = cy - (cy - self._pan_y) * scale
+        self._zoom = new_zoom
+        self.Refresh()
+
     def _on_size(self, _evt) -> None:
         if not self._user_interacted:
             self._pan_initialized = False
@@ -905,23 +919,9 @@ class BreadboardCanvas(wx.Panel):
         elif key == wx.WXK_HOME and evt.ControlDown():
             self._fit_view()
         elif key in (ord('+'), ord('='), wx.WXK_NUMPAD_ADD):
-            cw, ch = self.GetClientSize()
-            cx, cy = cw / 2, ch / 2
-            new_zoom = min(5.0, self._zoom * 1.2)
-            scale = new_zoom / self._zoom
-            self._pan_x = cx - (cx - self._pan_x) * scale
-            self._pan_y = cy - (cy - self._pan_y) * scale
-            self._zoom = new_zoom
-            self.Refresh()
+            self.zoom_center(1.2)
         elif key in (ord('-'), wx.WXK_NUMPAD_SUBTRACT):
-            cw, ch = self.GetClientSize()
-            cx, cy = cw / 2, ch / 2
-            new_zoom = max(0.15, self._zoom / 1.2)
-            scale = new_zoom / self._zoom
-            self._pan_x = cx - (cx - self._pan_x) * scale
-            self._pan_y = cy - (cy - self._pan_y) * scale
-            self._zoom = new_zoom
-            self.Refresh()
+            self.zoom_center(1 / 1.2)
         else:
             evt.Skip()
 
@@ -1751,22 +1751,28 @@ class BreadboardCanvas(wx.Panel):
             dc.SetPen(wx.Pen(border_color, 2 if selected else 1))
             dc.DrawRoundedRectangle(body_rect, 3)
 
-            # Pin-1 dot: small circle on body surface, on the same side as pin 1
+            # Pin labels inside the body — pin numbers normally, rotated function names when toggled
+            fn_map = (self.netlist.pinfunction_map(ref)
+                      if self._dip_fn_labels and self.netlist else {})
+
+            # Pin-1 dot: small circle on body surface, on the same side as pin 1.
+            # Inverted (dark fill, white border) when fn labels are shown so the dot
+            # stands out against the light grey label text.
             pin1_hole = placed.pin_holes.get(1)
             if pin1_hole:
                 pin1_xy = lay.hole_xy(pin1_hole)
                 if pin1_xy:
-                    dc.SetBrush(wx.Brush('#ffffff'))
-                    dc.SetPen(wx.Pen('#aaaaaa', 1))
-                    if isinstance(pin1_hole, TieHole) and pin1_hole.row in TOP_ROWS:
-                        dot_y = body_rect.GetY() + 6
+                    if fn_map:
+                        dc.SetBrush(wx.Brush('#888888'))
+                        dc.SetPen(wx.Pen('#000000', 1))
                     else:
-                        dot_y = body_rect.GetBottom() - 6
+                        dc.SetBrush(wx.Brush('#ffffff'))
+                        dc.SetPen(wx.Pen('#333333', 1))
+                    if isinstance(pin1_hole, TieHole) and pin1_hole.row in TOP_ROWS:
+                        dot_y = body_rect.GetY() + 12
+                    else:
+                        dot_y = body_rect.GetBottom() - 12
                     dc.DrawCircle(pin1_xy[0], dot_y, 3)
-
-            # Pin labels inside the body — pin numbers normally, rotated function names when toggled
-            fn_map = (self.netlist.pinfunction_map(ref)
-                      if self._dip_fn_labels and self.netlist else {})
             if fn_map:
                 # Rotated text via GraphicsContext.
                 # Top-side labels lean right (75° CW), bottom-side lean left (105° CCW),
@@ -3379,12 +3385,12 @@ class BreadboardCanvas(wx.Panel):
             p1_xy = lay.hole_xy(p1_hole) if p1_hole else None
             if p1_xy:
                 dc.SetBrush(wx.Brush('#ffffff88'))
-                dc.SetPen(wx.Pen('#aaaaaa88', 1))
+                dc.SetPen(wx.Pen('#33333388', 1))
                 if comp_def.is_dip:
                     if isinstance(p1_hole, TieHole) and p1_hole.row in TOP_ROWS:
-                        dot_y = body_rect.GetY() + 6
+                        dot_y = body_rect.GetY() + 12
                     else:
-                        dot_y = body_rect.GetBottom() - 6
+                        dot_y = body_rect.GetBottom() - 12
                 else:
                     dot_y = body_rect.GetTop() + 3
                 dc.DrawCircle(p1_xy[0], dot_y, 3)

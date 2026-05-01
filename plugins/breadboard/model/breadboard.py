@@ -43,7 +43,7 @@ VERT_RAIL_NAMES_RIGHT = ('vert_right_plus', 'vert_right_minus')    # right vert 
 VERT_RAIL_LEN = 60                              # holes per vertical rail for triple (20 per section)
 VERT_RAIL_LEN_PER_SECTION = 20                  # holes per section on vertical rails
 ALL_RAIL_NAMES = RAIL_NAMES + VERT_RAIL_NAMES + VERT_RAIL_NAMES_RIGHT
-RAIL_LEN = 50
+RAIL_LEN = 50       # holes per rail: 25 left + 25 right (10 groups of 5)
 RAIL_SPLIT = 25     # rails are split into two electrically separate halves here
 TERMINAL_NAMES = ('GND', 'V1', 'V2')
 
@@ -198,8 +198,9 @@ class Breadboard:
     layout: one of 'half', 'full', 'double', 'triple'
     """
 
-    def __init__(self, layout: str = 'full'):
+    def __init__(self, layout: str = 'full', rail_split: bool = True):
         self.layout = layout
+        self.rail_split = rail_split
         self.columns, self.sections = _LAYOUT_PARAMS.get(layout, (COLUMNS, 1))
         self._placements: Dict[str, PlacedComponent] = {}   # ref → placement
         self._wires: List[Wire] = []
@@ -227,7 +228,7 @@ class Breadboard:
             for section in range(self.sections):
                 for rail in RAIL_NAMES:
                     for i in range(1, RAIL_LEN):
-                        if i == RAIL_SPLIT:
+                        if self.rail_split and i == RAIL_SPLIT:
                             continue        # gap — no connection across the split
                         yield RailHole(rail, i, section), RailHole(rail, i + 1, section)
 
@@ -242,6 +243,11 @@ class Breadboard:
                 for rail in VERT_RAIL_NAMES_RIGHT:
                     for i in range(1, vert_len):
                         yield RailHole(rail, i), RailHole(rail, i + 1)
+
+    def set_rail_split(self, value: bool) -> None:
+        """Toggle the mid-rail electrical disconnect and rebuild the static topology."""
+        self.rail_split = value
+        self._static = list(self._build_static())
 
     # ------------------------------------------------------------------
     # Dynamic state: components
