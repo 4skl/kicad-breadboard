@@ -660,6 +660,45 @@ RPi_PIN_NAMES_LONG = {
 }
 
 # ---------------------------------------------------------------------------
+# Switches
+#
+# SPST  — momentary push button (2-pin, 4-col span)
+# SPDT  — slide/toggle switch   (3-pin: A–COM–B in a row)
+# SP3T  — 3-position slide      (4-pin: A–COM–B–C in a row)
+#
+# KiCad symbol names that map here (see guess_type_id):
+#   Switch:SW_Push, SW_SPST, SW_SPDT, SW_SP3T
+# ---------------------------------------------------------------------------
+
+SWITCH_SPST = ComponentDef(
+    type_id='SPST',
+    display_name='Push Button (SPST)',
+    ref_prefix='SW',
+    pin_offsets={1: PinOffset(0), 2: PinOffset(4)},
+    pin_names={1: 'A', 2: 'B'},
+    color='#a8a8a8',   # light grey housing
+    symmetric=True,
+)
+
+SWITCH_SPDT = ComponentDef(
+    type_id='SPDT',
+    display_name='Slider Switch (SPDT)',
+    ref_prefix='SW',
+    pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)},
+    pin_names={1: 'A', 2: 'COM', 3: 'B'},
+    color='#7b5c3a',   # brown housing
+)
+
+SWITCH_SP3T = ComponentDef(
+    type_id='SP3T',
+    display_name='Slider Switch (SP3T)',
+    ref_prefix='SW',
+    pin_offsets={1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2), 4: PinOffset(3)},
+    pin_names={1: 'A', 2: 'COM', 3: 'B', 4: 'C'},
+    color='#7b5c3a',   # brown housing
+)
+
+# ---------------------------------------------------------------------------
 # Registry: map type_id → ComponentDef
 # Also provides heuristic lookup from KiCad symbol/value strings.
 # ---------------------------------------------------------------------------
@@ -674,6 +713,7 @@ ALL_DEFS: Dict[str, ComponentDef] = {
         ARDUINO_NANO, ARDUINO_UNO,
         TEENSY_41,
         RASPBERRY_PI_PICO,
+        SWITCH_SPST, SWITCH_SPDT, SWITCH_SP3T,
     ]
 }
 
@@ -747,8 +787,24 @@ def guess_type_id(ref: str, value: str, symbol: str, lib: str = '',
     if 'NMOS' in s or 'MOSFET' in s:
         return 'NMOS'
 
+    # Switch symbols — must precede prefix fallback (SW_ prefix would default to SPST)
+    if 'SW_PUSH' in s or 'PUSHBUTTON' in s or 'TACTILE' in s or 'TACT' in s:
+        return 'SPST'
+    if 'SW_SP3T' in s or 'SP3T' in s:
+        return 'SP3T'
+    if 'SW_SPDT' in s or 'SPDT' in s:
+        return 'SPDT'
+    if 'SW_SPST' in s or ('SW' in s and 'SPST' in v):
+        return 'SPST'
+
     # Reference prefix fallback
     prefix = ''.join(c for c in ref if c.isalpha()).upper()
+    if prefix in ('SW', 'S'):
+        if '3T' in s or 'SP3T' in v:
+            return 'SP3T'
+        if 'DT' in s or 'SPDT' in v:
+            return 'SPDT'
+        return 'SPST'
     if prefix in ('MCU', 'A'):
         return 'RPi_Pico'
     if prefix == 'R':

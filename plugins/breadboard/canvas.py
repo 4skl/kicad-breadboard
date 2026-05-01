@@ -1179,7 +1179,7 @@ class BreadboardCanvas(wx.Panel):
         if ref:
             placed = self.board.get_placement(ref)
             comp_def = ALL_DEFS.get(placed.type_id) if placed else None
-            if comp_def and (comp_def.is_dip or comp_def.is_module or comp_def.pin_count == 3):
+            if comp_def and (comp_def.is_dip or comp_def.is_module or comp_def.pin_count >= 3):
                 self._flip_component(ref)
                 return
         # Otherwise cancel the current operation
@@ -1211,8 +1211,8 @@ class BreadboardCanvas(wx.Panel):
         if comp_def.is_dip:
             n = comp_def.footprint_cols() - 1
             new_anchor = TieHole(pin1.col + (n if new_flipped else -n), 'e', pin1.section)
-        elif comp_def.pin_count == 3:
-            n = 2   # span = pin_count - 1
+        elif comp_def.pin_count >= 3:
+            n = comp_def.pin_count - 1   # span = pin_count - 1
             new_anchor = TieHole(pin1.col + (n if new_flipped else -n), pin1.row, pin1.section)
         elif comp_def.pin_count == 2:
             # For 2-pin axial: use pin2 as new anchor and toggle flipped.
@@ -1871,11 +1871,21 @@ class BreadboardCanvas(wx.Panel):
             p1 = lay.hole_xy(placed.pin_holes[1])
             p2 = lay.hole_xy(placed.pin_holes[2])
             if p1 and p2:
-                self._draw_axial_component(dc, comp_def, placed, ref, p1, p2, selected)
+                if placed.type_id == 'SPST':
+                    self._draw_pushbutton(dc, comp_def, placed, ref, p1, p2, selected)
+                else:
+                    self._draw_axial_component(dc, comp_def, placed, ref, p1, p2, selected)
         else:
-            # 3-pin components
+            # 3-pin and 4-pin components
+            _SLIDER_TYPES = frozenset({'SPDT', 'SP3T'})
             _TO92_TYPES = frozenset({'NPN', 'PNP', 'JFET_N', 'JFET_P', 'BS170', 'NMOS', 'PMOS'})
-            if placed.type_id in _TO92_TYPES:
+            if placed.type_id in _SLIDER_TYPES:
+                sample_hole = next(iter(placed.pin_holes.values()))
+                in_top = isinstance(sample_hole, TieHole) and sample_hole.row in TOP_ROWS
+                self._draw_slider_switch(dc, comp_def, placed, ref,
+                                         x_min, x_max, y_min, y_max, in_top, selected)
+                return
+            elif placed.type_id in _TO92_TYPES:
                 # Ammo-pack style TO-92: small D-shaped body elevated above holes,
                 # three thin wire leads sticking out to each pin hole.
                 sample_hole = next(iter(placed.pin_holes.values()))
@@ -3070,6 +3080,178 @@ class BreadboardCanvas(wx.Panel):
                     dc.SetPen(wx.Pen('#cccccc', 1))
                     dc.DrawRectangle(bx, by, 4, int(body_h))
 
+    def _draw_pushbutton(self, dc: wx.DC, comp_def: ComponentDef,
+                         placed: PlacedComponent, ref: str,
+                         p1: Tuple[int, int], p2: Tuple[int, int],
+                         selected: bool) -> None:
+        """Draw an SPST momentary push button between two pin positions."""
+        x1, y1 = float(p1[0]), float(p1[1])
+        x2, y2 = float(p2[0]), float(p2[1])
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length < 1:
+            return
+
+        angle = math.atan2(dy, dx)
+        ux, uy = dx / length, dy / length
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+
+        body_half = length * 0.30
+        body_h = 16.0
+        button_r = 7.0
+        pen_w = 2 if selected else 1
+        body_color = wx.Colour(comp_def.color)
+        border_color = wx.Colour('#555555')
+
+        bx1 = mx - ux * body_half
+        by1 = my - uy * body_half
+        bx2 = mx + ux * body_half
+        by2 = my + uy * body_half
+
+        # Lead lines from each pin to body edge
+        dc.SetPen(wx.Pen('#888888', 3))
+        dc.DrawLine(int(x1), int(y1), int(bx1), int(by1))
+        dc.DrawLine(int(bx2), int(by2), int(x2), int(y2))
+
+        gc = _make_gc(dc)
+        if gc is not None:
+            gc.Translate(mx, my)
+            gc.Rotate(angle)
+            # Grey housing body
+            gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+            gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_half * 2, body_h, 3.0)
+            # Round black button cap
+            gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#202020'))))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#111111')).Width(1)))
+            gc.DrawEllipse(-button_r, -button_r, button_r * 2, button_r * 2)
+        else:
+            dc.SetBrush(wx.Brush(body_color))
+            dc.SetPen(wx.Pen(border_color, pen_w))
+            dc.DrawRoundedRectangle(int(mx - body_half), int(my - body_h / 2),
+                                    int(body_half * 2), int(body_h), 3)
+            dc.SetBrush(wx.Brush('#202020'))
+            dc.SetPen(wx.Pen('#111111', 1))
+            dc.DrawCircle(int(mx), int(my), int(button_r))
+
+        # Ref label below the body (perpendicular to component axis, outward)
+        dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                           wx.FONTWEIGHT_NORMAL))
+        dc.SetTextForeground('#222222')
+        tw, th = dc.GetTextExtent(ref)
+        lx = int(mx + uy * (body_h / 2 + 3)) - tw // 2
+        ly = int(my - ux * (body_h / 2 + 3)) - th // 2
+        dc.DrawText(ref, lx, ly)
+
+    def _draw_slider_switch(self, dc: wx.DC, comp_def: ComponentDef,
+                             placed: PlacedComponent, ref: str,
+                             x_min: int, x_max: int, y_min: int, y_max: int,
+                             in_top: bool, selected: bool) -> None:
+        """Draw an SPDT or SP3T slider switch."""
+        lay = self.layout
+        pen_w = 2 if selected else 1
+        body_color = wx.Colour(comp_def.color)    # brown
+        face_color = wx.Colour('#999999')          # grey faceplate
+        slider_color = wx.Colour('#222222')        # black slider knob
+        border_color = wx.Colour('#3a2a1a')        # dark brown outline
+        BODY_H  = 18
+        FACE_H  = 10
+        FACE_INS = 2
+        SLIDER_W = max(10, PITCH - 4)
+        SLIDER_H = 6
+
+        body_left  = x_min - 4
+        body_right = x_max + 4
+        body_w = body_right - body_left
+        cx = (body_left + body_right) // 2
+
+        if in_top:
+            body_top    = y_min - BODY_H - 2
+            body_bottom = y_min - 2
+            # Pin stubs
+            dc.SetBrush(wx.Brush('#888888'))
+            dc.SetPen(wx.Pen('#555555', 1))
+            for hole in placed.pin_holes.values():
+                xy = lay.hole_xy(hole)
+                if xy:
+                    dc.DrawRectangle(xy[0] - 1, body_bottom, 3, 4)
+            # Housing body
+            dc.SetBrush(wx.Brush(body_color))
+            dc.SetPen(wx.Pen(border_color, pen_w))
+            dc.DrawRoundedRectangle(body_left, body_top, body_w, BODY_H, 3)
+            # Faceplate
+            face_left = body_left + FACE_INS
+            face_top  = body_top  + FACE_INS
+            face_w    = body_w - 2 * FACE_INS
+            dc.SetBrush(wx.Brush(face_color))
+            dc.SetPen(wx.Pen('#777777', 1))
+            dc.DrawRoundedRectangle(face_left, face_top, face_w, FACE_H, 2)
+            # Slider knob (centred on faceplate)
+            sx = cx - SLIDER_W // 2
+            sy = face_top + (FACE_H - SLIDER_H) // 2
+            dc.SetBrush(wx.Brush(slider_color))
+            dc.SetPen(wx.Pen('#111111', 1))
+            dc.DrawRoundedRectangle(sx, sy, SLIDER_W, SLIDER_H, 2)
+            # Pin labels at holes
+            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#444444')
+            for pin_num in sorted(placed.pin_holes):
+                xy = lay.hole_xy(placed.pin_holes[pin_num])
+                if xy:
+                    name = comp_def.pin_names.get(pin_num, str(pin_num))
+                    tw, th = dc.GetTextExtent(name)
+                    dc.DrawText(name, xy[0] - tw // 2, body_bottom + 5)
+            # Ref label below pin labels
+            dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#222222')
+            tw, th = dc.GetTextExtent(ref)
+            dc.DrawText(ref, cx - tw // 2, body_bottom + 14)
+        else:
+            body_top    = y_max + 2
+            body_bottom = y_max + 2 + BODY_H
+            # Pin stubs
+            dc.SetBrush(wx.Brush('#888888'))
+            dc.SetPen(wx.Pen('#555555', 1))
+            for hole in placed.pin_holes.values():
+                xy = lay.hole_xy(hole)
+                if xy:
+                    dc.DrawRectangle(xy[0] - 1, y_max - 2, 3, 4)
+            # Housing body
+            dc.SetBrush(wx.Brush(body_color))
+            dc.SetPen(wx.Pen(border_color, pen_w))
+            dc.DrawRoundedRectangle(body_left, body_top, body_w, BODY_H, 3)
+            # Faceplate (at the far side, away from holes)
+            face_left = body_left + FACE_INS
+            face_top  = body_bottom - FACE_INS - FACE_H
+            face_w    = body_w - 2 * FACE_INS
+            dc.SetBrush(wx.Brush(face_color))
+            dc.SetPen(wx.Pen('#777777', 1))
+            dc.DrawRoundedRectangle(face_left, face_top, face_w, FACE_H, 2)
+            # Slider knob
+            sx = cx - SLIDER_W // 2
+            sy = face_top + (FACE_H - SLIDER_H) // 2
+            dc.SetBrush(wx.Brush(slider_color))
+            dc.SetPen(wx.Pen('#111111', 1))
+            dc.DrawRoundedRectangle(sx, sy, SLIDER_W, SLIDER_H, 2)
+            # Pin labels
+            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#444444')
+            for pin_num in sorted(placed.pin_holes):
+                xy = lay.hole_xy(placed.pin_holes[pin_num])
+                if xy:
+                    name = comp_def.pin_names.get(pin_num, str(pin_num))
+                    tw, th = dc.GetTextExtent(name)
+                    dc.DrawText(name, xy[0] - tw // 2, y_max - th - 4)
+            # Ref label above pin labels
+            dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground('#222222')
+            tw, th = dc.GetTextExtent(ref)
+            dc.DrawText(ref, cx - tw // 2, y_max - th - 14)
+
     def _draw_probe_flag(self, dc: wx.DC,
                           hx: int, hy: int,
                           fcx: int, fcy_top: int,
@@ -3296,11 +3478,48 @@ class BreadboardCanvas(wx.Panel):
         xs = [xy[0] for xy in holes_xy]
         ys = [xy[1] for xy in holes_xy]
 
-        _TO92_TYPES = frozenset({'NPN', 'PNP', 'JFET_N', 'JFET_P', 'BS170', 'NMOS', 'PMOS'})
+        _TO92_TYPES    = frozenset({'NPN', 'PNP', 'JFET_N', 'JFET_P', 'BS170', 'NMOS', 'PMOS'})
+        _SLIDER_TYPES  = frozenset({'SPDT', 'SP3T'})
         base_color = wx.Colour(comp_def.color)
         ghost_color = wx.Colour(base_color.Red(), base_color.Green(), base_color.Blue(), 0x88)
 
-        if comp_def.type_id in _TO92_TYPES:
+        if comp_def.type_id in _SLIDER_TYPES:
+            sample_hole = next(iter(pin_holes.values()))
+            in_top = isinstance(sample_hole, TieHole) and sample_hole.row in TOP_ROWS
+            x_min_g, x_max_g = min(xs), max(xs)
+            y_min_g, y_max_g = min(ys), max(ys)
+            BODY_H_G  = 18
+            FACE_H_G  = 10
+            FACE_INS_G = 2
+            body_left_g  = float(x_min_g - 4)
+            body_right_g = float(x_max_g + 4)
+            body_w_g = body_right_g - body_left_g
+            face_col = wx.Colour(0x99, 0x99, 0x99, 0x88)
+            gc = wx.GraphicsContext.Create(dc)
+            dot_pen = gc.CreatePen(
+                wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88))
+                .Width(1).Style(wx.PENSTYLE_DOT))
+            if in_top:
+                body_top_g = float(y_min_g - BODY_H_G - 2)
+                gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+                gc.SetPen(dot_pen)
+                gc.DrawRoundedRectangle(body_left_g, body_top_g, body_w_g, float(BODY_H_G), 3.0)
+                gc.SetBrush(gc.CreateBrush(wx.Brush(face_col)))
+                gc.DrawRoundedRectangle(
+                    body_left_g + FACE_INS_G, body_top_g + FACE_INS_G,
+                    body_w_g - 2 * FACE_INS_G, float(FACE_H_G), 2.0)
+            else:
+                body_top_g = float(y_max_g + 2)
+                gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+                gc.SetPen(dot_pen)
+                gc.DrawRoundedRectangle(body_left_g, body_top_g, body_w_g, float(BODY_H_G), 3.0)
+                face_top_g = body_top_g + BODY_H_G - FACE_INS_G - FACE_H_G
+                gc.SetBrush(gc.CreateBrush(wx.Brush(face_col)))
+                gc.DrawRoundedRectangle(
+                    body_left_g + FACE_INS_G, face_top_g,
+                    body_w_g - 2 * FACE_INS_G, float(FACE_H_G), 2.0)
+
+        elif comp_def.type_id in _TO92_TYPES:
             # Ammo-pack ghost for TO-92
             sample_hole = next(iter(pin_holes.values()))
             in_top = isinstance(sample_hole, TieHole) and sample_hole.row in TOP_ROWS
@@ -3475,6 +3694,31 @@ class BreadboardCanvas(wx.Panel):
             gc.SetFont(gc.CreateFont(font, wx.Colour(0xff, 0xff, 0xff, 0xaa)))
             tw, th = gc.GetTextExtent('+')
             gc.DrawText('+', -r + 3, -th / 2)
+            return
+
+        if comp_def.type_id == 'SPST':
+            # Push button ghost: grey rounded housing + dark button cap
+            body_half_pb = length * 0.30
+            button_r_pb = 7.0
+            body_h_pb = 16.0
+            bx1_pb = mx - ux * body_half_pb
+            by1_pb = my - uy * body_half_pb
+            bx2_pb = mx + ux * body_half_pb
+            by2_pb = my + uy * body_half_pb
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            dc.DrawLine(int(x1), int(y1), int(bx1_pb), int(by1_pb))
+            dc.DrawLine(int(bx2_pb), int(by2_pb), int(x2), int(y2))
+            gc = wx.GraphicsContext.Create(dc)
+            gc.Translate(mx, my)
+            gc.Rotate(angle)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+            gc.SetPen(gc.CreatePen(border_pen))
+            gc.DrawRoundedRectangle(-body_half_pb, -body_h_pb / 2,
+                                    body_half_pb * 2, body_h_pb, 3.0)
+            btn_col = wx.Colour(0x22, 0x22, 0x22, 0x88)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(btn_col)))
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(btn_col).Width(1)))
+            gc.DrawEllipse(-button_r_pb, -button_r_pb, button_r_pb * 2, button_r_pb * 2)
             return
 
         body_half = max(length * 0.25, 8.0)
