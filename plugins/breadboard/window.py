@@ -24,7 +24,9 @@ _RESOURCES = Path(__file__).parent / 'resources'
 import wx.lib.stattext
 
 from .canvas import (BreadboardCanvas, CanvasLayout,
-                     MODE_SELECT, MODE_WIRE, MODE_DELETE, MODE_NET_HIGHLIGHT, WIRE_COLORS)
+                     MODE_SELECT, MODE_WIRE, MODE_DELETE, MODE_NET_HIGHLIGHT,
+                     MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_TEXT,
+                     WIRE_COLORS)
 from .tray import ComponentTray
 from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
@@ -73,6 +75,9 @@ ID_ADD_GLABEL    = wx.NewIdRef()
 ID_ADD_POWER     = wx.NewIdRef()
 ID_ADD_JUNCTION  = wx.NewIdRef()
 ID_MEASURE       = wx.NewIdRef()
+ID_DRAW_LINE     = wx.NewIdRef()
+ID_DRAW_RECT     = wx.NewIdRef()
+ID_DRAW_TEXT     = wx.NewIdRef()
 
 # Wire color picker — labels mirror WIRE_COLORS order; first entry means "cycle automatically"
 _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
@@ -438,7 +443,7 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Select / Move  [Esc]', kind=wx.ITEM_CHECK)
         vt.AddTool(ID_NET_HIGHLIGHT, 'Highlight Net',
                    _kicad_icon('net_highlight_schematic_24.png'),
-                   shortHelp='Highlight net (coming soon)', kind=wx.ITEM_CHECK)
+                   shortHelp='Highlight net — click a hole to show its connections', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
         # --- Wiring / connectivity tools ---
@@ -456,12 +461,24 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Add wire junction (coming soon)', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
-        # --- Delete ---
-        vt.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png'),
-                   shortHelp='Delete component or wire  [D]', kind=wx.ITEM_CHECK)
+        # --- Annotation drawing tools ---
+        vt.AddTool(ID_DRAW_LINE, 'Draw Line',
+                   _kicad_icon('add_graphical_segments_24.png'),
+                   shortHelp='Draw annotation line — click start, click end', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_DRAW_RECT, 'Draw Rectangle',
+                   _kicad_icon('add_rectangle_24.png'),
+                   shortHelp='Draw annotation rectangle — click corner, click opposite corner', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_DRAW_TEXT, 'Add Text',
+                   _kicad_icon('text_24.png'),
+                   shortHelp='Place text annotation — click position, type text', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
-        # --- Annotation / measurement ---
+        # --- Delete ---
+        vt.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png'),
+                   shortHelp='Delete component, wire, or annotation  [D]', kind=wx.ITEM_CHECK)
+        vt.AddSeparator()
+
+        # --- Measurement (placeholder) ---
         vt.AddTool(ID_MEASURE, 'Measure', _kicad_icon('measurement_24.png'),
                    shortHelp='Measurement tool (coming soon)', kind=wx.ITEM_CHECK)
 
@@ -595,6 +612,9 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_wire,          id=ID_WIRE)
         self.Bind(wx.EVT_TOOL, self._on_delete,        id=ID_DELETE)
         self.Bind(wx.EVT_TOOL, self._on_net_highlight, id=ID_NET_HIGHLIGHT)
+        self.Bind(wx.EVT_TOOL, self._on_draw_line,     id=ID_DRAW_LINE)
+        self.Bind(wx.EVT_TOOL, self._on_draw_rect,     id=ID_DRAW_RECT)
+        self.Bind(wx.EVT_TOOL, self._on_draw_text,     id=ID_DRAW_TEXT)
         self.Bind(wx.EVT_TOOL, self._on_zoom_in,  id=ID_ZOOM_IN)
         self.Bind(wx.EVT_TOOL, self._on_zoom_out, id=ID_ZOOM_OUT)
         self.Bind(wx.EVT_TOOL, self._on_zoom_fit, id=ID_ZOOM_FIT)
@@ -624,27 +644,54 @@ class BreadboardWindow(wx.Frame):
         self.toolbar.ToggleTool(ID_WIRE,   mode == MODE_WIRE)
         self.toolbar.ToggleTool(ID_DELETE, mode == MODE_DELETE)
         # Right vtoolbar: all ITEM_CHECK, managed manually
-        self._vtoolbar.ToggleTool(ID_SELECT,       mode == MODE_SELECT)
-        self._vtoolbar.ToggleTool(ID_NET_HIGHLIGHT, mode == MODE_NET_HIGHLIGHT)
-        self._vtoolbar.ToggleTool(ID_WIRE,         mode == MODE_WIRE)
-        self._vtoolbar.ToggleTool(ID_DELETE,       mode == MODE_DELETE)
+        self._vtoolbar.ToggleTool(ID_SELECT,        mode == MODE_SELECT)
+        self._vtoolbar.ToggleTool(ID_NET_HIGHLIGHT,  mode == MODE_NET_HIGHLIGHT)
+        self._vtoolbar.ToggleTool(ID_WIRE,           mode == MODE_WIRE)
+        self._vtoolbar.ToggleTool(ID_DRAW_LINE,      mode == MODE_DRAW_LINE)
+        self._vtoolbar.ToggleTool(ID_DRAW_RECT,      mode == MODE_DRAW_RECT)
+        self._vtoolbar.ToggleTool(ID_DRAW_TEXT,      mode == MODE_DRAW_TEXT)
+        self._vtoolbar.ToggleTool(ID_DELETE,         mode == MODE_DELETE)
         if mode == MODE_SELECT:
             self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
         elif mode == MODE_NET_HIGHLIGHT:
             self.SetStatusText('Mode: Highlight Net — click any hole to highlight its net  [Esc] exit', 1)
         elif mode == MODE_WIRE:
             self.SetStatusText('Mode: Draw Wire — click start, click end  [Esc] cancel', 1)
+        elif mode == MODE_DRAW_LINE:
+            self.SetStatusText('Mode: Draw Line — click start point, click end point  [Esc] cancel', 1)
+        elif mode == MODE_DRAW_RECT:
+            self.SetStatusText('Mode: Draw Rectangle — click one corner, click opposite corner  [Esc] cancel', 1)
+        elif mode == MODE_DRAW_TEXT:
+            self.SetStatusText('Mode: Add Text — click where to place the annotation  [Esc] exit', 1)
         elif mode == MODE_DELETE:
-            self.SetStatusText('Mode: Delete — click component or wire  [Esc] cancel', 1)
+            self.SetStatusText('Mode: Delete — click component, wire, or annotation  [Esc] cancel', 1)
 
     def _on_select(self, _evt) -> None:
         self._set_mode(MODE_SELECT)
 
     def _on_net_highlight(self, _evt) -> None:
         if self.canvas.mode == MODE_NET_HIGHLIGHT:
-            self._set_mode(MODE_SELECT)   # toggle off
+            self._set_mode(MODE_SELECT)
         else:
             self._set_mode(MODE_NET_HIGHLIGHT)
+
+    def _on_draw_line(self, _evt) -> None:
+        if self.canvas.mode == MODE_DRAW_LINE:
+            self._set_mode(MODE_SELECT)
+        else:
+            self._set_mode(MODE_DRAW_LINE)
+
+    def _on_draw_rect(self, _evt) -> None:
+        if self.canvas.mode == MODE_DRAW_RECT:
+            self._set_mode(MODE_SELECT)
+        else:
+            self._set_mode(MODE_DRAW_RECT)
+
+    def _on_draw_text(self, _evt) -> None:
+        if self.canvas.mode == MODE_DRAW_TEXT:
+            self._set_mode(MODE_SELECT)
+        else:
+            self._set_mode(MODE_DRAW_TEXT)
 
     def _on_wire(self, _evt) -> None:
         self._set_mode(MODE_WIRE)
@@ -906,7 +953,8 @@ class BreadboardWindow(wx.Frame):
                 return
             path = dlg.GetPath()
         try:
-            save_session(self.board, self._netlist_path, path)
+            ann_json = [self.canvas._ann_to_json(a) for a in self.canvas._annotations]
+            save_session(self.board, self._netlist_path, path, annotations=ann_json)
             self.SetStatusText(f'Session saved to {path}', 0)
         except Exception as exc:
             wx.MessageBox(f'Failed to save session:\n{exc}', 'Save session',
@@ -936,6 +984,10 @@ class BreadboardWindow(wx.Frame):
         self.canvas.reload_board(self.board)
         self.tray.board = self.board
         self.canvas.clear_highlights()
+        # Restore annotations
+        ann_raw = result.get('annotations', [])
+        self.canvas._annotations = [a for d in ann_raw
+                                     if (a := self.canvas._ann_from_json(d)) is not None]
 
         # Sync layout prefs from saved session
         saved_layout = result.get('board_layout', 'full')

@@ -67,7 +67,8 @@ def _hole_from_json(data: list) -> Hole:
 # Public API
 # ---------------------------------------------------------------------------
 
-def save_session(board: Breadboard, netlist_path: Optional[str], path: str) -> None:
+def save_session(board: Breadboard, netlist_path: Optional[str], path: str,
+                 annotations: Optional[list] = None) -> None:
     """Serialise the current board state to a .kicad_bbrd JSON file."""
     doc: Dict[str, Any] = {
         'version': SESSION_VERSION,
@@ -122,6 +123,9 @@ def save_session(board: Breadboard, netlist_path: Optional[str], path: str) -> N
         doc['module_positions'] = {
             ref: list(pos) for ref, pos in board.module_positions.items()
         }
+
+    if annotations:
+        doc['annotations'] = annotations   # already JSON-serialisable dicts
 
     Path(path).write_text(json.dumps(doc, indent=2), encoding='utf-8')
 
@@ -197,4 +201,5 @@ def load_session(path: str) -> Dict[str, Any]:
         'netlist_path': raw.get('netlist', '') or None,
         'board': board,
         'board_layout': board_cfg.get('layout', 'full'),
+        'annotations': raw.get('annotations', []),
     }

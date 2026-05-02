@@ -149,6 +149,27 @@ MODE_WIRE          = 'wire'
 MODE_DELETE        = 'delete'
 MODE_PROBE         = 'probe'
 MODE_NET_HIGHLIGHT = 'net_highlight'
+MODE_DRAW_LINE     = 'draw_line'
+MODE_DRAW_RECT     = 'draw_rect'
+MODE_DRAW_TEXT     = 'draw_text'
+
+_DRAW_MODES = frozenset({MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_TEXT})
+
+
+@dataclass
+class DrawLine:
+    x1: float; y1: float; x2: float; y2: float
+    color: str = '#333333'; width: int = 2
+
+@dataclass
+class DrawRect:
+    x1: float; y1: float; x2: float; y2: float
+    color: str = '#333333'; width: int = 2
+
+@dataclass
+class DrawText:
+    x: float; y: float; text: str
+    color: str = '#222222'; font_size: int = 11
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +662,11 @@ class BreadboardCanvas(wx.Panel):
         self._highlighted_holes: Set[Hole] = set()   # from validation
         self._highlight_kind: Optional[IssueKind] = None
         self._net_hl_holes: Set[Hole] = set()        # from net-highlight mode
+
+        self._annotations: List = []                 # DrawLine / DrawRect / DrawText
+        self._draw_start: Optional[Tuple[float, float]] = None   # in-progress line/rect
+        self._draw_preview: Optional[Tuple[float, float]] = None  # live mouse pos
+        self._hover_ann_idx: Optional[int] = None    # annotation under cursor in DELETE mode
         # (x, y, IssueKind) for each validation issue with locatable holes
         self._validation_icons: List[Tuple[int, int, IssueKind]] = []
 
@@ -721,6 +747,33 @@ class BreadboardCanvas(wx.Panel):
     # Undo / redo
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _ann_to_json(a) -> dict:
+        if isinstance(a, DrawLine):
+            return {'kind': 'line', 'x1': a.x1, 'y1': a.y1, 'x2': a.x2, 'y2': a.y2,
+                    'color': a.color, 'width': a.width}
+        if isinstance(a, DrawRect):
+            return {'kind': 'rect', 'x1': a.x1, 'y1': a.y1, 'x2': a.x2, 'y2': a.y2,
+                    'color': a.color, 'width': a.width}
+        if isinstance(a, DrawText):
+            return {'kind': 'text', 'x': a.x, 'y': a.y, 'text': a.text,
+                    'color': a.color, 'font_size': a.font_size}
+        return {}
+
+    @staticmethod
+    def _ann_from_json(d: dict):
+        k = d.get('kind')
+        if k == 'line':
+            return DrawLine(d['x1'], d['y1'], d['x2'], d['y2'],
+                            d.get('color', '#333333'), d.get('width', 2))
+        if k == 'rect':
+            return DrawRect(d['x1'], d['y1'], d['x2'], d['y2'],
+                            d.get('color', '#333333'), d.get('width', 2))
+        if k == 'text':
+            return DrawText(d['x'], d['y'], d['text'],
+                            d.get('color', '#222222'), d.get('font_size', 11))
+        return None
+
     def _board_snapshot(self) -> dict:
         """Capture the full mutable board state as a JSON-serialisable dict."""
         from .model.session import _hole_to_json
@@ -749,6 +802,7 @@ class BreadboardCanvas(wx.Panel):
             },
             'module_positions': {ref: list(pos)
                                   for ref, pos in b.module_positions.items()},
+            'annotations': [self._ann_to_json(a) for a in self._annotations],
         }
 
     def _restore_snapshot(self, snap: dict) -> None:
@@ -785,6 +839,8 @@ class BreadboardCanvas(wx.Panel):
                 b.set_probe_label_offset(name, int(off[0]), int(off[1]))
         for ref, pos in snap.get('module_positions', {}).items():
             b.set_module_position(ref, int(pos[0]), int(pos[1]))
+        self._annotations = [a for d in snap.get('annotations', [])
+                              if (a := self._ann_from_json(d)) is not None]
 
         self._populate_module_pins()
 
@@ -858,6 +914,11 @@ class BreadboardCanvas(wx.Panel):
             self._hover_probe_name = None
         if mode != MODE_NET_HIGHLIGHT:
             self._net_hl_holes = set()
+        if mode not in _DRAW_MODES:
+            self._draw_start = None
+            self._draw_preview = None
+        if mode != MODE_DELETE:
+            self._hover_ann_idx = None
         self.Refresh()
 
     def begin_probe_place(self, probe_name: str) -> None:
@@ -1089,6 +1150,8 @@ class BreadboardCanvas(wx.Panel):
             self._wire_start = None
             self._drag_comp = None
             self._selected_wire = None
+            self._draw_start = None
+            self._draw_preview = None
             self.Refresh()
         elif key in (ord('R'), ord('r')):
             # Rotate during placement, or rotate selected component.
@@ -1178,6 +1241,34 @@ class BreadboardCanvas(wx.Panel):
                 self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
             else:
                 self._net_hl_holes = set()
+            self.Refresh()
+            return
+
+        if self.mode in (MODE_DRAW_LINE, MODE_DRAW_RECT):
+            if self._draw_start is None:
+                self._draw_start = (px, py)
+                self._draw_preview = (px, py)
+            else:
+                x1, y1 = self._draw_start
+                if abs(px - x1) > 2 or abs(py - y1) > 2:
+                    self.push_undo()
+                    if self.mode == MODE_DRAW_LINE:
+                        self._annotations.append(DrawLine(x1, y1, px, py))
+                    else:
+                        self._annotations.append(DrawRect(x1, y1, px, py))
+                self._draw_start = None
+                self._draw_preview = None
+            self.Refresh()
+            return
+
+        if self.mode == MODE_DRAW_TEXT:
+            dlg = wx.TextEntryDialog(self, 'Text:', 'Add text annotation', '')
+            if dlg.ShowModal() == wx.ID_OK:
+                text = dlg.GetValue().strip()
+                if text:
+                    self.push_undo()
+                    self._annotations.append(DrawText(px, py, text))
+            dlg.Destroy()
             self.Refresh()
             return
 
@@ -1425,16 +1516,20 @@ class BreadboardCanvas(wx.Panel):
         if self.mode == MODE_PROBE:
             h = self.layout.nearest_hole(px, py)
             self._probe_hover = h if h is not None and not isinstance(h, Terminal) else None
+        if self.mode in _DRAW_MODES and self._draw_start is not None:
+            self._draw_preview = (px, py)
         if self.mode == MODE_DELETE:
             self._hover_ref = self._comp_at(px, py)
             self._hover_wire = self._wire_at(px, py) if not self._hover_ref else None
             self._hover_probe_name = None
             if not self._hover_ref and not self._hover_wire:
                 self._hover_probe_name = self._probe_label_at(px, py)
+            self._hover_ann_idx = self._ann_at(px, py) if not self._hover_ref and not self._hover_wire and not self._hover_probe_name else None
         else:
             self._hover_ref = None
             self._hover_wire = None
             self._hover_probe_name = None
+            self._hover_ann_idx = None
         self.Refresh()
 
     def _on_right_down(self, evt: wx.MouseEvent) -> None:
@@ -1583,6 +1678,25 @@ class BreadboardCanvas(wx.Panel):
                 return name
         return None
 
+    def _ann_at(self, px: float, py: float, tol: float = 8.0) -> Optional[int]:
+        """Return the index of the annotation closest to (px, py), or None."""
+        for i, ann in enumerate(self._annotations):
+            if isinstance(ann, DrawLine):
+                if _point_to_segment_dist(px, py, ann.x1, ann.y1, ann.x2, ann.y2) < tol:
+                    return i
+            elif isinstance(ann, DrawRect):
+                x1, y1, x2, y2 = ann.x1, ann.y1, ann.x2, ann.y2
+                edges = [(x1, y1, x2, y1), (x2, y1, x2, y2),
+                         (x2, y2, x1, y2), (x1, y2, x1, y1)]
+                if any(_point_to_segment_dist(px, py, *e) < tol for e in edges):
+                    return i
+            elif isinstance(ann, DrawText):
+                char_w, line_h = 7, 14
+                tw = len(ann.text) * char_w
+                if ann.x <= px <= ann.x + tw and ann.y <= py <= ann.y + line_h:
+                    return i
+        return None
+
     def _try_delete(self, px: int, py: int) -> None:
         ref = self._comp_at(px, py)
         if ref:
@@ -1606,6 +1720,13 @@ class BreadboardCanvas(wx.Panel):
         if w:
             self.push_undo()
             self.board.remove_wire(w)
+            self.Refresh()
+            return
+        idx = self._ann_at(px, py)
+        if idx is not None:
+            self.push_undo()
+            self._annotations.pop(idx)
+            self._hover_ann_idx = None
             self.Refresh()
 
     # ------------------------------------------------------------------
@@ -1674,6 +1795,7 @@ class BreadboardCanvas(wx.Panel):
         if self._wire_start:
             self._draw_wire_start_indicator(dc)
 
+        self._draw_annotations(dc)
         self._draw_column_labels(dc)
         self._draw_validation_icons(dc)
         self._draw_sim_overlay(dc)
@@ -4180,6 +4302,44 @@ class BreadboardCanvas(wx.Panel):
                 .Style(wx.PENSTYLE_SHORT_DASH)
             ))
             gc.StrokeLine(xy[0], xy[1], mx, my)
+
+    def _draw_annotations(self, dc: wx.DC) -> None:
+        """Draw user annotation shapes (lines, rectangles, text) on the canvas."""
+        hover = self._hover_ann_idx
+
+        for i, ann in enumerate(self._annotations):
+            is_hover = (i == hover)
+            if isinstance(ann, DrawLine):
+                color = '#ff4444' if is_hover else ann.color
+                dc.SetPen(wx.Pen(wx.Colour(color), ann.width + (2 if is_hover else 0)))
+                dc.DrawLine(int(ann.x1), int(ann.y1), int(ann.x2), int(ann.y2))
+            elif isinstance(ann, DrawRect):
+                color = '#ff4444' if is_hover else ann.color
+                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetPen(wx.Pen(wx.Colour(color), ann.width + (2 if is_hover else 0)))
+                x = int(min(ann.x1, ann.x2)); y = int(min(ann.y1, ann.y2))
+                w = int(abs(ann.x2 - ann.x1)); h = int(abs(ann.y2 - ann.y1))
+                dc.DrawRectangle(x, y, w, h)
+            elif isinstance(ann, DrawText):
+                color = '#ff4444' if is_hover else ann.color
+                dc.SetFont(wx.Font(ann.font_size, wx.FONTFAMILY_DEFAULT,
+                                   wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+                dc.SetTextForeground(wx.Colour(color))
+                dc.SetBackgroundMode(wx.TRANSPARENT)
+                dc.DrawText(ann.text, int(ann.x), int(ann.y))
+
+        # In-progress line/rect preview (dashed grey — use solid to avoid GTK scaled-DC issue)
+        if self._draw_start is not None and self._draw_preview is not None:
+            x1, y1 = self._draw_start
+            x2, y2 = self._draw_preview
+            dc.SetPen(wx.Pen(wx.Colour('#999999'), 1))
+            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            if self.mode == MODE_DRAW_LINE:
+                dc.DrawLine(int(x1), int(y1), int(x2), int(y2))
+            elif self.mode == MODE_DRAW_RECT:
+                x = int(min(x1, x2)); y = int(min(y1, y2))
+                w = int(abs(x2 - x1)); h = int(abs(y2 - y1))
+                dc.DrawRectangle(x, y, w, h)
 
     def _draw_validation_icons(self, dc: wx.DC) -> None:
         """Draw ⚡ / ? icons at the centroid of each validation issue's holes."""
