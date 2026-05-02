@@ -1005,6 +1005,23 @@ class BreadboardCanvas(wx.Panel):
         self._sim_result = None
         self.Refresh()
 
+    def _led_forward_voltage(self, ref: str) -> Optional[float]:
+        """Return simulated V_anode - V_cathode for a placed LED, or None."""
+        if self._sim_result is None or not self._sim_result.net_voltages:
+            return None
+        if self.netlist is None:
+            return None
+        nets = self.netlist.nets_for_ref(ref)
+        net_k = nets.get(1)   # pin 1 = K
+        net_a = nets.get(2)   # pin 2 = A
+        if net_k is None or net_a is None:
+            return None
+        v_k = self._sim_result.net_voltages.get(net_k.name)
+        v_a = self._sim_result.net_voltages.get(net_a.name)
+        if v_k is None or v_a is None:
+            return None
+        return v_a - v_k
+
     def set_rpi_long_labels(self, long: bool) -> None:
         self._rpi_long_labels = long
         self.Refresh()
@@ -3189,6 +3206,25 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
             dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
 
+            # Glow halo when simulation shows the LED is forward-biased
+            vf = self._led_forward_voltage(ref)
+            led_on = vf is not None and vf >= 1.0
+            if led_on:
+                intensity = min(1.0, (vf - 1.0) / 1.0)   # 0→1 over Vf 1V→2V
+                gc_glow = _make_gc(dc)
+                if gc_glow is not None:
+                    bc = body_color
+                    alpha = int(180 * intensity)
+                    glow_r = 32.0
+                    center_c = wx.Colour(bc.Red(), bc.Green(), bc.Blue(), alpha)
+                    edge_c   = wx.Colour(bc.Red(), bc.Green(), bc.Blue(), 0)
+                    glow_brush = gc_glow.CreateRadialGradientBrush(
+                        mx, my, mx, my, glow_r, center_c, edge_c)
+                    gc_glow.SetBrush(glow_brush)
+                    gc_glow.SetPen(gc_glow.CreatePen(
+                        wx.GraphicsPenInfo(wx.TransparentColour).Width(0)))
+                    gc_glow.DrawEllipse(mx - glow_r, my - glow_r, 2 * glow_r, 2 * glow_r)
+
             # All rotated details via GC; -x direction = cathode (pin 1 = K)
             gc = _make_gc(dc)
             if gc is not None:
@@ -3213,17 +3249,19 @@ class BreadboardCanvas(wx.Panel):
                 gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#111111'))))
                 gc.FillPath(sp)
 
-                # Inner lens: radial gradient from bright highlight to lens_color
+                # Inner lens: brighter when LED is on, dimmer when off
                 bc = body_color
+                lens_t    = 0.55 if led_on else 0.35
+                hilite_t  = 0.97 if led_on else 0.82
                 lens_color = wx.Colour(
-                    min(255, int(bc.Red()   + (255 - bc.Red())   * 0.35)),
-                    min(255, int(bc.Green() + (255 - bc.Green()) * 0.35)),
-                    min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.35)),
+                    min(255, int(bc.Red()   + (255 - bc.Red())   * lens_t)),
+                    min(255, int(bc.Green() + (255 - bc.Green()) * lens_t)),
+                    min(255, int(bc.Blue()  + (255 - bc.Blue())  * lens_t)),
                 )
                 highlight = wx.Colour(
-                    min(255, int(bc.Red()   + (255 - bc.Red())   * 0.82)),
-                    min(255, int(bc.Green() + (255 - bc.Green()) * 0.82)),
-                    min(255, int(bc.Blue()  + (255 - bc.Blue())  * 0.82)),
+                    min(255, int(bc.Red()   + (255 - bc.Red())   * hilite_t)),
+                    min(255, int(bc.Green() + (255 - bc.Green()) * hilite_t)),
+                    min(255, int(bc.Blue()  + (255 - bc.Blue())  * hilite_t)),
                 )
                 fx, fy = -r_inner * 0.25, -r_inner * 0.25
                 lens_grad = gc.CreateRadialGradientBrush(
