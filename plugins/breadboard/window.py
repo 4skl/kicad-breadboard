@@ -23,7 +23,8 @@ import wx
 _RESOURCES = Path(__file__).parent / 'resources'
 import wx.lib.stattext
 
-from .canvas import BreadboardCanvas, CanvasLayout, MODE_SELECT, MODE_WIRE, MODE_DELETE, WIRE_COLORS
+from .canvas import (BreadboardCanvas, CanvasLayout,
+                     MODE_SELECT, MODE_WIRE, MODE_DELETE, MODE_NET_HIGHLIGHT, WIRE_COLORS)
 from .tray import ComponentTray
 from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
@@ -467,7 +468,7 @@ class BreadboardWindow(wx.Frame):
         vt.Realize()
 
         # Disable placeholder tools until implemented
-        for _id in (ID_NET_HIGHLIGHT, ID_NOCONN, ID_ADD_LABEL, ID_ADD_GLABEL,
+        for _id in (ID_NOCONN, ID_ADD_LABEL, ID_ADD_GLABEL,
                     ID_ADD_POWER, ID_ADD_JUNCTION, ID_MEASURE):
             vt.EnableTool(_id, False)
 
@@ -590,9 +591,10 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_save,     id=ID_SAVE)
         self.Bind(wx.EVT_TOOL, self._on_update,   id=ID_UPDATE)
         self.Bind(wx.EVT_TOOL, self._on_export,   id=ID_EXPORT)
-        self.Bind(wx.EVT_TOOL, self._on_select,   id=ID_SELECT)
-        self.Bind(wx.EVT_TOOL, self._on_wire,     id=ID_WIRE)
-        self.Bind(wx.EVT_TOOL, self._on_delete,   id=ID_DELETE)
+        self.Bind(wx.EVT_TOOL, self._on_select,        id=ID_SELECT)
+        self.Bind(wx.EVT_TOOL, self._on_wire,          id=ID_WIRE)
+        self.Bind(wx.EVT_TOOL, self._on_delete,        id=ID_DELETE)
+        self.Bind(wx.EVT_TOOL, self._on_net_highlight, id=ID_NET_HIGHLIGHT)
         self.Bind(wx.EVT_TOOL, self._on_zoom_in,  id=ID_ZOOM_IN)
         self.Bind(wx.EVT_TOOL, self._on_zoom_out, id=ID_ZOOM_OUT)
         self.Bind(wx.EVT_TOOL, self._on_zoom_fit, id=ID_ZOOM_FIT)
@@ -622,11 +624,14 @@ class BreadboardWindow(wx.Frame):
         self.toolbar.ToggleTool(ID_WIRE,   mode == MODE_WIRE)
         self.toolbar.ToggleTool(ID_DELETE, mode == MODE_DELETE)
         # Right vtoolbar: all ITEM_CHECK, managed manually
-        self._vtoolbar.ToggleTool(ID_SELECT, mode == MODE_SELECT)
-        self._vtoolbar.ToggleTool(ID_WIRE,   mode == MODE_WIRE)
-        self._vtoolbar.ToggleTool(ID_DELETE, mode == MODE_DELETE)
+        self._vtoolbar.ToggleTool(ID_SELECT,       mode == MODE_SELECT)
+        self._vtoolbar.ToggleTool(ID_NET_HIGHLIGHT, mode == MODE_NET_HIGHLIGHT)
+        self._vtoolbar.ToggleTool(ID_WIRE,         mode == MODE_WIRE)
+        self._vtoolbar.ToggleTool(ID_DELETE,       mode == MODE_DELETE)
         if mode == MODE_SELECT:
             self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
+        elif mode == MODE_NET_HIGHLIGHT:
+            self.SetStatusText('Mode: Highlight Net — click any hole to highlight its net  [Esc] exit', 1)
         elif mode == MODE_WIRE:
             self.SetStatusText('Mode: Draw Wire — click start, click end  [Esc] cancel', 1)
         elif mode == MODE_DELETE:
@@ -634,6 +639,12 @@ class BreadboardWindow(wx.Frame):
 
     def _on_select(self, _evt) -> None:
         self._set_mode(MODE_SELECT)
+
+    def _on_net_highlight(self, _evt) -> None:
+        if self.canvas.mode == MODE_NET_HIGHLIGHT:
+            self._set_mode(MODE_SELECT)   # toggle off
+        else:
+            self._set_mode(MODE_NET_HIGHLIGHT)
 
     def _on_wire(self, _evt) -> None:
         self._set_mode(MODE_WIRE)

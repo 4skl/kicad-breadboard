@@ -144,10 +144,11 @@ WIRE_COLORS = [
     '#111111',  # black
 ]
 
-MODE_SELECT = 'select'
-MODE_WIRE   = 'wire'
-MODE_DELETE = 'delete'
-MODE_PROBE  = 'probe'
+MODE_SELECT        = 'select'
+MODE_WIRE          = 'wire'
+MODE_DELETE        = 'delete'
+MODE_PROBE         = 'probe'
+MODE_NET_HIGHLIGHT = 'net_highlight'
 
 
 # ---------------------------------------------------------------------------
@@ -639,6 +640,7 @@ class BreadboardCanvas(wx.Panel):
 
         self._highlighted_holes: Set[Hole] = set()   # from validation
         self._highlight_kind: Optional[IssueKind] = None
+        self._net_hl_holes: Set[Hole] = set()        # from net-highlight mode
         # (x, y, IssueKind) for each validation issue with locatable holes
         self._validation_icons: List[Tuple[int, int, IssueKind]] = []
 
@@ -854,6 +856,8 @@ class BreadboardCanvas(wx.Panel):
             self._probe_hover = None
         if mode != MODE_DELETE:
             self._hover_probe_name = None
+        if mode != MODE_NET_HIGHLIGHT:
+            self._net_hl_holes = set()
         self.Refresh()
 
     def begin_probe_place(self, probe_name: str) -> None:
@@ -1164,6 +1168,17 @@ class BreadboardCanvas(wx.Panel):
 
         if self.mode == MODE_DELETE:
             self._try_delete(px, py)
+            return
+
+        if self.mode == MODE_NET_HIGHLIGHT:
+            hole = self.layout.nearest_hole(px, py)
+            if hole is not None:
+                uf = self.board.build_connectivity()
+                root = uf.find(hole)
+                self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
+            else:
+                self._net_hl_holes = set()
+            self.Refresh()
             return
 
         if self.mode == MODE_SELECT:
@@ -1932,19 +1947,25 @@ class BreadboardCanvas(wx.Panel):
                 self._draw_hole_dot(dc, cx, ry, h)
 
     def _draw_hole_dot(self, dc: wx.DC, cx: int, cy: int, hole: Hole) -> None:
+        # Net-highlight ring (outermost — drawn first so others layer on top)
+        if hole in self._net_hl_holes:
+            dc.SetBrush(wx.Brush('#00ccff'))
+            dc.SetPen(wx.Pen('#0099cc', 1))
+            dc.DrawCircle(cx, cy, HOLE_R + 4)
+        # Validation ring
         if hole in self._highlighted_holes:
             color = '#ff4444' if self._highlight_kind == IssueKind.SHORT else '#ffaa00'
             dc.SetBrush(wx.Brush(color))
             dc.SetPen(wx.Pen(color, 1))
             dc.DrawCircle(cx, cy, HOLE_R + 2)
-        elif self.board.is_hole_occupied(hole):
+        # Normal hole dot
+        if self.board.is_hole_occupied(hole):
             dc.SetBrush(wx.Brush('#888888'))
             dc.SetPen(wx.Pen('#555555', 1))
-            dc.DrawCircle(cx, cy, HOLE_R)
         else:
             dc.SetBrush(wx.Brush('#444444'))
             dc.SetPen(wx.Pen('#222222', 1))
-            dc.DrawCircle(cx, cy, HOLE_R)
+        dc.DrawCircle(cx, cy, HOLE_R)
 
     def _draw_pin_drag_preview(self, dc: wx.DC) -> None:
         """Draw the component being pin-dragged at its current (live) position."""
@@ -2004,6 +2025,15 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_wires(self, dc: wx.DC) -> None:
         lay = self.layout
+        # Net-highlight halo: draw a fat cyan line behind each wire on the highlighted net
+        if self._net_hl_holes:
+            dc.SetPen(wx.Pen(wx.Colour('#00ccff'), 9))
+            for wire in self.board.wires:
+                if wire.h1 in self._net_hl_holes and wire.h2 in self._net_hl_holes:
+                    xy1 = lay.hole_xy(wire.h1)
+                    xy2 = lay.hole_xy(wire.h2)
+                    if xy1 and xy2:
+                        dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
         for wire in self.board.wires:
             xy1 = lay.hole_xy(wire.h1)
             xy2 = lay.hole_xy(wire.h2)
