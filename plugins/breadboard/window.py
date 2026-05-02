@@ -32,7 +32,6 @@ from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
     Breadboard, Netlist,
     parse_netlist, find_netlist, find_schematic,
-    parse_schematic,
     simulate, SimResult,
     validate, IssueKind,
     ALL_DEFS, guess_type_id,
@@ -1348,11 +1347,6 @@ class BreadboardWindow(wx.Frame):
                     net_path = exported
         if net_path:
             self._load_netlist(str(net_path))
-        else:
-            # kicad-cli unavailable — fall back to direct schematic parsing
-            sch = find_schematic(project_path)
-            if sch:
-                self._load_netlist(str(sch))
 
     def _on_term_choice(self, term_name: str, evt) -> None:
         if self._refreshing_choices:
@@ -1433,11 +1427,16 @@ class BreadboardWindow(wx.Frame):
             self._refreshing_choices = False
 
     def _load_netlist(self, path: str) -> None:
+        if path.endswith('.kicad_sch'):
+            # Export via kicad-cli first; direct parsing is not used
+            from pathlib import Path as _Path
+            self._project_path = str(_Path(path).parent)
+            net_path = self._export_netlist(silent=False)
+            if not net_path:
+                return
+            path = str(net_path)
         try:
-            if path.endswith('.kicad_sch'):
-                self.netlist = parse_schematic(path)
-            else:
-                self.netlist = parse_netlist(path)
+            self.netlist = parse_netlist(path)
         except Exception as exc:
             wx.MessageBox(f'Failed to load netlist:\n{exc}',
                           'Error', wx.OK | wx.ICON_ERROR, self)
