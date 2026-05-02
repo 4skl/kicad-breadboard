@@ -25,7 +25,7 @@ import wx.lib.stattext
 
 from .canvas import (BreadboardCanvas, CanvasLayout,
                      MODE_SELECT, MODE_WIRE, MODE_DELETE, MODE_NET_HIGHLIGHT,
-                     MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_TEXT,
+                     MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_TEXT, MODE_DRAW_CIRCLE,
                      WIRE_COLORS)
 from .tray import ComponentTray
 from .prefs import Preferences, save_prefs, load_prefs
@@ -77,6 +77,7 @@ ID_MEASURE       = wx.NewIdRef()
 ID_DRAW_LINE     = wx.NewIdRef()
 ID_DRAW_RECT     = wx.NewIdRef()
 ID_DRAW_TEXT     = wx.NewIdRef()
+ID_DRAW_CIRCLE   = wx.NewIdRef()
 
 # Wire color picker — labels mirror WIRE_COLORS order; first entry means "cycle automatically"
 _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
@@ -467,6 +468,9 @@ class BreadboardWindow(wx.Frame):
         vt.AddTool(ID_DRAW_RECT, 'Draw Rectangle',
                    _kicad_icon('add_rectangle_24.png'),
                    shortHelp='Draw annotation rectangle — click corner, click opposite corner', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_DRAW_CIRCLE, 'Draw Circle',
+                   _kicad_icon('add_circle_24.png'),
+                   shortHelp='Draw annotation circle — click center, click radius', kind=wx.ITEM_CHECK)
         vt.AddTool(ID_DRAW_TEXT, 'Add Text',
                    _kicad_icon('text_24.png'),
                    shortHelp='Place text annotation — click position, type text', kind=wx.ITEM_CHECK)
@@ -613,6 +617,7 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_net_highlight, id=ID_NET_HIGHLIGHT)
         self.Bind(wx.EVT_TOOL, self._on_draw_line,     id=ID_DRAW_LINE)
         self.Bind(wx.EVT_TOOL, self._on_draw_rect,     id=ID_DRAW_RECT)
+        self.Bind(wx.EVT_TOOL, self._on_draw_circle,   id=ID_DRAW_CIRCLE)
         self.Bind(wx.EVT_TOOL, self._on_draw_text,     id=ID_DRAW_TEXT)
         self.Bind(wx.EVT_TOOL, self._on_zoom_in,  id=ID_ZOOM_IN)
         self.Bind(wx.EVT_TOOL, self._on_zoom_out, id=ID_ZOOM_OUT)
@@ -648,6 +653,7 @@ class BreadboardWindow(wx.Frame):
         self._vtoolbar.ToggleTool(ID_WIRE,           mode == MODE_WIRE)
         self._vtoolbar.ToggleTool(ID_DRAW_LINE,      mode == MODE_DRAW_LINE)
         self._vtoolbar.ToggleTool(ID_DRAW_RECT,      mode == MODE_DRAW_RECT)
+        self._vtoolbar.ToggleTool(ID_DRAW_CIRCLE,    mode == MODE_DRAW_CIRCLE)
         self._vtoolbar.ToggleTool(ID_DRAW_TEXT,      mode == MODE_DRAW_TEXT)
         self._vtoolbar.ToggleTool(ID_DELETE,         mode == MODE_DELETE)
         if mode == MODE_SELECT:
@@ -660,6 +666,8 @@ class BreadboardWindow(wx.Frame):
             self.SetStatusText('Mode: Draw Line — click start point, click end point  [Esc] cancel', 1)
         elif mode == MODE_DRAW_RECT:
             self.SetStatusText('Mode: Draw Rectangle — click one corner, click opposite corner  [Esc] cancel', 1)
+        elif mode == MODE_DRAW_CIRCLE:
+            self.SetStatusText('Mode: Draw Circle — click center, click to set radius  [Esc] cancel', 1)
         elif mode == MODE_DRAW_TEXT:
             self.SetStatusText('Mode: Add Text — click where to place the annotation  [Esc] exit', 1)
         elif mode == MODE_DELETE:
@@ -685,6 +693,12 @@ class BreadboardWindow(wx.Frame):
             self._set_mode(MODE_SELECT)
         else:
             self._set_mode(MODE_DRAW_RECT)
+
+    def _on_draw_circle(self, _evt) -> None:
+        if self.canvas.mode == MODE_DRAW_CIRCLE:
+            self._set_mode(MODE_SELECT)
+        else:
+            self._set_mode(MODE_DRAW_CIRCLE)
 
     def _on_draw_text(self, _evt) -> None:
         if self.canvas.mode == MODE_DRAW_TEXT:
