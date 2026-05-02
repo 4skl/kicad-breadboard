@@ -666,6 +666,9 @@ class BreadboardCanvas(wx.Panel):
         self.on_history_change: Optional[callable] = None  # called(can_undo, can_redo)
         self.on_restore: Optional[callable] = None  # called after undo/redo for full UI refresh
 
+        # Simulation overlay
+        self._sim_result = None   # SimResult or None
+
         # Undo / redo
         self._undo_stack: list = []
         self._redo_stack: list = []
@@ -956,6 +959,7 @@ class BreadboardCanvas(wx.Panel):
         self._highlighted_holes = set()
         self._highlight_kind = None
         self._validation_icons.clear()
+        self._sim_result = None
         self.Refresh()
 
     def set_validation_result(self, result) -> None:
@@ -991,6 +995,14 @@ class BreadboardCanvas(wx.Panel):
             all_holes.update(issue.holes)
         self._highlighted_holes = all_holes
         self._highlight_kind = result.issues[0].kind if result.issues else None
+        self.Refresh()
+
+    def set_simulation_result(self, result) -> None:
+        self._sim_result = result
+        self.Refresh()
+
+    def clear_simulation(self) -> None:
+        self._sim_result = None
         self.Refresh()
 
     def set_rpi_long_labels(self, long: bool) -> None:
@@ -1632,6 +1644,7 @@ class BreadboardCanvas(wx.Panel):
 
         self._draw_column_labels(dc)
         self._draw_validation_icons(dc)
+        self._draw_sim_overlay(dc)
 
         # Legend is drawn in screen coordinates (reset transform first)
         dc.SetUserScale(1.0, 1.0)
@@ -3355,10 +3368,28 @@ class BreadboardCanvas(wx.Panel):
                             gc.DrawRectangle(bx_pos, -body_h / 2 + 1, 5, body_h - 2)
 
                 elif placed.type_id in ('D', 'D_Zener'):
-                    # White cathode stripe, inset 2 px top/bottom to stay inside rounded corners
-                    gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#ffffff'))))
-                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#ffffff')).Width(0)))
-                    gc.DrawRectangle(-body_half, -body_h / 2 + 2, 4, body_h - 4)
+                    # Cathode stripe: a path shaped like the left slice of the rounded
+                    # rectangle — left corners rounded (r=4), right side straight.
+                    # This never overflows the body border.
+                    sp_r = 4.0
+                    sp = gc.CreatePath()
+                    sp.MoveToPoint(-body_half + sp_r, -body_h / 2)
+                    # TL arc: from "pointing up" (-π/2) to "pointing left" (-π), CCW on screen
+                    sp.AddArc(-body_half + sp_r, -body_h / 2 + sp_r, sp_r,
+                               -math.pi / 2, -math.pi, False)
+                    sp.AddLineToPoint(-body_half, body_h / 2 - sp_r)
+                    # BL arc: from "pointing left" (π) to "pointing down" (π/2), CW on screen
+                    sp.AddArc(-body_half + sp_r, body_h / 2 - sp_r, sp_r,
+                               math.pi, math.pi / 2, True)
+                    sp.CloseSubpath()
+                    _stripe = wx.Colour('#cccccc')
+                    gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
+                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
+                    gc.FillPath(sp)
+                    # Redraw body border on top so the stripe doesn't obscure it
+                    gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, sp_r)
 
             else:
                 # Fallback for SVGFileDC: components are always horizontal on a breadboard
@@ -3394,9 +3425,13 @@ class BreadboardCanvas(wx.Panel):
                             dc.DrawRectangle(band_x, by + 1, 5, int(body_h) - 2)
 
                 elif placed.type_id in ('D', 'D_Zener'):
-                    dc.SetBrush(wx.Brush('#ffffff'))
-                    dc.SetPen(wx.Pen('#ffffff', 0))
-                    dc.DrawRectangle(bx, by + 2, 4, int(body_h) - 4)
+                    # DC fallback: inset stripe stays clear of corner overflow
+                    dc.SetBrush(wx.Brush('#cccccc'))
+                    dc.SetPen(wx.Pen('#cccccc', 0))
+                    dc.DrawRectangle(bx, by + 4, 4, int(body_h) - 8)
+                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetPen(wx.Pen(border_color, pen_w))
+                    dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
 
     def _draw_pushbutton(self, dc: wx.DC, comp_def: ComponentDef,
                          placed: PlacedComponent, ref: str,
@@ -4110,6 +4145,50 @@ class BreadboardCanvas(wx.Panel):
             dc.SetTextForeground('#ffffff')
             tw, th = dc.GetTextExtent(symbol)
             dc.DrawText(symbol, cx - tw // 2, cy - th // 2)
+
+    def _draw_sim_overlay(self, dc: wx.DC) -> None:
+        """Draw voltage labels at each placed component's first-pin hole."""
+        if self._sim_result is None or not self._sim_result.net_voltages:
+            return
+        if not self.netlist:
+            return
+
+        dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                           wx.FONTWEIGHT_BOLD))
+
+        # Collect one label per net (avoid duplicates at same position)
+        drawn_positions: set = set()
+
+        for ref, placed in self.board.placements.items():
+            nets_for = self.netlist.nets_for_ref(ref)
+            for pin_num, net in nets_for.items():
+                voltage = self._sim_result.net_voltages.get(net.name)
+                if voltage is None:
+                    continue
+                hole = placed.pin_holes.get(pin_num)
+                if hole is None:
+                    continue
+                xy = self.layout.hole_xy(hole)
+                if xy is None:
+                    continue
+                cx, cy = xy
+                pos_key = (cx, cy)
+                if pos_key in drawn_positions:
+                    continue
+                drawn_positions.add(pos_key)
+
+                label = f'{voltage:.2f}V'
+                tw, th = dc.GetTextExtent(label)
+                bx, by = cx - tw // 2 - 2, cy - th - 7
+
+                # Background pill
+                dc.SetBrush(wx.Brush('#1a1a6a'))
+                dc.SetPen(wx.Pen('#1a1a6a', 0))
+                dc.DrawRoundedRectangle(bx, by, tw + 4, th + 2, 2)
+
+                # Label text
+                dc.SetTextForeground('#e0e0ff')
+                dc.DrawText(label, bx + 2, by + 1)
 
     def _draw_net_labels(self, dc: wx.DC) -> None:
         """Draw a legend box in the bottom-right corner listing signal nets.

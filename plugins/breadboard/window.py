@@ -29,6 +29,8 @@ from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
     Breadboard, Netlist,
     parse_netlist, find_netlist, find_schematic,
+    parse_schematic,
+    simulate, SimResult,
     validate, IssueKind,
     ALL_DEFS, guess_type_id,
     save_session, load_session,
@@ -60,6 +62,16 @@ ID_ZOOM_FIT     = wx.NewIdRef()
 ID_EESCHEMA     = wx.NewIdRef()
 ID_UNDO         = wx.NewIdRef()
 ID_REDO         = wx.NewIdRef()
+ID_SIMULATE     = wx.NewIdRef()
+
+# Right vertical toolbar — drawing/editing tool palette (mirrors Eeschema right toolbar)
+ID_NET_HIGHLIGHT = wx.NewIdRef()
+ID_NOCONN        = wx.NewIdRef()
+ID_ADD_LABEL     = wx.NewIdRef()
+ID_ADD_GLABEL    = wx.NewIdRef()
+ID_ADD_POWER     = wx.NewIdRef()
+ID_ADD_JUNCTION  = wx.NewIdRef()
+ID_MEASURE       = wx.NewIdRef()
 
 # Wire color picker — labels mirror WIRE_COLORS order; first entry means "cycle automatically"
 _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
@@ -147,7 +159,16 @@ class BreadboardWindow(wx.Frame):
 
         inner_splitter = wx.SplitterWindow(main_panel, style=wx.SP_LIVE_UPDATE)
 
-        self.canvas = BreadboardCanvas(inner_splitter, self.board, self.netlist)
+        # Wrap canvas + right vtoolbar together so the vtoolbar hugs the equipment pane
+        canvas_area = wx.Panel(inner_splitter)
+        self.canvas = BreadboardCanvas(canvas_area, self.board, self.netlist)
+        self._vtoolbar = self._build_vtoolbar(canvas_area)
+        _vtb_sep = wx.StaticLine(canvas_area, style=wx.LI_VERTICAL)
+        ca_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        ca_sizer.Add(self.canvas, 1, wx.EXPAND)
+        ca_sizer.Add(_vtb_sep, 0, wx.EXPAND)
+        ca_sizer.Add(self._vtoolbar, 0, wx.EXPAND)
+        canvas_area.SetSizer(ca_sizer)
 
         # --- Left panel: component tray only ---
         left_panel = wx.Panel(main_panel)
@@ -387,7 +408,7 @@ class BreadboardWindow(wx.Frame):
         tray_outer.Add(tray_sizer, 1, wx.EXPAND)
         tray_panel.SetSizer(tray_outer)
 
-        inner_splitter.SplitVertically(self.canvas, tray_panel, sashPosition=-260)
+        inner_splitter.SplitVertically(canvas_area, tray_panel, sashPosition=-260)
         inner_splitter.SetMinimumPaneSize(150)
         inner_splitter.SetSashGravity(1.0)
 
@@ -404,6 +425,54 @@ class BreadboardWindow(wx.Frame):
         self.GetStatusBar().SetStatusWidths([-3, -1])
         self.SetStatusText('Load a netlist, then click a component in the tray to place it.', 0)
         self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
+
+    def _build_vtoolbar(self, parent: wx.Window) -> wx.ToolBar:
+        """Right-side vertical tool palette, mirroring Eeschema's right toolbar."""
+        vt = wx.ToolBar(parent, style=wx.TB_VERTICAL | wx.TB_NODIVIDER)
+        vt.SetToolBitmapSize((24, 24))
+
+        # --- Pointer / view tools ---
+        vt.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png'),
+                   shortHelp='Select / Move  [Esc]', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_NET_HIGHLIGHT, 'Highlight Net',
+                   _kicad_icon('net_highlight_schematic_24.png'),
+                   shortHelp='Highlight net (coming soon)', kind=wx.ITEM_CHECK)
+        vt.AddSeparator()
+
+        # --- Wiring / connectivity tools ---
+        vt.AddTool(ID_WIRE, 'Wire', _kicad_icon('add_line_24.png'),
+                   shortHelp='Draw jumper wire  [W]', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_NOCONN, 'No Connect', _kicad_icon('noconn_24.png'),
+                   shortHelp='No-connect marker (coming soon)', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_ADD_LABEL, 'Net Label', _kicad_icon('add_label_24.png'),
+                   shortHelp='Place net label (coming soon)', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_ADD_GLABEL, 'Global Label', _kicad_icon('add_glabel_24.png'),
+                   shortHelp='Global label / terminal assign (coming soon)', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_ADD_POWER, 'Power Symbol', _kicad_icon('add_power_24.png'),
+                   shortHelp='Connect to power rail (coming soon)', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_ADD_JUNCTION, 'Junction', _kicad_icon('add_junction_24.png'),
+                   shortHelp='Add wire junction (coming soon)', kind=wx.ITEM_CHECK)
+        vt.AddSeparator()
+
+        # --- Delete ---
+        vt.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png'),
+                   shortHelp='Delete component or wire  [D]', kind=wx.ITEM_CHECK)
+        vt.AddSeparator()
+
+        # --- Annotation / measurement ---
+        vt.AddTool(ID_MEASURE, 'Measure', _kicad_icon('measurement_24.png'),
+                   shortHelp='Measurement tool (coming soon)', kind=wx.ITEM_CHECK)
+
+        vt.Realize()
+
+        # Disable placeholder tools until implemented
+        for _id in (ID_NET_HIGHLIGHT, ID_NOCONN, ID_ADD_LABEL, ID_ADD_GLABEL,
+                    ID_ADD_POWER, ID_ADD_JUNCTION, ID_MEASURE):
+            vt.EnableTool(_id, False)
+
+        # Reflect initial mode (SELECT)
+        vt.ToggleTool(ID_SELECT, True)
+        return vt
 
     def _build_menu(self) -> None:
         menu_bar = wx.MenuBar()
@@ -488,11 +557,13 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Open schematic in Eeschema')
         tb.AddSeparator()
 
-        # Validate and export
+        # Validate, simulate, and export
         tb.AddTool(ID_VALIDATE, 'Validate', _kicad_icon('erc_24.png'),
                    shortHelp='Check if your circuit matches the schematic')
         tb.AddTool(ID_CLEAR_WARNINGS, 'Clear ERC', _kicad_icon('ercwarn_24.png'),
                    shortHelp='Dismiss validation warning/short markers')
+        tb.AddTool(ID_SIMULATE, 'Simulate', _kicad_icon('sim_run_24.png'),
+                   shortHelp='Run SPICE DC simulation via ngspice')
         _export_icon = ('export_svg_24.png' if self.prefs.export_format == 'svg'
                         else 'export_png_24.png')
         tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon),
@@ -532,6 +603,7 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_report_issue,   id=ID_HELP_ISSUE)
         self.Bind(wx.EVT_TOOL, self._on_validate,       id=ID_VALIDATE)
         self.Bind(wx.EVT_TOOL, self._on_clear_warnings, id=ID_CLEAR_WARNINGS)
+        self.Bind(wx.EVT_TOOL, self._on_simulate,       id=ID_SIMULATE)
         self.Bind(wx.EVT_TOOL, self._on_clear,          id=ID_CLEAR)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
         for name, ch in self._term_choices.items():
@@ -542,12 +614,16 @@ class BreadboardWindow(wx.Frame):
     # ------------------------------------------------------------------
 
     def _set_mode(self, mode: str) -> None:
-        """Switch canvas mode and keep toolbar state in sync."""
+        """Switch canvas mode and keep both toolbars in sync."""
         self.canvas.set_mode(mode)
-        # Select/Wire are ITEM_RADIO (same group); Delete is ITEM_CHECK — toggle all explicitly.
+        # Top toolbar: Select/Wire are ITEM_RADIO; Delete is ITEM_CHECK
         self.toolbar.ToggleTool(ID_SELECT, mode == MODE_SELECT)
         self.toolbar.ToggleTool(ID_WIRE,   mode == MODE_WIRE)
         self.toolbar.ToggleTool(ID_DELETE, mode == MODE_DELETE)
+        # Right vtoolbar: all ITEM_CHECK, managed manually
+        self._vtoolbar.ToggleTool(ID_SELECT, mode == MODE_SELECT)
+        self._vtoolbar.ToggleTool(ID_WIRE,   mode == MODE_WIRE)
+        self._vtoolbar.ToggleTool(ID_DELETE, mode == MODE_DELETE)
         if mode == MODE_SELECT:
             self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
         elif mode == MODE_WIRE:
@@ -634,8 +710,11 @@ class BreadboardWindow(wx.Frame):
     def _on_open(self, _evt) -> None:
         with wx.FileDialog(
             self,
-            message='Open KiCad netlist',
-            wildcard='KiCad netlist (*.net)|*.net|All files (*)|*',
+            message='Open KiCad netlist or schematic',
+            wildcard='KiCad files (*.net;*.kicad_sch)|*.net;*.kicad_sch'
+                     '|KiCad netlist (*.net)|*.net'
+                     '|KiCad schematic (*.kicad_sch)|*.kicad_sch'
+                     '|All files (*)|*',
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
@@ -1131,6 +1210,38 @@ class BreadboardWindow(wx.Frame):
         self.canvas.clear_highlights()
         self.SetStatusText('Validation markers cleared.', 0)
 
+    def _on_simulate(self, _evt) -> None:
+        if self.netlist is None:
+            wx.MessageBox('Load a netlist or schematic before simulating.',
+                          'Simulate', wx.OK | wx.ICON_INFORMATION, self)
+            return
+        if not self.board.placements:
+            wx.MessageBox('Place some components on the board before simulating.',
+                          'Simulate', wx.OK | wx.ICON_INFORMATION, self)
+            return
+        if not self.board.terminal_nets.get('GND'):
+            wx.MessageBox('Assign the GND binding post to a schematic net before simulating.',
+                          'Simulate', wx.OK | wx.ICON_INFORMATION, self)
+            return
+
+        dlg = SimulationDialog(self, self.board, self.netlist)
+        if dlg.ShowModal() == wx.ID_OK:
+            tv = dlg.get_terminal_voltages()
+            self.SetStatusText('Running ngspice simulation…', 0)
+            self.Update()
+            result = simulate(self.board, self.netlist, tv)
+            if result.error:
+                wx.MessageBox(f'Simulation failed:\n{result.error}',
+                              'Simulate', wx.OK | wx.ICON_ERROR, self)
+                self.SetStatusText('Simulation failed.', 0)
+            else:
+                self.canvas.set_simulation_result(result)
+                n = len(result.net_voltages)
+                self.SetStatusText(
+                    f'Simulation complete — {n} node voltage(s) computed.  '
+                    'Click "Simulate → Clear" to remove overlay.', 0)
+        dlg.Destroy()
+
     def _on_clear(self, _evt) -> None:
         if wx.MessageBox(
             'Clear all placed components and wires?', 'Confirm',
@@ -1165,8 +1276,7 @@ class BreadboardWindow(wx.Frame):
         if not net_path:
             net_path = self._export_netlist(silent=True)
         else:
-            # Re-export silently if the schematic is newer than the saved netlist,
-            # so components added after the last export appear immediately.
+            # Re-export silently if the schematic is newer than the saved netlist.
             sch = find_schematic(project_path)
             if sch and sch.stat().st_mtime > net_path.stat().st_mtime:
                 exported = self._export_netlist(silent=True)
@@ -1174,6 +1284,11 @@ class BreadboardWindow(wx.Frame):
                     net_path = exported
         if net_path:
             self._load_netlist(str(net_path))
+        else:
+            # kicad-cli unavailable — fall back to direct schematic parsing
+            sch = find_schematic(project_path)
+            if sch:
+                self._load_netlist(str(sch))
 
     def _on_term_choice(self, term_name: str, evt) -> None:
         if self._refreshing_choices:
@@ -1255,7 +1370,10 @@ class BreadboardWindow(wx.Frame):
 
     def _load_netlist(self, path: str) -> None:
         try:
-            self.netlist = parse_netlist(path)
+            if path.endswith('.kicad_sch'):
+                self.netlist = parse_schematic(path)
+            else:
+                self.netlist = parse_netlist(path)
         except Exception as exc:
             wx.MessageBox(f'Failed to load netlist:\n{exc}',
                           'Error', wx.OK | wx.ICON_ERROR, self)
@@ -1295,6 +1413,88 @@ class BreadboardWindow(wx.Frame):
                 f'Loaded {n_shown} component(s) from {Path(path).name}.{note}  '
                 'Click a component in the tray to place it.', 0
             )
+
+
+# ---------------------------------------------------------------------------
+# Simulation dialog
+# ---------------------------------------------------------------------------
+
+class SimulationDialog(wx.Dialog):
+    """Ask the user for terminal voltages, then show simulation results."""
+
+    def __init__(self, parent: wx.Window, board, netlist):
+        super().__init__(parent, title='SPICE Simulation',
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self._board   = board
+        self._netlist = netlist
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # ---- Terminal voltage inputs ----
+        sizer.Add(wx.StaticText(self, label='Set terminal voltages for DC analysis:'),
+                  0, wx.ALL, 10)
+
+        grid = wx.FlexGridSizer(rows=0, cols=3, vgap=6, hgap=8)
+        grid.AddGrowableCol(1)
+        _TERM_COLORS = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30'}
+        self._volt_ctrls: dict = {}
+        for term in ('GND', 'V1', 'V2'):
+            net = board.terminal_nets.get(term, '')
+            if not net and term != 'GND':
+                continue
+            lbl = wx.StaticText(self, label=term)
+            lbl.SetForegroundColour(_TERM_COLORS.get(term, '#000000'))
+            lbl.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                wx.FONTWEIGHT_BOLD))
+            net_lbl = wx.StaticText(self, label=f'= {net or "(unassigned)"}')
+            net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                                    wx.FONTWEIGHT_NORMAL))
+            net_lbl.SetForegroundColour('#666666')
+            if term == 'GND':
+                val_lbl = wx.StaticText(self, label='0 V  (fixed)')
+                grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(net_lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(val_lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+            else:
+                sp = wx.SpinCtrlDouble(self, min=-100.0, max=100.0,
+                                       initial=5.0, inc=0.5, size=(80, -1))
+                sp.SetDigits(2)
+                self._volt_ctrls[term] = sp
+                grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(net_lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                v_row = wx.BoxSizer(wx.HORIZONTAL)
+                v_row.Add(sp, 0, wx.ALIGN_CENTRE_VERTICAL)
+                v_row.Add(wx.StaticText(self, label=' V'), 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(v_row, 0, wx.ALIGN_CENTRE_VERTICAL)
+
+        sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+
+        # ---- Info ----
+        info = wx.StaticText(self,
+            label='\nDC operating point (.op) — resistors, capacitors,\n'
+                  'inductors, diodes, LEDs, and BJTs are supported.')
+        info.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                             wx.FONTWEIGHT_NORMAL))
+        info.SetForegroundColour('#555555')
+        sizer.Add(info, 0, wx.LEFT | wx.RIGHT, 10)
+
+        sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+
+        # ---- Buttons ----
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_sizer.AddStretchSpacer()
+        btn_sizer.Add(wx.Button(self, wx.ID_CANCEL), 0, wx.RIGHT, 8)
+        run_btn = wx.Button(self, wx.ID_OK, label='Run simulation')
+        run_btn.SetDefault()
+        btn_sizer.Add(run_btn, 0)
+        sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+        self.CentreOnParent()
+
+    def get_terminal_voltages(self) -> dict:
+        return {term: sp.GetValue() for term, sp in self._volt_ctrls.items()}
 
 
 # ---------------------------------------------------------------------------
