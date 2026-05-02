@@ -799,6 +799,10 @@ class BreadboardCanvas(wx.Panel):
         self._hover_ann_idx: Optional[int] = None    # annotation under cursor in DELETE mode
         self._shape_defaults = {'color': '#333333', 'width': 2, 'fill': False, 'fill_color': '#dddddd'}
         self._text_defaults  = {'color': '#222222', 'font_size': 11, 'bold': False, 'italic': False}
+        self._drag_ann_idx: Optional[int] = None     # annotation being dragged in SELECT mode
+        self._drag_ann_orig = None                   # copy of annotation at drag start
+        self._drag_ann_start_mouse: Tuple[float, float] = (0.0, 0.0)
+        self._drag_ann_pre_snap: Optional[dict] = None
         # (x, y, IssueKind) for each validation issue with locatable holes
         self._validation_icons: List[Tuple[int, int, IssueKind]] = []
 
@@ -849,6 +853,7 @@ class BreadboardCanvas(wx.Panel):
 
         self.Bind(wx.EVT_PAINT, self._on_paint)
         self.Bind(wx.EVT_LEFT_DOWN, self._on_left_down)
+        self.Bind(wx.EVT_LEFT_DCLICK, self._on_left_dclick)
         self.Bind(wx.EVT_LEFT_UP, self._on_left_up)
         self.Bind(wx.EVT_MOTION, self._on_motion)
         self.Bind(wx.EVT_RIGHT_DOWN, self._on_right_down)
@@ -1514,7 +1519,71 @@ class BreadboardCanvas(wx.Panel):
                 self._selected_probe = None
                 if wire:
                     self.SetFocus()
+                else:
+                    ann_idx = self._ann_at(px, py)
+                    if ann_idx is not None:
+                        import copy as _copy
+                        self._drag_ann_idx = ann_idx
+                        self._drag_ann_orig = _copy.copy(self._annotations[ann_idx])
+                        self._drag_ann_start_mouse = (px, py)
+                        self._drag_ann_pre_snap = self._board_snapshot()
+                        self.SetFocus()
                 self.Refresh()
+
+    def _on_left_dclick(self, evt: wx.MouseEvent) -> None:
+        px, py = self._board_pos(*evt.GetPosition())
+        if self.mode == MODE_SELECT:
+            ann_idx = self._ann_at(px, py)
+            if ann_idx is not None:
+                self._edit_annotation(ann_idx)
+                return
+        evt.Skip()
+
+    def _edit_annotation(self, idx: int) -> None:
+        """Open property dialog to edit an existing annotation in-place."""
+        ann = self._annotations[idx]
+        if isinstance(ann, DrawLine):
+            dlg = _ShapePropsDialog(self, 'Line properties',
+                                    color=ann.color, width=ann.width)
+            if dlg.ShowModal() == wx.ID_OK:
+                self.push_undo()
+                ann.color = dlg.color
+                ann.width = dlg.line_width
+            dlg.Destroy()
+        elif isinstance(ann, DrawRect):
+            dlg = _ShapePropsDialog(self, 'Rectangle properties', has_fill=True,
+                                    color=ann.color, width=ann.width,
+                                    fill=ann.fill, fill_color=ann.fill_color)
+            if dlg.ShowModal() == wx.ID_OK:
+                self.push_undo()
+                ann.color = dlg.color
+                ann.width = dlg.line_width
+                ann.fill = dlg.fill
+                ann.fill_color = dlg.fill_color
+            dlg.Destroy()
+        elif isinstance(ann, DrawCircle):
+            dlg = _ShapePropsDialog(self, 'Circle properties', has_fill=True,
+                                    color=ann.color, width=ann.width,
+                                    fill=ann.fill, fill_color=ann.fill_color)
+            if dlg.ShowModal() == wx.ID_OK:
+                self.push_undo()
+                ann.color = dlg.color
+                ann.width = dlg.line_width
+                ann.fill = dlg.fill
+                ann.fill_color = dlg.fill_color
+            dlg.Destroy()
+        elif isinstance(ann, DrawText):
+            dlg = _TextPropsDialog(self, text=ann.text, color=ann.color,
+                                   font_size=ann.font_size, bold=ann.bold, italic=ann.italic)
+            if dlg.ShowModal() == wx.ID_OK and dlg.text:
+                self.push_undo()
+                ann.text = dlg.text
+                ann.color = dlg.color
+                ann.font_size = dlg.font_size
+                ann.bold = dlg.bold
+                ann.italic = dlg.italic
+            dlg.Destroy()
+        self.Refresh()
 
     def _on_left_up(self, evt: wx.MouseEvent) -> None:
         if self.mode == MODE_PROBE and self._probe_drag and self._placing_probe:
@@ -1535,6 +1604,20 @@ class BreadboardCanvas(wx.Panel):
             return
         if self._dragging_probe_label:
             self._dragging_probe_label = None
+            self.Refresh()
+            return
+        if self._drag_ann_idx is not None:
+            if self._drag_ann_pre_snap is not None:
+                cur = self._board_snapshot()
+                if self._drag_ann_pre_snap != cur:
+                    self._undo_stack.append(self._drag_ann_pre_snap)
+                    if len(self._undo_stack) > 50:
+                        self._undo_stack.pop(0)
+                    self._redo_stack.clear()
+                    self._notify_history()
+            self._drag_ann_idx = None
+            self._drag_ann_orig = None
+            self._drag_ann_pre_snap = None
             self.Refresh()
             return
         if self._pin_drag_ref is not None:
@@ -1660,6 +1743,30 @@ class BreadboardCanvas(wx.Panel):
                 self._dragging_probe_label,
                 int(round(ox + (px - mx0))),
                 int(round(oy + (py - my0))))
+            self.Refresh()
+            return
+
+        if self._drag_ann_idx is not None:
+            if not evt.LeftIsDown():
+                self._drag_ann_idx = None
+                self._drag_ann_orig = None
+                self._drag_ann_pre_snap = None
+                self.Refresh()
+                return
+            orig = self._drag_ann_orig
+            sx, sy = self._drag_ann_start_mouse
+            dx, dy = px - sx, py - sy
+            ann = self._annotations[self._drag_ann_idx]
+            if isinstance(ann, DrawLine):
+                ann.x1 = orig.x1 + dx; ann.y1 = orig.y1 + dy
+                ann.x2 = orig.x2 + dx; ann.y2 = orig.y2 + dy
+            elif isinstance(ann, DrawRect):
+                ann.x1 = orig.x1 + dx; ann.y1 = orig.y1 + dy
+                ann.x2 = orig.x2 + dx; ann.y2 = orig.y2 + dy
+            elif isinstance(ann, DrawCircle):
+                ann.cx = orig.cx + dx; ann.cy = orig.cy + dy
+            elif isinstance(ann, DrawText):
+                ann.x = orig.x + dx; ann.y = orig.y + dy
             self.Refresh()
             return
 
