@@ -2313,7 +2313,10 @@ class BreadboardCanvas(wx.Panel):
         if not comp_def.is_dip and placed.type_id != 'C':
             dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_NORMAL))
-            dc.SetTextForeground('#ffffff' if placed.type_id == 'POT' else '#222222')
+            # Pick text colour based on body luminance so it stays legible on dark bodies.
+            _bc = wx.Colour(placed.led_color if placed.led_color else comp_def.color)
+            _lum = 0.299 * _bc.Red() + 0.587 * _bc.Green() + 0.114 * _bc.Blue()
+            dc.SetTextForeground('#ffffff' if _lum < 128 else '#222222')
             label_x = (x_min + x_max) // 2
             label_y = (y_min + y_max) // 2 - 5
             dc.DrawText(ref, label_x - dc.GetTextExtent(ref).Width // 2, label_y)
@@ -3352,9 +3355,10 @@ class BreadboardCanvas(wx.Panel):
                             gc.DrawRectangle(bx_pos, -body_h / 2 + 1, 5, body_h - 2)
 
                 elif placed.type_id in ('D', 'D_Zener'):
-                    gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#cccccc'))))
-                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#cccccc')).Width(1)))
-                    gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
+                    # White cathode stripe, inset 2 px top/bottom to stay inside rounded corners
+                    gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour('#ffffff'))))
+                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour('#ffffff')).Width(0)))
+                    gc.DrawRectangle(-body_half, -body_h / 2 + 2, 4, body_h - 4)
 
             else:
                 # Fallback for SVGFileDC: components are always horizontal on a breadboard
@@ -3390,9 +3394,9 @@ class BreadboardCanvas(wx.Panel):
                             dc.DrawRectangle(band_x, by + 1, 5, int(body_h) - 2)
 
                 elif placed.type_id in ('D', 'D_Zener'):
-                    dc.SetBrush(wx.Brush('#cccccc'))
-                    dc.SetPen(wx.Pen('#cccccc', 1))
-                    dc.DrawRectangle(bx, by, 4, int(body_h))
+                    dc.SetBrush(wx.Brush('#ffffff'))
+                    dc.SetPen(wx.Pen('#ffffff', 0))
+                    dc.DrawRectangle(bx, by + 2, 4, int(body_h) - 4)
 
     def _draw_pushbutton(self, dc: wx.DC, comp_def: ComponentDef,
                          placed: PlacedComponent, ref: str,

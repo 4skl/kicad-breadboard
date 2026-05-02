@@ -489,12 +489,14 @@ class BreadboardWindow(wx.Frame):
         tb.AddSeparator()
 
         # Validate and export
-        tb.AddTool(ID_VALIDATE, 'Validate', _kicad_icon('checked_ok_24.png'),
+        tb.AddTool(ID_VALIDATE, 'Validate', _kicad_icon('erc_24.png'),
                    shortHelp='Check if your circuit matches the schematic')
         tb.AddTool(ID_CLEAR_WARNINGS, 'Clear ERC', _kicad_icon('ercwarn_24.png'),
                    shortHelp='Dismiss validation warning/short markers')
-        tb.AddTool(ID_EXPORT, 'Export', _kicad_icon('export_png_24.png'),
-                   shortHelp='Save the breadboard as a PNG image')
+        _export_icon = ('export_svg_24.png' if self.prefs.export_format == 'svg'
+                        else 'export_png_24.png')
+        tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon),
+                   shortHelp='Save the breadboard as an image')
         tb.AddSeparator()
         tb.AddTool(ID_CLEAR, 'Clear Board', wx.NullBitmap,
                    shortHelp='Remove all placed components and wires')
@@ -967,6 +969,12 @@ class BreadboardWindow(wx.Frame):
             self.canvas.show_branding = p.show_branding
         if p.branding_image != old.branding_image:
             self.canvas.branding_image = p.branding_image
+
+        if p.export_format != old.export_format:
+            icon_name = ('export_svg_24.png' if p.export_format == 'svg'
+                         else 'export_png_24.png')
+            self.toolbar.SetToolNormalBitmap(ID_EXPORT, _kicad_icon(icon_name))
+            self.toolbar.Refresh()
 
         self.canvas.Refresh()
 
