@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .breadboard import Breadboard
 from .netlist import Netlist
@@ -279,6 +281,34 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
 # ngspice invocation
 # ---------------------------------------------------------------------------
 
+def _find_ngspice() -> str:
+    """Return the ngspice executable path, searching common install locations."""
+    exe = shutil.which('ngspice')
+    if exe:
+        return exe
+    candidates: List[str] = []
+    if sys.platform == 'darwin':
+        candidates = [
+            '/opt/homebrew/bin/ngspice',
+            '/usr/local/bin/ngspice',
+        ]
+    elif sys.platform == 'win32':
+        candidates = [
+            r'C:\Program Files\Spice64\bin\ngspice.exe',
+            r'C:\Program Files (x86)\Spice64\bin\ngspice.exe',
+            r'C:\ngspice\bin\ngspice.exe',
+        ]
+    else:  # Linux / other
+        candidates = [
+            '/usr/bin/ngspice',
+            '/usr/local/bin/ngspice',
+        ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return 'ngspice'   # fall through; subprocess will raise FileNotFoundError
+
+
 def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str]]:
     """
     Write spice_text to a temporary file, run ngspice -b, return (output, error_or_None).
@@ -291,7 +321,7 @@ def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str]]:
             f.write(spice_text)
 
         result = subprocess.run(
-            ['ngspice', '-b', tmp_path],
+            [_find_ngspice(), '-b', tmp_path],
             capture_output=True,
             text=True,
             timeout=30,
