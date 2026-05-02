@@ -37,15 +37,16 @@ TO92_CARD_H = 48   # taller to accommodate the pinout row
 CARD_PAD    = 4
 SWATCH_W    = 12
 
-# Maximum pixel width available for text inside a card.
-# card spans CARD_PAD … CARD_PAD+CARD_W; text starts at SWATCH_W+8 from card left,
-# with a 4 px right margin before the card border.
-_TEXT_MAX_W = CARD_W - SWATCH_W - 8 - 4   # = 86 px
-
-# Cycle-button dimensions (TO-92 cards only)
+# Cycle-button dimensions (TO-92 / LED cards)
 _BTN_W = 16
 _BTN_H = 12
 _BTN_RIGHT_PAD = 4   # gap between button right edge and card right edge
+
+# Maximum pixel width available for text inside a card.
+# card spans CARD_PAD … CARD_PAD+CARD_W; text starts at SWATCH_W+8 from card left,
+# with a 4 px right margin before the card border.
+_TEXT_MAX_W     = CARD_W - SWATCH_W - 8 - 4                            # = 86 px
+_LED_TEXT_MAX_W = CARD_W - SWATCH_W - 8 - _BTN_W - _BTN_RIGHT_PAD - 4  # = 66 px (button visible)
 
 
 def _clip_text(dc: wx.DC, text: str, max_w: int) -> str:
@@ -87,6 +88,8 @@ class _PaintComponentTray(wx.ScrolledWindow):
         self._cards: List[_PaintCard] = []
         self.on_pick = None
         self.on_rpi_label_mode = None   # callback(bool)
+
+        self.on_color_changed = None    # callback() when a placed LED color changes
 
         self.SetScrollRate(0, CARD_H + CARD_PAD)
         self.SetBackgroundColour('#d8d8d8')
@@ -190,8 +193,14 @@ class _PaintComponentTray(wx.ScrolledWindow):
                         x + SWATCH_W + 8, y + 4)
 
             dc.SetFont(font_normal)
-            dc.DrawText(_clip_text(dc, card.comp.value, _TEXT_MAX_W),
-                        x + SWATCH_W + 8, y + 18)
+            if card.comp_def and card.comp_def.type_id == 'LED':
+                color_name = LED_COLORS[card.led_color_idx][1]
+                val_text = f'{card.comp.value} ({color_name})'
+                dc.DrawText(_clip_text(dc, val_text, _LED_TEXT_MAX_W),
+                            x + SWATCH_W + 8, y + 18)
+            else:
+                dc.DrawText(_clip_text(dc, card.comp.value, _TEXT_MAX_W),
+                            x + SWATCH_W + 8, y + 18)
 
             # Pinout row (TO-92 only)
             if card.height > CARD_H and card.comp_def:
@@ -215,15 +224,15 @@ class _PaintComponentTray(wx.ScrolledWindow):
                         dc.DrawText('>', btn_x + (_BTN_W - tw) // 2,
                                     btn_y + (_BTN_H - th) // 2)
 
-            # LED colour-cycle button
-            if card.comp_def and card.comp_def.type_id == 'LED' and not placed:
+            # LED colour-cycle button (always shown, works placed or not)
+            if card.comp_def and card.comp_def.type_id == 'LED':
                 btn_x = x + CARD_W - _BTN_W - _BTN_RIGHT_PAD
                 btn_y = y + (CARD_H - _BTN_H) // 2
-                dc.SetBrush(wx.Brush('#d8d8d8'))
+                dc.SetBrush(wx.Brush('#b8b8b8' if placed else '#d8d8d8'))
                 dc.SetPen(wx.Pen('#888888', 1))
                 dc.DrawRoundedRectangle(btn_x, btn_y, _BTN_W, _BTN_H, 2)
                 dc.SetFont(font_btn)
-                dc.SetTextForeground('#333333')
+                dc.SetTextForeground('#555555' if placed else '#333333')
                 tw, th = dc.GetTextExtent('>')
                 dc.DrawText('>', btn_x + (_BTN_W - tw) // 2,
                             btn_y + (_BTN_H - th) // 2)
@@ -247,10 +256,16 @@ class _PaintComponentTray(wx.ScrolledWindow):
 
         btn_x = CARD_PAD + CARD_W - _BTN_W - _BTN_RIGHT_PAD
 
-        # Check if click landed on the LED colour-cycle button
-        if (not placed and card.comp_def and card.comp_def.type_id == 'LED'):
+        # Check if click landed on the LED colour-cycle button (works placed or not)
+        if card.comp_def and card.comp_def.type_id == 'LED':
             if btn_x <= click_x < btn_x + _BTN_W:
                 card.led_color_idx = (card.led_color_idx + 1) % len(LED_COLORS)
+                if placed:
+                    p = self.board.get_placement(card.ref)
+                    if p is not None:
+                        p.led_color = LED_COLORS[card.led_color_idx][0]
+                    if self.on_color_changed:
+                        self.on_color_changed()
                 self.Refresh()
                 return
 
@@ -309,9 +324,10 @@ class _NativeCard(wx.Panel):
         self._ref_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
                                       wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
 
+        _vlbl_w = _LED_TEXT_MAX_W if (comp_def and comp_def.type_id == 'LED') else _TEXT_MAX_W
         self._val_lbl = wx.StaticText(
             self, label=comp.value, pos=(SWATCH_W + 8, 18),
-            size=(_TEXT_MAX_W, -1), style=wx.ST_ELLIPSIZE_END)
+            size=(_vlbl_w, -1), style=wx.ST_ELLIPSIZE_END)
         self._val_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                                       wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
 
@@ -367,8 +383,9 @@ class _NativeCard(wx.Panel):
                                   self._pinout_lbl, self._cycle_lbl]):
             lbl.SetBackgroundColour(bg)
             lbl.SetForegroundColour(fg)
-        if self._led_cycle_btn is not None:
-            self._led_cycle_btn.Enable(not placed)
+        if self.comp_def and self.comp_def.type_id == 'LED':
+            color_name = LED_COLORS[self.led_color_idx][1]
+            self._val_lbl.SetLabel(f'{self.comp.value} ({color_name})')
         self.Refresh()
 
     def update(self, board: Breadboard) -> None:
@@ -390,11 +407,15 @@ class _NativeCard(wx.Panel):
             self._cycle_pinout()
 
     def _on_led_cycle_btn(self, _evt) -> None:
-        placed = self.board.get_placement(self.ref) is not None
-        if not placed:
-            self.led_color_idx = (self.led_color_idx + 1) % len(LED_COLORS)
-            self._swatch_color = LED_COLORS[self.led_color_idx][0]
-            self._apply_colors()
+        self.led_color_idx = (self.led_color_idx + 1) % len(LED_COLORS)
+        self._swatch_color = LED_COLORS[self.led_color_idx][0]
+        placed_comp = self.board.get_placement(self.ref)
+        if placed_comp is not None:
+            placed_comp.led_color = LED_COLORS[self.led_color_idx][0]
+            tray = self.GetParent()
+            if hasattr(tray, 'on_color_changed') and tray.on_color_changed:
+                tray.on_color_changed()
+        self._apply_colors()
 
     def _on_click(self, evt: wx.MouseEvent) -> None:
         placed = self.board.get_placement(self.ref) is not None
@@ -425,6 +446,8 @@ class _NativeComponentTray(wx.ScrolledWindow):
         self._cards: List[_NativeCard] = []
         self.on_pick = None
         self.on_rpi_label_mode = None   # callback(bool)
+
+        self.on_color_changed = None    # callback() when a placed LED color changes
 
         self.SetScrollRate(0, CARD_H + CARD_PAD)
         self.SetBackgroundColour('#d8d8d8')

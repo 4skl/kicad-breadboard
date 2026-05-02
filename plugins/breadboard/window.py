@@ -415,6 +415,7 @@ class BreadboardWindow(wx.Frame):
         # Connect tray → canvas placement flow
         self.tray.on_pick = lambda comp_def, ref: self.canvas.begin_place(comp_def, ref)
         self.tray.on_rpi_label_mode = lambda v: self.canvas.set_rpi_long_labels(v)
+        self.tray.on_color_changed = lambda: self.canvas.Refresh()
         self.canvas.on_placed = lambda ref: self.tray.refresh_placed()
         self.canvas.on_probe_placed = lambda name: self._refresh_probe_buttons()
         self.canvas.on_history_change = self._on_history_change
