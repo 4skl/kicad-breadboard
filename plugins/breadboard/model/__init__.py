@@ -8,7 +8,9 @@ from .breadboard import (
     TERMINAL_NAMES,
     PROBE_NAMES, PROBE_META,
 )
-from .components import ComponentDef, ALL_DEFS, guess_type_id, TO92_PINOUT_VARIANTS, RPi_PIN_NAMES_LONG, ARDUINO_UNO_FN_NAMES
+from .components import ComponentDef, ALL_DEFS, guess_type_id, TO92_PINOUT_VARIANTS, RPi_PIN_NAMES_LONG, ARDUINO_UNO_FN_NAMES, LED_COLORS
 from .netlist import Netlist, NetlistComponent, Net, parse as parse_netlist, find_netlist, find_schematic
+from .schematic import parse_schematic
+from .simulation import simulate, SimResult
 from .validator import validate, ValidationResult, ValidationIssue, IssueKind
 from .session import save_session, load_session
