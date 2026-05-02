@@ -396,6 +396,8 @@ class BreadboardWindow(wx.Frame):
         self.tray.on_rpi_label_mode = lambda v: self.canvas.set_rpi_long_labels(v)
         self.canvas.on_placed = lambda ref: self.tray.refresh_placed()
         self.canvas.on_probe_placed = lambda name: self._refresh_probe_buttons()
+        self.canvas.on_history_change = self._on_history_change
+        self.canvas.on_restore = self._on_restore
 
         self.SetStatusBar(wx.StatusBar(self))
         self.GetStatusBar().SetFieldsCount(2)
@@ -521,6 +523,8 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_zoom_out, id=ID_ZOOM_OUT)
         self.Bind(wx.EVT_TOOL, self._on_zoom_fit, id=ID_ZOOM_FIT)
         self.Bind(wx.EVT_TOOL, self._on_eeschema, id=ID_EESCHEMA)
+        self.Bind(wx.EVT_TOOL, lambda _: self.canvas.undo(), id=ID_UNDO)
+        self.Bind(wx.EVT_TOOL, lambda _: self.canvas.redo(), id=ID_REDO)
         self.Bind(wx.EVT_MENU, self._on_prefs,          id=ID_PREFS)
         self.Bind(wx.EVT_MENU, self._on_check_updates,  id=ID_HELP_UPDATES)
         self.Bind(wx.EVT_MENU, self._on_report_issue,   id=ID_HELP_ISSUE)
@@ -590,6 +594,17 @@ class BreadboardWindow(wx.Frame):
                 'Open Schematic', wx.OK | wx.ICON_ERROR, self,
             )
 
+    def _on_history_change(self, can_undo: bool, can_redo: bool) -> None:
+        self.toolbar.EnableTool(ID_UNDO, can_undo)
+        self.toolbar.EnableTool(ID_REDO, can_redo)
+
+    def _on_restore(self) -> None:
+        """Full UI refresh after undo/redo."""
+        self.tray.refresh_placed()
+        self._refresh_probe_buttons()
+        self._refresh_terminal_choices()
+        self._refresh_probe_choices()
+
     def _on_char_hook(self, evt: wx.KeyEvent) -> None:
         key = evt.GetKeyCode()
         if key in (ord('W'), ord('w')):
@@ -604,6 +619,13 @@ class BreadboardWindow(wx.Frame):
             self.canvas.zoom_center(1.2)
         elif key in (ord('-'), wx.WXK_NUMPAD_SUBTRACT):
             self.canvas.zoom_center(1 / 1.2)
+        elif key in (ord('Z'), ord('z')) and evt.ControlDown():
+            if evt.ShiftDown():
+                self.canvas.redo()
+            else:
+                self.canvas.undo()
+        elif key in (ord('Y'), ord('y')) and evt.ControlDown():
+            self.canvas.redo()
         else:
             evt.Skip()
 
@@ -846,6 +868,7 @@ class BreadboardWindow(wx.Frame):
         self._refresh_probe_choices()
         self._refresh_probe_buttons()
 
+        self.canvas.clear_history()
         self.canvas.Refresh()
         self.SetStatusText(f'Session loaded from {path}', 0)
 
@@ -1105,6 +1128,7 @@ class BreadboardWindow(wx.Frame):
             'Clear all placed components and wires?', 'Confirm',
             wx.YES_NO | wx.ICON_QUESTION, self
         ) == wx.YES:
+            self.canvas.push_undo()
             self.board = Breadboard(layout=self.prefs.board_layout, rail_split=self.prefs.rail_split)
             # Re-apply GND assignments
             _gnd_net = next((n for n in ('0', 'GND') if self.netlist and self.netlist.net_by_name(n)), None)
@@ -1150,6 +1174,7 @@ class BreadboardWindow(wx.Frame):
         sel = ch.GetSelection()
         # item 0 is "(unassigned)"; items 1..n are net names
         net = ch.GetString(sel) if sel > 0 else ''
+        self.canvas.push_undo()
         self.board.assign_terminal(term_name, net)
         self.canvas.Refresh()
 

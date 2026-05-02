@@ -134,8 +134,8 @@ TERM_COLORS = {
 
 WIRE_COLORS = [
     '#e8c020',  # yellow
-    '#e04040',  # red
-    '#4040e0',  # blue
+    '#991111',  # red
+    '#1133aa',  # blue
     '#20c040',  # green
     '#e08020',  # orange
     '#c020c0',  # purple
@@ -243,9 +243,18 @@ class CanvasLayout:
 
     def __init__(self, board_layout: str = 'full', binding_post_side: str = 'left',
                  show_branding: bool = False, rail_split: bool = True):
-        self.board_layout    = board_layout
+        # Normalize legacy 'top'/'bottom' → 'top_right'/'bottom_right'
+        if binding_post_side == 'top':    binding_post_side = 'top_right'
+        if binding_post_side == 'bottom': binding_post_side = 'bottom_right'
+        _is_top    = binding_post_side.startswith('top_')
+        _is_bottom = binding_post_side.startswith('bottom_')
+        _is_left   = binding_post_side == 'left'
+        _is_right  = binding_post_side == 'right'
+        _is_horiz  = _is_left or _is_right
+        _h_align   = binding_post_side.rsplit('_', 1)[-1] if (_is_top or _is_bottom) else ''
+        self.board_layout      = board_layout
         self.binding_post_side = binding_post_side
-        self.rail_split      = rail_split
+        self.rail_split        = rail_split
         _col_map = {'mini': MINI_COLUMNS, 'half': HALF_COLUMNS}
         self.columns  = _col_map.get(board_layout, COLUMNS)
         self.sections = {'half': 1, 'full': 1, 'double': 2, 'triple': 3, 'double_rails': 2}.get(board_layout, 1)
@@ -276,8 +285,8 @@ class CanvasLayout:
             }
             self._section_body_h = bot_minus_rel + RAIL_H + MARGIN
         else:
-            # Mini: no rails — just tie strips with margins
-            tie_top_rel = 0
+            # Mini: no rails — just tie strips with equal top and bottom margins
+            tie_top_rel = MARGIN // 2
             for i, row in enumerate(TOP_ROWS):
                 self._row_rel[row] = tie_top_rel + i * PITCH
             tie_bot_rel = self._row_rel['e'] + PITCH + CENTER_GAP
@@ -289,8 +298,8 @@ class CanvasLayout:
         # Extra space reserved above/below when binding posts are on top/bottom
         # Extra MARGIN added so terminals have breathing room before the board body
         _post_extra = TERM_R * 2 + MARGIN * 2
-        top_extra = _post_extra if binding_post_side == 'top'    else 0
-        bot_extra = _post_extra if binding_post_side == 'bottom' else 0
+        top_extra = _post_extra if _is_top    else 0
+        bot_extra = _post_extra if _is_bottom else 0
         self._section_top = [
             MARGIN + top_extra + s * (self._section_body_h + SECTION_GAP)
             for s in range(self.sections)
@@ -311,7 +320,7 @@ class CanvasLayout:
         # case can push the board right by the correct amount.
         # Layout for left:  [MARGIN] [brand?+gap?] [post] [gap] [board…]
         # Layout for right: [board…] [gap] [post] [gap?+brand?] [MARGIN]
-        if binding_post_side == 'left':
+        if _is_left:
             term_cx = MARGIN + (_brand + _brand_gap if _brand else 0) + TERM_R
             self.board_left = term_cx + TERM_R + _POST_BOARD_GAP + vert_space
         else:
@@ -321,12 +330,12 @@ class CanvasLayout:
 
         board_right = self.board_left + (self.columns - 1) * PITCH
 
-        if binding_post_side == 'right':
+        if _is_right:
             term_cx = board_right + TERM_R + _POST_BOARD_GAP
 
         # --- Binding post positions ---
         n = len(TERMINAL_NAMES)
-        if binding_post_side in ('left', 'right'):
+        if _is_horiz:
             v_margin = int(self.total_height * 0.18)
             spacing  = (self.total_height - 2 * v_margin) // max(1, n - 1)
             self._term_pos = {
@@ -334,11 +343,15 @@ class CanvasLayout:
                 for i, name in enumerate(TERMINAL_NAMES)
             }
         else:
-            # Posts are right-aligned within the board width
             h_spacing = TERM_R * 3 + 12
-            start_x   = board_right - (n - 1) * h_spacing - TERM_R
-            term_y    = (MARGIN // 2 + TERM_R + 4) if binding_post_side == 'top' \
-                        else (self.total_height - bot_extra + MARGIN // 2 + TERM_R + 4)
+            if _h_align == 'left':
+                start_x = self.board_left + TERM_R
+            elif _h_align == 'center':
+                start_x = (self.board_left + board_right) // 2 - (n - 1) * h_spacing // 2
+            else:  # 'right'
+                start_x = board_right - (n - 1) * h_spacing - TERM_R
+            term_y = (MARGIN // 2 + TERM_R + 4) if _is_top \
+                     else (self.total_height - bot_extra + MARGIN // 2 + TERM_R + 4)
             self._term_pos = {
                 name: (start_x + i * h_spacing, term_y)
                 for i, name in enumerate(TERMINAL_NAMES)
@@ -351,7 +364,7 @@ class CanvasLayout:
         if board_layout in ('triple', 'double_rails'):
             vert_rail_len = self.sections * VERT_RAIL_LEN_PER_SECTION
             # Left rails: between binding posts (left side) and board, or at left margin
-            if binding_post_side == 'left':
+            if _is_left:
                 vrl = term_cx + TERM_R + 8
             else:
                 vrl = MARGIN
@@ -389,7 +402,7 @@ class CanvasLayout:
         right_edge = board_right + PITCH + MARGIN // 2
         if board_layout == 'double_rails':
             right_edge = self._vert_rail_cx['vert_right_minus'] + PITCH // 2
-        if binding_post_side == 'right':
+        if _is_right:
             # posts sit right of board; brand (if any) sits right of posts
             right_edge = term_cx + TERM_R + (_brand_gap + _brand if _brand else 0)
         self._total_width = right_edge + MARGIN
@@ -401,35 +414,50 @@ class CanvasLayout:
         #   top/bottom → brand is left of posts within the same margin strip
         _max_brand = TERM_R * 12
         if show_branding:
-            if binding_post_side == 'left':
+            if _is_left:
                 bx = MARGIN
                 bw = term_cx - TERM_R - _brand_gap - MARGIN
                 bh = min(_max_brand, self.total_height - 2 * MARGIN)
                 by = (self.total_height - bh) // 2
                 self.branding_rect = wx.Rect(bx, by, max(4, bw), bh)
                 self.branding_rotated = True
-            elif binding_post_side == 'right':
+            elif _is_right:
                 bx = term_cx + TERM_R + _brand_gap
                 bw = _brand - _brand_gap
                 bh = min(_max_brand, self.total_height - 2 * MARGIN)
                 by = (self.total_height - bh) // 2
                 self.branding_rect = wx.Rect(bx, by, max(4, bw), bh)
                 self.branding_rotated = True
-            elif binding_post_side == 'top':
-                # Branding left of posts within the top margin strip
-                posts_left = min(pos[0] for pos in self._term_pos.values()) - TERM_R
-                bx = self.board_left - PITCH // 2
-                bw = min(_max_brand, posts_left - bx - 8)
+            elif _is_top:
                 bh = top_extra - MARGIN // 2 - 4
                 by = MARGIN // 2 + 2
+                board_vis_right = board_right + PITCH // 2
+                board_vis_left  = self.board_left - PITCH // 2
+                if _h_align == 'right':
+                    # Posts at right: branding sits between board left edge and posts
+                    posts_left = min(pos[0] for pos in self._term_pos.values()) - TERM_R
+                    bx = board_vis_left
+                    bw = min(_max_brand, posts_left - bx - 8)
+                else:
+                    # Posts at left or center: branding sits between posts and board right edge
+                    posts_right = max(pos[0] for pos in self._term_pos.values()) + TERM_R
+                    bx = posts_right + 8
+                    bw = min(_max_brand, board_vis_right - bx)
                 self.branding_rect = wx.Rect(bx, by, max(4, bw), max(4, bh))
                 self.branding_rotated = False
-            else:  # bottom
-                posts_left = min(pos[0] for pos in self._term_pos.values()) - TERM_R
-                bx = self.board_left - PITCH // 2
-                bw = min(_max_brand, posts_left - bx - 8)
+            else:  # bottom_*
                 bh = bot_extra - MARGIN // 2 - 4
                 by = self.total_height - bot_extra + MARGIN // 2 + 2
+                board_vis_right = board_right + PITCH // 2
+                board_vis_left  = self.board_left - PITCH // 2
+                if _h_align == 'right':
+                    posts_left = min(pos[0] for pos in self._term_pos.values()) - TERM_R
+                    bx = board_vis_left
+                    bw = min(_max_brand, posts_left - bx - 8)
+                else:
+                    posts_right = max(pos[0] for pos in self._term_pos.values()) + TERM_R
+                    bx = posts_right + 8
+                    bw = min(_max_brand, board_vis_right - bx)
                 self.branding_rect = wx.Rect(bx, by, max(4, bw), max(4, bh))
                 self.branding_rotated = False
         else:
@@ -605,6 +633,10 @@ class BreadboardCanvas(wx.Panel):
         self._drag_comp: Optional[str] = None        # ref being repositioned on board
         self._drag_offset: Tuple[int, int] = (0, 0)  # mouse offset from pin-1 hole
 
+        self._pin_drag_ref:  Optional[str]  = None   # ref whose pin is being repositioned
+        self._pin_drag_num:  Optional[int]  = None   # which pin number is being dragged
+        self._pin_drag_hole: Optional[Hole] = None   # current snap target for that pin
+
         self._highlighted_holes: Set[Hole] = set()   # from validation
         self._highlight_kind: Optional[IssueKind] = None
         # (x, y, IssueKind) for each validation issue with locatable holes
@@ -631,6 +663,13 @@ class BreadboardCanvas(wx.Panel):
         # Callbacks
         self.on_placed: Optional[callable] = None
         self.on_probe_placed: Optional[callable] = None  # called with probe name
+        self.on_history_change: Optional[callable] = None  # called(can_undo, can_redo)
+        self.on_restore: Optional[callable] = None  # called after undo/redo for full UI refresh
+
+        # Undo / redo
+        self._undo_stack: list = []
+        self._redo_stack: list = []
+        self._drag_pre_snap: Optional[dict] = None   # snapshot saved at drag start
 
         # Zoom / pan state
         self._zoom: float = 1.0
@@ -673,6 +712,128 @@ class BreadboardCanvas(wx.Panel):
         self._populate_module_pins()
         self.Refresh()
 
+    # ------------------------------------------------------------------
+    # Undo / redo
+    # ------------------------------------------------------------------
+
+    def _board_snapshot(self) -> dict:
+        """Capture the full mutable board state as a JSON-serialisable dict."""
+        from .model.session import _hole_to_json
+        b = self.board
+        return {
+            'terminals': {n: net for n in TERMINAL_NAMES
+                          if (net := b.get_terminal_net(n))},
+            'placements': [
+                {'ref': ref, 'type_id': p.type_id, 'flipped': p.flipped,
+                 'led_color': p.led_color,
+                 'pins': [[pn, _hole_to_json(h)] for pn, h in sorted(p.pin_holes.items())]}
+                for ref, p in b.placements.items()
+            ],
+            'wires': [
+                {'h1': _hole_to_json(w.h1), 'h2': _hole_to_json(w.h2), 'color': w.color}
+                for w in b.wires
+            ],
+            'probes': {
+                n: {
+                    'hole': _hole_to_json(b.get_probe_hole(n)) if b.get_probe_hole(n) else None,
+                    'net': b.get_probe_net(n),
+                    'offset': list(b.get_probe_label_offset(n)),
+                }
+                for n in PROBE_NAMES
+                if b.get_probe_hole(n) is not None or b.get_probe_net(n)
+            },
+            'module_positions': {ref: list(pos)
+                                  for ref, pos in b.module_positions.items()},
+        }
+
+    def _restore_snapshot(self, snap: dict) -> None:
+        """Overwrite the current board state with a snapshot dict (in-place)."""
+        from .model.session import _hole_from_json
+        b = self.board
+        b._placements.clear()
+        b._wires.clear()
+        b._terminal_nets.clear()
+        for n in PROBE_NAMES:
+            b._probe_holes[n] = None
+            b._probe_nets[n] = ''
+            b._probe_offsets[n] = (0, 0)
+        b._module_positions.clear()
+
+        for name, net in snap.get('terminals', {}).items():
+            b.assign_terminal(name, net)
+        for p in snap.get('placements', []):
+            pin_holes = {int(pn): _hole_from_json(h) for pn, h in p['pins']}
+            b.place(PlacedComponent(
+                ref=p['ref'], type_id=p['type_id'],
+                pin_holes=pin_holes, flipped=p['flipped'],
+                led_color=p.get('led_color', ''),
+            ))
+        for w in snap.get('wires', []):
+            b.add_wire(_hole_from_json(w['h1']), _hole_from_json(w['h2']), w['color'])
+        for name, info in snap.get('probes', {}).items():
+            if info.get('hole'):
+                b.place_probe(name, _hole_from_json(info['hole']))
+            if info.get('net'):
+                b.assign_probe_net(name, info['net'])
+            off = info.get('offset')
+            if off and len(off) == 2:
+                b.set_probe_label_offset(name, int(off[0]), int(off[1]))
+        for ref, pos in snap.get('module_positions', {}).items():
+            b.set_module_position(ref, int(pos[0]), int(pos[1]))
+
+        self._populate_module_pins()
+
+    def push_undo(self) -> None:
+        """Save current board state to undo stack and clear the redo stack."""
+        self._undo_stack.append(self._board_snapshot())
+        if len(self._undo_stack) > 50:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+        self._notify_history()
+
+    def _notify_history(self) -> None:
+        if self.on_history_change:
+            self.on_history_change(bool(self._undo_stack), bool(self._redo_stack))
+
+    def clear_history(self) -> None:
+        """Discard undo/redo history (call after session load)."""
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._notify_history()
+
+    def undo(self) -> None:
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(self._board_snapshot())
+        self._restore_snapshot(self._undo_stack.pop())
+        self._post_restore()
+
+    def redo(self) -> None:
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(self._board_snapshot())
+        self._restore_snapshot(self._redo_stack.pop())
+        self._post_restore()
+
+    def _post_restore(self) -> None:
+        """Reset transient UI state after undo/redo and trigger a full refresh."""
+        self._selected_ref = None
+        self._selected_wire = None
+        self._selected_probe = None
+        self._drag_comp = None
+        self._drag_pre_snap = None
+        self._ghost = None
+        self._wire_start = None
+        self._pin_drag_ref = None
+        self._pin_drag_num = None
+        self._pin_drag_hole = None
+        self._notify_history()
+        if self.on_placed:
+            self.on_placed('')
+        if self.on_restore:
+            self.on_restore()
+        self.Refresh()
+
     def set_mode(self, mode: str) -> None:
         self.mode = mode
         self._wire_start = None
@@ -681,6 +842,9 @@ class BreadboardCanvas(wx.Panel):
         self._selected_wire = None
         self._selected_ref = None
         self._selected_probe = None
+        self._pin_drag_ref  = None
+        self._pin_drag_num  = None
+        self._pin_drag_hole = None
         if mode != MODE_PROBE:
             self._placing_probe = None
             self._probe_drag = False
@@ -698,6 +862,7 @@ class BreadboardCanvas(wx.Panel):
 
     def begin_probe_drag(self, probe_name: str) -> None:
         """Start probe placement via drag — release over a hole to place."""
+        self.push_undo()
         self.board.remove_probe(probe_name)   # allow re-placing an already placed probe
         self.set_mode(MODE_PROBE)
         self._placing_probe = probe_name
@@ -721,6 +886,7 @@ class BreadboardCanvas(wx.Panel):
 
         # Free-floating module: place at raw canvas position (no snap needed)
         if comp_def.is_module:
+            self.push_undo()
             mx, my = int(px), int(py)
             self.board.set_module_position(ref, mx, my)
             pin_holes = {pin: ModulePin(ref=ref, pin=pin)
@@ -749,9 +915,12 @@ class BreadboardCanvas(wx.Panel):
                 return True
             else:
                 # Second click: place with both pins
+                self.push_undo()
                 pin_holes = {1: self._place_pin1, 2: clicked}
+                led_color = comp_def.color if comp_def.type_id == 'LED' else ''
                 placed = PlacedComponent(ref=ref, type_id=comp_def.type_id,
-                                         pin_holes=pin_holes, flipped=False)
+                                         pin_holes=pin_holes, flipped=False,
+                                         led_color=led_color)
                 self.board.place(placed)
                 self._ghost = None
                 self._place_pin1 = None
@@ -768,6 +937,7 @@ class BreadboardCanvas(wx.Panel):
             pin_holes = comp_def.place(clicked, flipped=flipped)
         except (AssertionError, IndexError, KeyError):
             return False
+        self.push_undo()
         placed = PlacedComponent(ref=ref, type_id=comp_def.type_id,
                                  pin_holes=pin_holes, flipped=flipped)
         self.board.place(placed)
@@ -900,10 +1070,12 @@ class BreadboardCanvas(wx.Panel):
                 self._flip_component(self._selected_ref)
         elif key in (wx.WXK_DELETE, wx.WXK_BACK):
             if self._selected_wire is not None:
+                self.push_undo()
                 self.board.remove_wire(self._selected_wire)
                 self._selected_wire = None
                 self.Refresh()
             elif self._selected_ref is not None:
+                self.push_undo()
                 self.layout.clear_module_ref(self._selected_ref)
                 self.board.remove(self._selected_ref)
                 if self.on_placed:
@@ -911,6 +1083,7 @@ class BreadboardCanvas(wx.Panel):
                 self._selected_ref = None
                 self.Refresh()
             elif self._selected_probe is not None:
+                self.push_undo()
                 self.board.remove_probe(self._selected_probe)
                 if self.on_placed:
                     self.on_placed(self._selected_probe)
@@ -940,6 +1113,7 @@ class BreadboardCanvas(wx.Panel):
                     self._wire_start = hole
                 else:
                     if hole != self._wire_start:
+                        self.push_undo()
                         self.board.add_wire(self._wire_start, hole,
                                             color=self.next_wire_color())
                     self._wire_start = None
@@ -949,6 +1123,7 @@ class BreadboardCanvas(wx.Panel):
         if self.mode == MODE_PROBE and self._placing_probe:
             hole = self.layout.nearest_hole(px, py)
             if hole is not None and not isinstance(hole, Terminal):
+                self.push_undo()
                 self.board.place_probe(self._placing_probe, hole)
                 name = self._placing_probe
                 self._placing_probe = None
@@ -975,8 +1150,24 @@ class BreadboardCanvas(wx.Panel):
                 # motion event at (0,0) which causes a huge coordinate jump.
                 self.Refresh()
                 return
+            pin_hit = self._pin_at(px, py)
+            if pin_hit:
+                ref, pin_num = pin_hit
+                placed = self.board.get_placement(ref)
+                self._drag_pre_snap = self._board_snapshot()
+                self._pin_drag_ref  = ref
+                self._pin_drag_num  = pin_num
+                self._pin_drag_hole = placed.pin_holes.get(pin_num) if placed else None
+                self._selected_ref  = ref
+                self._selected_wire = None
+                self._selected_probe = None
+                self.SetFocus()
+                self.Refresh()
+                self.CaptureMouse()
+                return
             ref = self._comp_at(px, py)
             if ref:
+                self._drag_pre_snap = self._board_snapshot()
                 self._selected_ref = ref
                 self._selected_wire = None
                 self._selected_probe = None
@@ -1013,6 +1204,7 @@ class BreadboardCanvas(wx.Panel):
             px, py = self._board_pos(*evt.GetPosition())
             hole = self.layout.nearest_hole(px, py)
             if hole is not None and not isinstance(hole, Terminal):
+                # undo was already pushed by begin_probe_drag (which removed the probe)
                 self.board.place_probe(self._placing_probe, hole)
                 if self.on_probe_placed:
                     self.on_probe_placed(self._placing_probe)
@@ -1024,6 +1216,15 @@ class BreadboardCanvas(wx.Panel):
             return
         if self._dragging_probe_label:
             self._dragging_probe_label = None
+            self.Refresh()
+            return
+        if self._pin_drag_ref is not None:
+            if self.HasCapture():
+                self.ReleaseMouse()
+            self._commit_pin_drag()
+            self._pin_drag_ref  = None
+            self._pin_drag_num  = None
+            self._pin_drag_hole = None
             self.Refresh()
             return
         if self.HasCapture():
@@ -1066,6 +1267,15 @@ class BreadboardCanvas(wx.Panel):
                             p.pin_holes = comp_def.place(new_anchor, flipped=p.flipped)
                         except (AssertionError, IndexError, KeyError):
                             pass
+            # Push undo only if the drag actually moved the component
+            if self._drag_pre_snap is not None:
+                if self._drag_pre_snap != self._board_snapshot():
+                    self._undo_stack.append(self._drag_pre_snap)
+                    if len(self._undo_stack) > 50:
+                        self._undo_stack.pop(0)
+                    self._redo_stack.clear()
+                    self._notify_history()
+                self._drag_pre_snap = None
             self._drag_comp = None
             self.Refresh()
 
@@ -1146,6 +1356,17 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
             return
 
+        # Pin lead drag: update snap target
+        if self._pin_drag_ref is not None:
+            placed = self.board.get_placement(self._pin_drag_ref)
+            comp_def = ALL_DEFS.get(placed.type_id) if placed else None
+            if comp_def:
+                hole = self.layout.nearest_hole(px, py)
+                if hole is not None:
+                    self._pin_drag_hole = hole   # any hole type
+            self.Refresh()
+            return
+
         self._ghost_pos = (px, py)
         if self._ghost:
             comp_def = self._ghost.comp_def
@@ -1187,6 +1408,11 @@ class BreadboardCanvas(wx.Panel):
         self._ghost = None
         self._place_pin1 = None
         self._drag_comp = None
+        self._pin_drag_ref  = None
+        self._pin_drag_num  = None
+        self._pin_drag_hole = None
+        if self.HasCapture():
+            self.ReleaseMouse()
         self.Refresh()
 
     def _flip_component(self, ref: str) -> None:
@@ -1197,6 +1423,7 @@ class BreadboardCanvas(wx.Panel):
         comp_def = ALL_DEFS.get(placed.type_id)
         if not comp_def:
             return
+        self.push_undo()
 
         if comp_def.is_module:
             placed.flipped = (placed.flipped + 1) % 4
@@ -1256,6 +1483,30 @@ class BreadboardCanvas(wx.Panel):
                 return ref
         return None
 
+    def _pin_at(self, px: int, py: int) -> Optional[Tuple[str, int]]:
+        """Return (ref, pin_num) if (px,py) is within click radius of a draggable pin lead.
+
+        Only considers 2-pin and 3-pin non-DIP, non-module components.
+        """
+        _HIT_R = HOLE_R + 8   # ~11 px
+        best_d = _HIT_R
+        best: Optional[Tuple[str, int]] = None
+        for ref, placed in self.board.placements.items():
+            comp_def = ALL_DEFS.get(placed.type_id)
+            if comp_def is None or comp_def.is_module or comp_def.is_dip:
+                continue
+            if comp_def.pin_count != 2:
+                continue
+            for pin_num, hole in placed.pin_holes.items():
+                xy = self.layout.hole_xy(hole)
+                if xy is None:
+                    continue
+                d = math.hypot(px - xy[0], py - xy[1])
+                if d < best_d:
+                    best_d = d
+                    best = (ref, pin_num)
+        return best
+
     def _wire_at(self, px: int, py: int) -> Optional[Wire]:
         """Return the wire closest to pixel (px, py), within click tolerance."""
         TOLERANCE = 6
@@ -1291,6 +1542,7 @@ class BreadboardCanvas(wx.Panel):
     def _try_delete(self, px: int, py: int) -> None:
         ref = self._comp_at(px, py)
         if ref:
+            self.push_undo()
             self.layout.clear_module_ref(ref)
             self.board.remove(ref)
             if self._selected_ref == ref:
@@ -1300,6 +1552,7 @@ class BreadboardCanvas(wx.Panel):
         # Check for probe markers
         name = self._probe_label_at(px, py)
         if name:
+            self.push_undo()
             self.board.remove_probe(name)
             if self.on_probe_placed:
                 self.on_probe_placed(name)
@@ -1307,6 +1560,7 @@ class BreadboardCanvas(wx.Panel):
             return
         w = self._wire_at(px, py)
         if w:
+            self.push_undo()
             self.board.remove_wire(w)
             self.Refresh()
 
@@ -1363,6 +1617,8 @@ class BreadboardCanvas(wx.Panel):
             self._draw_vert_rails(dc)
 
         self._draw_components(dc)
+        if self._pin_drag_ref is not None:
+            self._draw_pin_drag_preview(dc)
         self._draw_wires(dc)
         if self.show_binding_posts:
             self._draw_terminals(dc)
@@ -1660,6 +1916,62 @@ class BreadboardCanvas(wx.Panel):
             dc.SetPen(wx.Pen('#222222', 1))
             dc.DrawCircle(cx, cy, HOLE_R)
 
+    def _draw_pin_drag_preview(self, dc: wx.DC) -> None:
+        """Draw the component being pin-dragged at its current (live) position."""
+        ref     = self._pin_drag_ref
+        pin_num = self._pin_drag_num
+        target  = self._pin_drag_hole
+        if ref is None or pin_num is None:
+            return
+        placed   = self.board.get_placement(ref)
+        comp_def = ALL_DEFS.get(placed.type_id) if placed else None
+        if not placed or not comp_def:
+            return
+
+        preview_holes: Dict[int, Hole] = dict(placed.pin_holes)
+        if target is not None:
+            preview_holes[pin_num] = target
+
+        import dataclasses as _dc
+        preview = _dc.replace(placed, pin_holes=preview_holes)
+        self._draw_placed_component(dc, ref, preview, comp_def, selected=True, delete_hover=False)
+
+        # Gold ring on the snap target hole
+        if target is not None:
+            xy = self.layout.hole_xy(target)
+            if xy:
+                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetPen(wx.Pen(wx.Colour('#e8c020'), 2))
+                dc.DrawCircle(xy[0], xy[1], HOLE_R + 4)
+
+    def _commit_pin_drag(self) -> None:
+        """Apply the pin drag result to the placed component."""
+        ref     = self._pin_drag_ref
+        pin_num = self._pin_drag_num
+        target  = self._pin_drag_hole
+        if ref is None or pin_num is None or target is None:
+            self._drag_pre_snap = None
+            return
+        placed   = self.board.get_placement(ref)
+        comp_def = ALL_DEFS.get(placed.type_id) if placed else None
+        if not placed or not comp_def:
+            self._drag_pre_snap = None
+            return
+
+        old_hole = placed.pin_holes.get(pin_num)
+        placed.pin_holes[pin_num] = target
+
+        if self._drag_pre_snap is not None and old_hole != target:
+            self._undo_stack.append(self._drag_pre_snap)
+            if len(self._undo_stack) > 50:
+                self._undo_stack.pop(0)
+            self._redo_stack.clear()
+            self._notify_history()
+        self._drag_pre_snap = None
+
+        if self.on_placed:
+            self.on_placed(ref)
+
     def _draw_wires(self, dc: wx.DC) -> None:
         lay = self.layout
         for wire in self.board.wires:
@@ -1688,6 +2000,8 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_components(self, dc: wx.DC) -> None:
         for ref, placed in self.board.placements.items():
+            if ref == self._pin_drag_ref:
+                continue   # drawn live by _draw_pin_drag_preview
             comp_def = ALL_DEFS.get(placed.type_id)
             if comp_def is None:
                 continue
@@ -2846,7 +3160,7 @@ class BreadboardCanvas(wx.Panel):
         ux, uy = dx / length, dy / length  # unit vector p1→p2
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
 
-        body_color = wx.Colour(comp_def.color)
+        body_color = wx.Colour(placed.led_color if placed.led_color else comp_def.color)
         border_color = wx.Colour('#333333')
         pen_w = 2 if selected else 1
 
@@ -3387,7 +3701,7 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawCircle(cx - r_hole // 2, cy - r_hole // 2, 2)
 
             # Name label and net assignment — direction depends on binding post side
-            label_below = lay.binding_post_side != 'bottom'
+            label_below = not lay.binding_post_side.startswith('bottom')
             dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                wx.FONTWEIGHT_BOLD))
             dc.SetTextForeground('#ffffff' if dark_bg else '#222222')
