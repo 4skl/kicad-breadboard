@@ -28,7 +28,7 @@ import wx
 
 from .model import (
     ComponentDef, ALL_DEFS, Netlist, NetlistComponent,
-    guess_type_id, Breadboard, TO92_PINOUT_VARIANTS,
+    guess_type_id, Breadboard, TO92_PINOUT_VARIANTS, LED_COLORS,
 )
 
 CARD_W      = 110
@@ -63,7 +63,7 @@ def _clip_text(dc: wx.DC, text: str, max_w: int) -> str:
 
 class _PaintCard:
     """Pure data — no wx widget."""
-    __slots__ = ('ref', 'comp', 'comp_def', 'y', 'height', 'pinout_idx', 'rpi_long_labels')
+    __slots__ = ('ref', 'comp', 'comp_def', 'y', 'height', 'pinout_idx', 'rpi_long_labels', 'led_color_idx')
 
     def __init__(self, ref: str, comp: NetlistComponent,
                  comp_def: Optional[ComponentDef], y: int, height: int):
@@ -74,6 +74,7 @@ class _PaintCard:
         self.height          = height
         self.pinout_idx      = 0       # index into TO92_PINOUT_VARIANTS[type_id]
         self.rpi_long_labels = False   # RPi extended alt-function pin names
+        self.led_color_idx   = 0       # index into LED_COLORS for LED components
 
 
 class _PaintComponentTray(wx.ScrolledWindow):
@@ -168,7 +169,12 @@ class _PaintComponentTray(wx.ScrolledWindow):
             dc.DrawRectangle(x, y, CARD_W, card.height)
 
             # Colour swatch
-            color = card.comp_def.color if card.comp_def else '#aaaaaa'
+            if card.comp_def and card.comp_def.type_id == 'LED':
+                color = LED_COLORS[card.led_color_idx][0]
+            elif card.comp_def:
+                color = card.comp_def.color
+            else:
+                color = '#aaaaaa'
             dc.SetBrush(wx.Brush(color if not placed else '#888888'))
             dc.SetPen(wx.Pen('#666666', 1))
             dc.DrawRectangle(x + 4, y + 4, SWATCH_W, card.height - 8)
@@ -209,7 +215,18 @@ class _PaintComponentTray(wx.ScrolledWindow):
                         dc.DrawText('>', btn_x + (_BTN_W - tw) // 2,
                                     btn_y + (_BTN_H - th) // 2)
 
-
+            # LED colour-cycle button
+            if card.comp_def and card.comp_def.type_id == 'LED' and not placed:
+                btn_x = x + CARD_W - _BTN_W - _BTN_RIGHT_PAD
+                btn_y = y + (CARD_H - _BTN_H) // 2
+                dc.SetBrush(wx.Brush('#d8d8d8'))
+                dc.SetPen(wx.Pen('#888888', 1))
+                dc.DrawRoundedRectangle(btn_x, btn_y, _BTN_W, _BTN_H, 2)
+                dc.SetFont(font_btn)
+                dc.SetTextForeground('#333333')
+                tw, th = dc.GetTextExtent('>')
+                dc.DrawText('>', btn_x + (_BTN_W - tw) // 2,
+                            btn_y + (_BTN_H - th) // 2)
 
             # Border
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
@@ -228,18 +245,24 @@ class _PaintComponentTray(wx.ScrolledWindow):
             return
         placed = self.board.get_placement(card.ref) is not None
 
+        btn_x = CARD_PAD + CARD_W - _BTN_W - _BTN_RIGHT_PAD
+
+        # Check if click landed on the LED colour-cycle button
+        if (not placed and card.comp_def and card.comp_def.type_id == 'LED'):
+            if btn_x <= click_x < btn_x + _BTN_W:
+                card.led_color_idx = (card.led_color_idx + 1) % len(LED_COLORS)
+                self.Refresh()
+                return
+
         # Check if click landed on the cycle-pinout button (TO-92 only)
         if (not placed and card.comp_def and
                 card.comp_def.type_id in TO92_PINOUT_VARIANTS):
             variants = TO92_PINOUT_VARIANTS[card.comp_def.type_id]
             if len(variants) > 1:
-                btn_x = CARD_PAD + CARD_W - _BTN_W - _BTN_RIGHT_PAD
                 if btn_x <= click_x < btn_x + _BTN_W:
                     card.pinout_idx = (card.pinout_idx + 1) % len(variants)
                     self.Refresh()
                     return
-
-
 
         if placed or card.comp_def is None:
             return
@@ -251,6 +274,9 @@ class _PaintComponentTray(wx.ScrolledWindow):
                     card.comp_def.type_id][card.pinout_idx]
                 comp_def = dataclasses.replace(card.comp_def,
                                                pin_offsets=variant_offsets)
+            if card.comp_def.type_id == 'LED':
+                comp_def = dataclasses.replace(comp_def,
+                                               color=LED_COLORS[card.led_color_idx][0])
             self.on_pick(comp_def, card.ref)
 
 
@@ -271,6 +297,7 @@ class _NativeCard(wx.Panel):
         self._is_to92         = is_to92
         self._swatch_color    = comp_def.color if comp_def else '#aaaaaa'
         self.pinout_idx       = 0
+        self.led_color_idx    = 0
 
         self._swatch = wx.Panel(self, pos=(4, 4), size=(SWATCH_W, h - 8))
 
@@ -290,6 +317,7 @@ class _NativeCard(wx.Panel):
 
         self._pinout_lbl: Optional[wx.StaticText] = None
         self._cycle_lbl:  Optional[wx.StaticText] = None
+        self._led_cycle_btn: Optional[wx.Button] = None
         if is_to92 and comp_def:
             variants = TO92_PINOUT_VARIANTS.get(comp_def.type_id, [])
             if variants:
@@ -306,11 +334,22 @@ class _NativeCard(wx.Panel):
                     self._cycle_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                                                      wx.FONTSTYLE_NORMAL,
                                                      wx.FONTWEIGHT_BOLD))
+        if comp_def and comp_def.type_id == 'LED':
+            btn_x = CARD_W - _BTN_W - _BTN_RIGHT_PAD
+            btn_y = (h - _BTN_H) // 2 - 1
+            self._led_cycle_btn = wx.Button(
+                self, label='>', pos=(btn_x, btn_y),
+                size=(_BTN_W, _BTN_H + 2))
+            self._led_cycle_btn.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
+                                                 wx.FONTSTYLE_NORMAL,
+                                                 wx.FONTWEIGHT_BOLD))
         for w in filter(None, [self, self._swatch, self._ref_lbl, self._val_lbl,
                                 self._pinout_lbl]):
             w.Bind(wx.EVT_LEFT_DOWN, self._on_click)
         if self._cycle_lbl is not None:
             self._cycle_lbl.Bind(wx.EVT_BUTTON, self._on_cycle_btn)
+        if self._led_cycle_btn is not None:
+            self._led_cycle_btn.Bind(wx.EVT_BUTTON, self._on_led_cycle_btn)
 
         self._apply_colors()
 
@@ -328,6 +367,8 @@ class _NativeCard(wx.Panel):
                                   self._pinout_lbl, self._cycle_lbl]):
             lbl.SetBackgroundColour(bg)
             lbl.SetForegroundColour(fg)
+        if self._led_cycle_btn is not None:
+            self._led_cycle_btn.Enable(not placed)
         self.Refresh()
 
     def update(self, board: Breadboard) -> None:
@@ -348,6 +389,13 @@ class _NativeCard(wx.Panel):
         if not placed:
             self._cycle_pinout()
 
+    def _on_led_cycle_btn(self, _evt) -> None:
+        placed = self.board.get_placement(self.ref) is not None
+        if not placed:
+            self.led_color_idx = (self.led_color_idx + 1) % len(LED_COLORS)
+            self._swatch_color = LED_COLORS[self.led_color_idx][0]
+            self._apply_colors()
+
     def _on_click(self, evt: wx.MouseEvent) -> None:
         placed = self.board.get_placement(self.ref) is not None
         if placed or self.comp_def is None:
@@ -358,6 +406,9 @@ class _NativeCard(wx.Panel):
             _, variant_offsets = TO92_PINOUT_VARIANTS[
                 self.comp_def.type_id][self.pinout_idx]
             comp_def = dataclasses.replace(self.comp_def, pin_offsets=variant_offsets)
+        if self.comp_def.type_id == 'LED':
+            comp_def = dataclasses.replace(comp_def,
+                                           color=LED_COLORS[self.led_color_idx][0])
 
         tray = self.GetParent()
         if hasattr(tray, 'on_pick') and tray.on_pick is not None:

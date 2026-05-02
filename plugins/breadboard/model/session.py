@@ -84,7 +84,7 @@ def save_session(board: Breadboard, netlist_path: Optional[str], path: str) -> N
             doc['terminals'][name] = net
 
     for ref, placed in board.placements.items():
-        doc['placements'].append({
+        entry: Dict[str, Any] = {
             'ref': ref,
             'type_id': placed.type_id,
             'flipped': placed.flipped,
@@ -92,7 +92,10 @@ def save_session(board: Breadboard, netlist_path: Optional[str], path: str) -> N
                 [pin_num, _hole_to_json(hole)]
                 for pin_num, hole in sorted(placed.pin_holes.items())
             ],
-        })
+        }
+        if placed.led_color:
+            entry['led_color'] = placed.led_color
+        doc['placements'].append(entry)
 
     for wire in board.wires:
         doc['wires'].append({
@@ -169,6 +172,7 @@ def load_session(path: str) -> Dict[str, Any]:
             type_id=p['type_id'],
             pin_holes=pin_holes,
             flipped=int(p.get('flipped', 0)),
+            led_color=p.get('led_color', ''),
         )
         board.place(placed)
 

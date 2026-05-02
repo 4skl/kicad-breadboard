@@ -180,6 +180,7 @@ class PlacedComponent:
     type_id: str                         # matches ComponentDef.type_id
     pin_holes: Dict[int, Hole]          # pin_number → hole
     flipped: int = 0                    # DIP ICs: 0/1 (mirrored); RPi modules: 0-3 (CW rotation)
+    led_color: str = ''                 # overrides ComponentDef.color for LED; '' = use default
 
 
 @dataclass

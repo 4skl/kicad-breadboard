@@ -171,6 +171,15 @@ LED = ComponentDef(
     color='#e84040',   # default red; actual colour unknown from netlist
 )
 
+# Ordered colour palette for the LED colour-cycle button in the tray.
+# Each entry is (hex_color, display_name).  The first entry must match LED.color.
+LED_COLORS: list = [
+    ('#e84040', 'Red'),
+    ('#40c840', 'Green'),
+    ('#e8a020', 'Yellow'),
+    ('#4040e8', 'Blue'),
+]
+
 # ---------------------------------------------------------------------------
 # Potentiometer (3-pin, 3 consecutive holes)
 # Pin 1 = CCW terminal, Pin 2 = Wiper, Pin 3 = CW terminal
