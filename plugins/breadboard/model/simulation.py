@@ -6,6 +6,7 @@ Public API:
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -30,6 +31,8 @@ class SimResult:
     branch_currents: Dict[str, float]   # component ref → current in A
     error:           Optional[str]      # None if simulation succeeded
     spice_netlist:   str                # the generated netlist (for debugging)
+    spice_output:    str = ''           # raw ngspice stdout
+    warnings:        List[str] = field(default_factory=list)  # non-fatal issues
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +127,41 @@ def _spice_val(value: str) -> str:
     return '1'
 
 
+_SPICE_SFXS = [
+    ('MEG', 1e6), ('meg', 1e6), ('T', 1e12), ('G', 1e9),
+    ('K', 1e3), ('k', 1e3), ('U', 1e-6), ('u', 1e-6),
+    ('N', 1e-9), ('n', 1e-9), ('P', 1e-12), ('p', 1e-12),
+    ('F', 1e-15), ('f', 1e-15), ('M', 1e-3),  # M=milli in SPICE
+]
+
+
+def _half_spice_val(sv: str) -> str:
+    """Return a SPICE value string equal to half of sv (for POT wiper at 50%)."""
+    sv = sv.strip()
+    sv_up = sv.upper()
+    for sfx, m in _SPICE_SFXS:
+        if sv_up.endswith(sfx.upper()):
+            try:
+                n = float(sv[:-len(sfx)]) * m / 2
+                if n == 0:
+                    return '1'
+                e = math.floor(math.log10(abs(n)))
+                if e >= 9:   return f'{n/1e9:.4g}G'
+                if e >= 6:   return f'{n/1e6:.4g}Meg'
+                if e >= 3:   return f'{n/1e3:.4g}k'
+                if e >= 0:   return f'{n:.4g}'
+                if e >= -3:  return f'{n*1e3:.4g}m'
+                if e >= -6:  return f'{n*1e6:.4g}u'
+                if e >= -9:  return f'{n*1e9:.4g}n'
+                return f'{n*1e12:.4g}p'
+            except (ValueError, OverflowError):
+                break
+    try:
+        return f'{float(sv) / 2:.4g}'
+    except ValueError:
+        return '1'
+
+
 # ---------------------------------------------------------------------------
 # SPICE element line generation
 # ---------------------------------------------------------------------------
@@ -196,6 +234,17 @@ def _element_line(ref: str, type_id: str,
     if tid == 'PMOS':
         return f'M{ref}  {p(3)}  {p(1)}  {p(2)}  0  PMOS'
 
+    if tid == 'POT':
+        # Model as two equal resistors at 50% wiper position
+        # pin1=terminal1, pin2=wiper, pin3=terminal3
+        half = _half_spice_val(_spice_val(value))
+        return (f'R{ref}_A  {p(1)}  {p(2)}  {half}\n'
+                f'R{ref}_B  {p(2)}  {p(3)}  {half}')
+
+    if tid == 'OPAMP_SPICE':
+        # Ideal op-amp: VCVS, gain=1e5.  pin1=IN+, pin2=IN-, pin3=V+, pin4=V-, pin5=OUT
+        return f'E{ref}  {p(5)}  0  {p(1)}  {p(2)}  1e5'
+
     return None
 
 
@@ -204,16 +253,18 @@ def _element_line(ref: str, type_id: str,
 # ---------------------------------------------------------------------------
 
 def _build_netlist(board: Breadboard, netlist: Netlist,
-                   terminal_voltages: Dict[str, float]) -> Tuple[str, Optional[str]]:
+                   terminal_voltages: Dict[str, float]) -> Tuple[str, Optional[str], List[str]]:
     """
     Build a SPICE netlist string from the board and netlist state.
 
-    Returns (spice_text, error_or_None).
+    Returns (spice_text, error_or_None, warnings).
     """
+    warnings: List[str] = []
+
     # ---- Validate GND assignment ----
     gnd_net = board.terminal_nets.get('GND', '')
     if not gnd_net:
-        return '', 'GND terminal not assigned'
+        return '', 'GND terminal not assigned', warnings
 
     # ---- Net name → SPICE node map (starts with GND→0 and terminal nets) ----
     node_map: Dict[str, str] = {gnd_net: '0'}
@@ -229,7 +280,18 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
         # Get the net for each pin of this component
         nets_dict = netlist.nets_for_ref(ref)   # {pin_num: Net}
         if not nets_dict:
+            warnings.append(f'{ref} ({placed.type_id}): not in netlist — skipped')
             lines.append(f'* skipped: {ref} ({placed.type_id}) — no nets')
+            continue
+
+        # Skip components with floating (no-connect) pins — they cause SPICE
+        # singular-matrix errors because the dangling node has no DC path.
+        floating = [pin for pin, net in nets_dict.items()
+                    if net.name.startswith('unconnected-')]
+        if floating:
+            warnings.append(
+                f'{ref} ({placed.type_id}): pin(s) {floating} unconnected — skipped')
+            lines.append(f'* skipped: {ref} ({placed.type_id}) — floating pin(s)')
             continue
 
         # Map pin_num → SPICE node
@@ -243,13 +305,14 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
 
         element = _element_line(ref, placed.type_id, pin_nodes, value)
         if element is None:
-            lines.append(f'* skipped: {ref} ({placed.type_id})')
+            warnings.append(f'{ref} ({placed.type_id}): no SPICE model — skipped')
+            lines.append(f'* skipped: {ref} ({placed.type_id}) — no model')
         else:
             lines.append(element)
             component_count += 1
 
     if component_count == 0:
-        return '', 'No simulatable components on board'
+        return '', 'No simulatable components on board', warnings
 
     lines.append('')
 
@@ -274,7 +337,7 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
     lines.append('.end')
     lines.append('')
 
-    return '\n'.join(lines), None
+    return '\n'.join(lines), None, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +494,7 @@ def simulate(board: Breadboard, netlist: Netlist,
 
     Returns a SimResult; .error is None on success.
     """
-    spice_text, build_err = _build_netlist(board, netlist, terminal_voltages)
+    spice_text, build_err, build_warnings = _build_netlist(board, netlist, terminal_voltages)
     if build_err:
         return SimResult(
             node_voltages={},
@@ -439,6 +502,7 @@ def simulate(board: Breadboard, netlist: Netlist,
             branch_currents={},
             error=build_err,
             spice_netlist=spice_text,
+            warnings=build_warnings,
         )
 
     output, run_err = _run_ngspice(spice_text)
@@ -449,6 +513,8 @@ def simulate(board: Breadboard, netlist: Netlist,
             branch_currents={},
             error=run_err,
             spice_netlist=spice_text,
+            spice_output=output or '',
+            warnings=build_warnings,
         )
 
     node_voltages, branch_currents_raw = _parse_output(output)
@@ -466,14 +532,16 @@ def simulate(board: Breadboard, netlist: Netlist,
             if net.name not in node_map:
                 node_map[net.name] = _sanitize_node(net.name)
 
-    # Invert: spice_node → net_name  (keep first hit if there are duplicates)
+    # Invert: spice_node → net_name (lowercase keys to match ngspice output)
     spice_to_net: Dict[str, str] = {}
     for net_name, spice_node in node_map.items():
-        if spice_node not in spice_to_net:
-            spice_to_net[spice_node] = net_name
+        key = spice_node.lower()
+        if key not in spice_to_net:
+            spice_to_net[key] = net_name
 
     net_voltages: Dict[str, float] = {}
     for spice_node, voltage in node_voltages.items():
+        # spice_node is already lowercase (from _parse_output)
         net_name = spice_to_net.get(spice_node, spice_node)
         net_voltages[net_name] = voltage
 
@@ -490,4 +558,6 @@ def simulate(board: Breadboard, netlist: Netlist,
         branch_currents=branch_currents,
         error=None,
         spice_netlist=spice_text,
+        spice_output=output,
+        warnings=build_warnings,
     )

@@ -1330,17 +1330,29 @@ class BreadboardWindow(wx.Frame):
         if not self.board.placements:
             self._sim_pane.show_error('No components placed on the board.')
             return
+        # Clear any stale results from a previous run before starting
+        self.canvas.clear_simulation()
+        self._sim_pane.show_running()
         self.SetStatusText('Running ngspice simulation…', 0)
         self.Update()
-        result = simulate(self.board, self.netlist, terminal_voltages)
+        try:
+            result = simulate(self.board, self.netlist, terminal_voltages)
+        except Exception as exc:
+            self._sim_pane.show_error(f'Unexpected error:\n{exc}')
+            self.SetStatusText('Simulation failed.', 0)
+            return
         if result.error:
             self._sim_pane.show_error(result.error, result)
             self.SetStatusText('Simulation failed.', 0)
         else:
             self.canvas.set_simulation_result(result)
             self._sim_pane.show_results(result)
-            self.SetStatusText(
-                f'Simulation complete — {len(result.net_voltages)} node voltage(s).', 0)
+            n = len(result.net_voltages)
+            w = len(result.warnings)
+            status = f'Simulation complete — {n} node voltage(s)'
+            if w:
+                status += f', {w} warning(s)'
+            self.SetStatusText(status, 0)
 
     def _close_sim_pane(self) -> None:
         if self._sim_pane:
@@ -1689,7 +1701,7 @@ class SimPane(wx.Panel):
         self._console_open = not self._console_open
         self._console_btn.SetLabel('▼  Console' if self._console_open else '▶  Console')
         self._console_text.Show(self._console_open)
-        self.Fit()
+        wx.CallAfter(self.Fit)
 
     def _populate_console(self, result) -> None:
         parts = []
@@ -1704,8 +1716,19 @@ class SimPane(wx.Panel):
         if self._console_open:
             self._console_text.Show()
 
+    def show_running(self) -> None:
+        self._result_text.SetValue('Running simulation…')
+        self._result_text.Show()
+        wx.CallAfter(self.Fit)
+
     def show_results(self, result) -> None:
         lines = []
+        if getattr(result, 'warnings', None):
+            lines.append('⚠ Warnings')
+            lines.append('─' * 28)
+            for w in result.warnings:
+                lines.append(f'  {w}')
+            lines.append('')
         if result.net_voltages:
             lines.append('Node voltages')
             lines.append('─' * 28)
@@ -1721,14 +1744,21 @@ class SimPane(wx.Panel):
         self._result_text.SetValue('\n'.join(lines))
         self._result_text.Show()
         self._populate_console(result)
-        self.Fit()
+        wx.CallAfter(self.Fit)
 
     def show_error(self, msg: str, result=None) -> None:
-        self._result_text.SetValue(f'Error:\n{msg}')
+        lines = [f'Error:\n{msg}']
+        if result is not None and getattr(result, 'warnings', None):
+            lines.append('')
+            lines.append('⚠ Warnings')
+            lines.append('─' * 28)
+            for w in result.warnings:
+                lines.append(f'  {w}')
+        self._result_text.SetValue('\n'.join(lines))
         self._result_text.Show()
         if result is not None:
             self._populate_console(result)
-        self.Fit()
+        wx.CallAfter(self.Fit)
 
     def clear_results(self) -> None:
         if self._result_text:
