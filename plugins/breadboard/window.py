@@ -1330,6 +1330,24 @@ class BreadboardWindow(wx.Frame):
         if not self.board.placements:
             self._sim_pane.show_error('No components placed on the board.')
             return
+
+        # Validate board wiring before simulating — open nets and shorts make
+        # SPICE results meaningless (it simulates the schematic, not the board).
+        if self.netlist:
+            vresult = validate(self.board, self.netlist)
+            blocking = [i for i in vresult.issues
+                        if i.kind in (IssueKind.OPEN_NET, IssueKind.SHORT)]
+            if blocking:
+                self.canvas.set_validation_result(vresult)
+                lines = ['Wiring errors — fix before simulating:\n']
+                for issue in blocking:
+                    icon = '⚡' if issue.kind == IssueKind.SHORT else '?'
+                    lines.append(f'  {icon}  {issue.description}')
+                self._sim_pane.show_error('\n'.join(lines))
+                self.SetStatusText(
+                    f'Simulation blocked — {len(blocking)} wiring error(s).', 0)
+                return
+
         # Clear any stale results from a previous run before starting
         self.canvas.clear_simulation()
         self._sim_pane.show_running()
