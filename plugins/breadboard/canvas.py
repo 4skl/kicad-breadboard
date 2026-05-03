@@ -153,8 +153,10 @@ MODE_DRAW_LINE     = 'draw_line'
 MODE_DRAW_RECT     = 'draw_rect'
 MODE_DRAW_TEXT     = 'draw_text'
 MODE_DRAW_CIRCLE   = 'draw_circle'
+MODE_DRAW_TEXTBOX  = 'draw_textbox'
 
-_DRAW_MODES = frozenset({MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_TEXT, MODE_DRAW_CIRCLE})
+_DRAW_MODES = frozenset({MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_TEXT,
+                         MODE_DRAW_CIRCLE, MODE_DRAW_TEXTBOX})
 
 
 @dataclass
@@ -179,6 +181,15 @@ class DrawCircle:
     cx: float; cy: float; r: float
     color: str = '#333333'; width: int = 2
     fill: bool = False; fill_color: str = '#dddddd'
+
+@dataclass
+class DrawTextBox:
+    x1: float; y1: float; x2: float; y2: float
+    text: str = ''
+    color: str = '#333333'; width: int = 1
+    fill: bool = True; fill_color: str = '#fffbe6'
+    font_size: int = 10; bold: bool = False; italic: bool = False
+    text_color: str = '#222222'
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +683,7 @@ class _ShapePropsDialog(wx.Dialog):
         sizer.Add(gs, 1, wx.EXPAND | wx.ALL, 10)
         sizer.Add(self.CreateButtonSizer(wx.OK | wx.CANCEL), flag=wx.EXPAND | wx.ALL, border=8)
         self.SetSizerAndFit(sizer)
+        self.CentreOnParent()
 
     def _on_fill_toggle(self, _evt):
         if self._fill_color:
@@ -733,6 +745,7 @@ class _TextPropsDialog(wx.Dialog):
         sizer.Add(gs, 1, wx.EXPAND | wx.ALL, 10)
         sizer.Add(self.CreateButtonSizer(wx.OK | wx.CANCEL), flag=wx.EXPAND | wx.ALL, border=8)
         self.SetSizerAndFit(sizer)
+        self.CentreOnParent()
         self._text.SetFocus()
 
     @property
@@ -754,6 +767,92 @@ class _TextPropsDialog(wx.Dialog):
     @property
     def italic(self) -> bool:
         return self._italic.GetValue()
+
+
+class _TextBoxPropsDialog(wx.Dialog):
+    """Properties dialog for textbox annotations."""
+
+    def __init__(self, parent, *, text='', color='#333333', width=1,
+                 fill=True, fill_color='#fffbe6',
+                 font_size=10, bold=False, italic=False, text_color='#222222'):
+        super().__init__(parent, title='Text box',
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        gs = wx.FlexGridSizer(cols=2, vgap=6, hgap=8)
+        gs.AddGrowableCol(1)
+
+        gs.Add(wx.StaticText(self, label='Text:'), flag=wx.ALIGN_CENTER_VERTICAL)
+        self._text = wx.TextCtrl(self, value=text, size=(220, 60),
+                                 style=wx.TE_MULTILINE)
+        gs.Add(self._text, flag=wx.EXPAND)
+
+        gs.Add(wx.StaticText(self, label='Font size:'), flag=wx.ALIGN_CENTER_VERTICAL)
+        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72, size=(60, -1))
+        gs.Add(self._size)
+
+        gs.Add(wx.StaticText(self, label='Text color:'), flag=wx.ALIGN_CENTER_VERTICAL)
+        self._text_color = wx.ColourPickerCtrl(self, colour=wx.Colour(text_color))
+        gs.Add(self._text_color)
+
+        gs.Add(wx.StaticText(self, label='Style:'), flag=wx.ALIGN_CENTER_VERTICAL)
+        style_row = wx.BoxSizer(wx.HORIZONTAL)
+        self._bold   = wx.CheckBox(self, label='Bold')
+        self._italic = wx.CheckBox(self, label='Italic')
+        self._bold.SetValue(bold)
+        self._italic.SetValue(italic)
+        style_row.Add(self._bold)
+        style_row.AddSpacer(10)
+        style_row.Add(self._italic)
+        gs.Add(style_row)
+
+        gs.Add(wx.StaticLine(self, style=wx.LI_HORIZONTAL), 0,
+               wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+        gs.Add(wx.StaticLine(self, style=wx.LI_HORIZONTAL), 0,
+               wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+
+        gs.Add(wx.StaticText(self, label='Border:'), flag=wx.ALIGN_CENTER_VERTICAL)
+        border_row = wx.BoxSizer(wx.HORIZONTAL)
+        self._width = wx.SpinCtrl(self, value=str(width), min=0, max=10, size=(50, -1))
+        border_row.Add(wx.StaticText(self, label='w='), 0, wx.ALIGN_CENTER_VERTICAL)
+        border_row.Add(self._width, 0)
+        border_row.AddSpacer(8)
+        self._color = wx.ColourPickerCtrl(self, colour=wx.Colour(color))
+        border_row.Add(self._color, 0)
+        gs.Add(border_row)
+
+        self._fill_cb = wx.CheckBox(self, label='Fill')
+        self._fill_cb.SetValue(fill)
+        gs.Add(self._fill_cb, flag=wx.ALIGN_CENTER_VERTICAL)
+        self._fill_color = wx.ColourPickerCtrl(self, colour=wx.Colour(fill_color))
+        gs.Add(self._fill_color)
+        self._fill_cb.Bind(wx.EVT_CHECKBOX,
+                           lambda _: self._fill_color.Enable(self._fill_cb.GetValue()))
+        self._fill_color.Enable(fill)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(gs, 1, wx.EXPAND | wx.ALL, 10)
+        sizer.Add(self.CreateButtonSizer(wx.OK | wx.CANCEL), flag=wx.EXPAND | wx.ALL, border=8)
+        self.SetSizerAndFit(sizer)
+        self.CentreOnParent()
+        self._text.SetFocus()
+
+    @property
+    def text(self) -> str:        return self._text.GetValue()
+    @property
+    def font_size(self) -> int:   return self._size.GetValue()
+    @property
+    def text_color(self) -> str:  return self._text_color.GetColour().GetAsString(wx.C2S_HTML_SYNTAX)
+    @property
+    def bold(self) -> bool:       return self._bold.GetValue()
+    @property
+    def italic(self) -> bool:     return self._italic.GetValue()
+    @property
+    def line_width(self) -> int:  return self._width.GetValue()
+    @property
+    def color(self) -> str:       return self._color.GetColour().GetAsString(wx.C2S_HTML_SYNTAX)
+    @property
+    def fill(self) -> bool:       return self._fill_cb.GetValue()
+    @property
+    def fill_color(self) -> str:  return self._fill_color.GetColour().GetAsString(wx.C2S_HTML_SYNTAX)
 
 
 # ---------------------------------------------------------------------------
@@ -797,16 +896,21 @@ class BreadboardCanvas(wx.Panel):
         self._draw_start: Optional[Tuple[float, float]] = None   # in-progress shape first point
         self._draw_preview: Optional[Tuple[float, float]] = None  # live mouse pos
         self._hover_ann_idx: Optional[int] = None    # annotation under cursor in DELETE mode
-        self._shape_defaults = {'color': '#333333', 'width': 2, 'fill': False, 'fill_color': '#dddddd'}
-        self._text_defaults  = {'color': '#222222', 'font_size': 11, 'bold': False, 'italic': False}
+        self._shape_defaults   = {'color': '#333333', 'width': 2, 'fill': False, 'fill_color': '#dddddd'}
+        self._text_defaults    = {'color': '#222222', 'font_size': 11, 'bold': False, 'italic': False}
+        self._textbox_defaults = {'color': '#333333', 'width': 1, 'fill': True, 'fill_color': '#fffbe6',
+                                  'font_size': 10, 'bold': False, 'italic': False, 'text_color': '#222222'}
         self._drag_ann_idx: Optional[int] = None     # annotation being dragged in SELECT mode
         self._drag_ann_orig = None                   # copy of annotation at drag start
         self._drag_ann_start_mouse: Tuple[float, float] = (0.0, 0.0)
         self._drag_ann_pre_snap: Optional[dict] = None
+        self._selected_ann_idx: Optional[int] = None # annotation showing resize handles
+        self._resize_handle_idx: Optional[int] = None # handle being dragged (None = body drag)
         # (x, y, IssueKind) for each validation issue with locatable holes
         self._validation_icons: List[Tuple[int, int, IssueKind]] = []
 
         self.show_net_labels: bool = True    # toggled via preferences
+        self.show_voltage_labels: bool = True  # toggled via SimPane checkbox
         self.show_binding_posts: bool = True # toggled via preferences
         self.show_baseboard: bool = False    # toggled via preferences
         self.show_branding: bool = False
@@ -901,6 +1005,12 @@ class BreadboardCanvas(wx.Panel):
             return {'kind': 'circle', 'cx': a.cx, 'cy': a.cy, 'r': a.r,
                     'color': a.color, 'width': a.width,
                     'fill': a.fill, 'fill_color': a.fill_color}
+        if isinstance(a, DrawTextBox):
+            return {'kind': 'textbox', 'x1': a.x1, 'y1': a.y1, 'x2': a.x2, 'y2': a.y2,
+                    'text': a.text, 'color': a.color, 'width': a.width,
+                    'fill': a.fill, 'fill_color': a.fill_color,
+                    'font_size': a.font_size, 'bold': a.bold, 'italic': a.italic,
+                    'text_color': a.text_color}
         return {}
 
     @staticmethod
@@ -921,6 +1031,14 @@ class BreadboardCanvas(wx.Panel):
             return DrawCircle(d['cx'], d['cy'], d['r'],
                               d.get('color', '#333333'), d.get('width', 2),
                               d.get('fill', False), d.get('fill_color', '#dddddd'))
+        if k == 'textbox':
+            return DrawTextBox(d['x1'], d['y1'], d['x2'], d['y2'],
+                               text=d.get('text', ''), color=d.get('color', '#333333'),
+                               width=d.get('width', 1), fill=d.get('fill', True),
+                               fill_color=d.get('fill_color', '#fffbe6'),
+                               font_size=d.get('font_size', 10), bold=d.get('bold', False),
+                               italic=d.get('italic', False),
+                               text_color=d.get('text_color', '#222222'))
         return None
 
     def _board_snapshot(self) -> dict:
@@ -1030,6 +1148,7 @@ class BreadboardCanvas(wx.Panel):
         self._selected_ref = None
         self._selected_wire = None
         self._selected_probe = None
+        self._selected_ann_idx = None
         self._drag_comp = None
         self._drag_pre_snap = None
         self._ghost = None
@@ -1052,6 +1171,7 @@ class BreadboardCanvas(wx.Panel):
         self._selected_wire = None
         self._selected_ref = None
         self._selected_probe = None
+        self._selected_ann_idx = None
         self._pin_drag_ref  = None
         self._pin_drag_num  = None
         self._pin_drag_hole = None
@@ -1131,9 +1251,13 @@ class BreadboardCanvas(wx.Panel):
                 self.Refresh()
                 return True
             else:
-                # Second click: place with both pins
+                # Second click: place with both pins.
+                # For diode-family parts pin 1=K, pin 2=A — first click anchors A (pin 2).
                 self.push_undo()
-                pin_holes = {1: self._place_pin1, 2: clicked}
+                if comp_def.type_id in ('LED', 'D', 'D_Zener'):
+                    pin_holes = {2: self._place_pin1, 1: clicked}
+                else:
+                    pin_holes = {1: self._place_pin1, 2: clicked}
                 led_color = comp_def.color if comp_def.type_id == 'LED' else ''
                 placed = PlacedComponent(ref=ref, type_id=comp_def.type_id,
                                          pin_holes=pin_holes, flipped=False,
@@ -1393,6 +1517,36 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
             return
 
+        if self.mode == MODE_DRAW_TEXTBOX:
+            if self._draw_start is None:
+                self._draw_start = (px, py)
+                self._draw_preview = (px, py)
+            else:
+                x1, y1 = self._draw_start
+                if abs(px - x1) > 4 or abs(py - y1) > 4:
+                    dlg = _TextBoxPropsDialog(self.GetTopLevelParent(),
+                                              **self._textbox_defaults)
+                    if dlg.ShowModal() == wx.ID_OK:
+                        self._textbox_defaults.update({
+                            'color': dlg.color, 'width': dlg.line_width,
+                            'fill': dlg.fill, 'fill_color': dlg.fill_color,
+                            'font_size': dlg.font_size, 'bold': dlg.bold,
+                            'italic': dlg.italic, 'text_color': dlg.text_color,
+                        })
+                        if dlg.text:
+                            self.push_undo()
+                            self._annotations.append(DrawTextBox(
+                                x1, y1, px, py, text=dlg.text,
+                                color=dlg.color, width=dlg.line_width,
+                                fill=dlg.fill, fill_color=dlg.fill_color,
+                                font_size=dlg.font_size, bold=dlg.bold,
+                                italic=dlg.italic, text_color=dlg.text_color))
+                    dlg.Destroy()
+                self._draw_start = None
+                self._draw_preview = None
+            self.Refresh()
+            return
+
         if self.mode in (MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_CIRCLE):
             if self._draw_start is None:
                 self._draw_start = (px, py)
@@ -1402,7 +1556,7 @@ class BreadboardCanvas(wx.Panel):
                 if abs(px - x1) > 2 or abs(py - y1) > 2:
                     if self.mode == MODE_DRAW_CIRCLE:
                         r = ((px - x1) ** 2 + (py - y1) ** 2) ** 0.5
-                        dlg = _ShapePropsDialog(self, 'Circle properties', has_fill=True,
+                        dlg = _ShapePropsDialog(self.GetTopLevelParent(), 'Circle properties', has_fill=True,
                                                 color=self._shape_defaults['color'],
                                                 width=self._shape_defaults['width'],
                                                 fill=self._shape_defaults['fill'],
@@ -1416,7 +1570,7 @@ class BreadboardCanvas(wx.Panel):
                                 fill=dlg.fill, fill_color=dlg.fill_color))
                         dlg.Destroy()
                     elif self.mode == MODE_DRAW_LINE:
-                        dlg = _ShapePropsDialog(self, 'Line properties',
+                        dlg = _ShapePropsDialog(self.GetTopLevelParent(), 'Line properties',
                                                 color=self._shape_defaults['color'],
                                                 width=self._shape_defaults['width'])
                         if dlg.ShowModal() == wx.ID_OK:
@@ -1426,7 +1580,7 @@ class BreadboardCanvas(wx.Panel):
                                 color=dlg.color, width=dlg.line_width))
                         dlg.Destroy()
                     else:  # DRAW_RECT
-                        dlg = _ShapePropsDialog(self, 'Rectangle properties', has_fill=True,
+                        dlg = _ShapePropsDialog(self.GetTopLevelParent(), 'Rectangle properties', has_fill=True,
                                                 color=self._shape_defaults['color'],
                                                 width=self._shape_defaults['width'],
                                                 fill=self._shape_defaults['fill'],
@@ -1445,7 +1599,7 @@ class BreadboardCanvas(wx.Panel):
             return
 
         if self.mode == MODE_DRAW_TEXT:
-            dlg = _TextPropsDialog(self,
+            dlg = _TextPropsDialog(self.GetTopLevelParent(),
                                    color=self._text_defaults['color'],
                                    font_size=self._text_defaults['font_size'],
                                    bold=self._text_defaults['bold'],
@@ -1513,21 +1667,39 @@ class BreadboardCanvas(wx.Panel):
                 self.Refresh()
                 self.CaptureMouse()
             else:
+                import copy as _copy
                 wire = self._wire_at(px, py)
                 self._selected_wire = wire
                 self._selected_ref = None
                 self._selected_probe = None
                 if wire:
+                    self._selected_ann_idx = None
                     self.SetFocus()
                 else:
-                    ann_idx = self._ann_at(px, py)
-                    if ann_idx is not None:
-                        import copy as _copy
-                        self._drag_ann_idx = ann_idx
-                        self._drag_ann_orig = _copy.copy(self._annotations[ann_idx])
+                    # Check resize handles of currently selected annotation first
+                    h_idx = None
+                    if self._selected_ann_idx is not None:
+                        h_idx = self._handle_at(self._selected_ann_idx, px, py)
+                    if h_idx is not None:
+                        # Start a resize drag on the selected annotation
+                        self._drag_ann_idx = self._selected_ann_idx
+                        self._drag_ann_orig = _copy.copy(self._annotations[self._selected_ann_idx])
                         self._drag_ann_start_mouse = (px, py)
                         self._drag_ann_pre_snap = self._board_snapshot()
+                        self._resize_handle_idx = h_idx
                         self.SetFocus()
+                    else:
+                        ann_idx = self._ann_at(px, py)
+                        if ann_idx is not None:
+                            self._selected_ann_idx = ann_idx
+                            self._drag_ann_idx = ann_idx
+                            self._drag_ann_orig = _copy.copy(self._annotations[ann_idx])
+                            self._drag_ann_start_mouse = (px, py)
+                            self._drag_ann_pre_snap = self._board_snapshot()
+                            self._resize_handle_idx = None
+                            self.SetFocus()
+                        else:
+                            self._selected_ann_idx = None
                 self.Refresh()
 
     def _on_left_dclick(self, evt: wx.MouseEvent) -> None:
@@ -1543,7 +1715,7 @@ class BreadboardCanvas(wx.Panel):
         """Open property dialog to edit an existing annotation in-place."""
         ann = self._annotations[idx]
         if isinstance(ann, DrawLine):
-            dlg = _ShapePropsDialog(self, 'Line properties',
+            dlg = _ShapePropsDialog(self.GetTopLevelParent(), 'Line properties',
                                     color=ann.color, width=ann.width)
             if dlg.ShowModal() == wx.ID_OK:
                 self.push_undo()
@@ -1551,7 +1723,7 @@ class BreadboardCanvas(wx.Panel):
                 ann.width = dlg.line_width
             dlg.Destroy()
         elif isinstance(ann, DrawRect):
-            dlg = _ShapePropsDialog(self, 'Rectangle properties', has_fill=True,
+            dlg = _ShapePropsDialog(self.GetTopLevelParent(), 'Rectangle properties', has_fill=True,
                                     color=ann.color, width=ann.width,
                                     fill=ann.fill, fill_color=ann.fill_color)
             if dlg.ShowModal() == wx.ID_OK:
@@ -1562,7 +1734,7 @@ class BreadboardCanvas(wx.Panel):
                 ann.fill_color = dlg.fill_color
             dlg.Destroy()
         elif isinstance(ann, DrawCircle):
-            dlg = _ShapePropsDialog(self, 'Circle properties', has_fill=True,
+            dlg = _ShapePropsDialog(self.GetTopLevelParent(), 'Circle properties', has_fill=True,
                                     color=ann.color, width=ann.width,
                                     fill=ann.fill, fill_color=ann.fill_color)
             if dlg.ShowModal() == wx.ID_OK:
@@ -1573,7 +1745,7 @@ class BreadboardCanvas(wx.Panel):
                 ann.fill_color = dlg.fill_color
             dlg.Destroy()
         elif isinstance(ann, DrawText):
-            dlg = _TextPropsDialog(self, text=ann.text, color=ann.color,
+            dlg = _TextPropsDialog(self.GetTopLevelParent(), text=ann.text, color=ann.color,
                                    font_size=ann.font_size, bold=ann.bold, italic=ann.italic)
             if dlg.ShowModal() == wx.ID_OK and dlg.text:
                 self.push_undo()
@@ -1582,6 +1754,24 @@ class BreadboardCanvas(wx.Panel):
                 ann.font_size = dlg.font_size
                 ann.bold = dlg.bold
                 ann.italic = dlg.italic
+            dlg.Destroy()
+        elif isinstance(ann, DrawTextBox):
+            dlg = _TextBoxPropsDialog(self.GetTopLevelParent(),
+                                      text=ann.text, color=ann.color, width=ann.width,
+                                      fill=ann.fill, fill_color=ann.fill_color,
+                                      font_size=ann.font_size, bold=ann.bold,
+                                      italic=ann.italic, text_color=ann.text_color)
+            if dlg.ShowModal() == wx.ID_OK:
+                self.push_undo()
+                ann.text = dlg.text
+                ann.color = dlg.color
+                ann.width = dlg.line_width
+                ann.fill = dlg.fill
+                ann.fill_color = dlg.fill_color
+                ann.font_size = dlg.font_size
+                ann.bold = dlg.bold
+                ann.italic = dlg.italic
+                ann.text_color = dlg.text_color
             dlg.Destroy()
         self.Refresh()
 
@@ -1618,6 +1808,7 @@ class BreadboardCanvas(wx.Panel):
             self._drag_ann_idx = None
             self._drag_ann_orig = None
             self._drag_ann_pre_snap = None
+            self._resize_handle_idx = None
             self.Refresh()
             return
         if self._pin_drag_ref is not None:
@@ -1751,22 +1942,26 @@ class BreadboardCanvas(wx.Panel):
                 self._drag_ann_idx = None
                 self._drag_ann_orig = None
                 self._drag_ann_pre_snap = None
+                self._resize_handle_idx = None
                 self.Refresh()
                 return
             orig = self._drag_ann_orig
-            sx, sy = self._drag_ann_start_mouse
-            dx, dy = px - sx, py - sy
             ann = self._annotations[self._drag_ann_idx]
-            if isinstance(ann, DrawLine):
-                ann.x1 = orig.x1 + dx; ann.y1 = orig.y1 + dy
-                ann.x2 = orig.x2 + dx; ann.y2 = orig.y2 + dy
-            elif isinstance(ann, DrawRect):
-                ann.x1 = orig.x1 + dx; ann.y1 = orig.y1 + dy
-                ann.x2 = orig.x2 + dx; ann.y2 = orig.y2 + dy
-            elif isinstance(ann, DrawCircle):
-                ann.cx = orig.cx + dx; ann.cy = orig.cy + dy
-            elif isinstance(ann, DrawText):
-                ann.x = orig.x + dx; ann.y = orig.y + dy
+            if self._resize_handle_idx is not None:
+                self._apply_resize(ann, self._resize_handle_idx, px, py)
+            else:
+                sx, sy = self._drag_ann_start_mouse
+                dx, dy = px - sx, py - sy
+                if isinstance(ann, DrawLine):
+                    ann.x1 = orig.x1 + dx; ann.y1 = orig.y1 + dy
+                    ann.x2 = orig.x2 + dx; ann.y2 = orig.y2 + dy
+                elif isinstance(ann, DrawRect):
+                    ann.x1 = orig.x1 + dx; ann.y1 = orig.y1 + dy
+                    ann.x2 = orig.x2 + dx; ann.y2 = orig.y2 + dy
+                elif isinstance(ann, DrawCircle):
+                    ann.cx = orig.cx + dx; ann.cy = orig.cy + dy
+                elif isinstance(ann, DrawText):
+                    ann.x = orig.x + dx; ann.y = orig.y + dy
             self.Refresh()
             return
 
@@ -2027,6 +2222,7 @@ class BreadboardCanvas(wx.Panel):
             self.push_undo()
             self._annotations.pop(idx)
             self._hover_ann_idx = None
+            self._selected_ann_idx = None
             self.Refresh()
 
     # ------------------------------------------------------------------
@@ -2445,6 +2641,84 @@ class BreadboardCanvas(wx.Panel):
         if self.on_placed:
             self.on_placed(ref)
 
+    def _ann_handles(self, ann):
+        """Return (x, y) positions of resize handles for an annotation."""
+        if isinstance(ann, DrawLine):
+            return [(ann.x1, ann.y1), (ann.x2, ann.y2)]
+        if isinstance(ann, DrawRect):
+            return [(ann.x1, ann.y1), (ann.x2, ann.y1), (ann.x2, ann.y2), (ann.x1, ann.y2)]
+        if isinstance(ann, DrawCircle):
+            return [(ann.cx, ann.cy - ann.r), (ann.cx + ann.r, ann.cy),
+                    (ann.cx, ann.cy + ann.r), (ann.cx - ann.r, ann.cy)]
+        if isinstance(ann, DrawText):
+            return [(ann.x, ann.y)]
+        if isinstance(ann, DrawTextBox):
+            return [(ann.x1, ann.y1), (ann.x2, ann.y1), (ann.x2, ann.y2), (ann.x1, ann.y2)]
+        return []
+
+    def _handle_at(self, ann_idx: int, px: float, py: float, radius: float = 8.0) -> Optional[int]:
+        """Return handle index if (px,py) is within radius of any handle, else None."""
+        for i, (hx, hy) in enumerate(self._ann_handles(self._annotations[ann_idx])):
+            if (px - hx) ** 2 + (py - hy) ** 2 <= radius ** 2:
+                return i
+        return None
+
+    def _apply_resize(self, ann, h_idx: int, nx: float, ny: float) -> None:
+        """Move handle h_idx of ann to (nx, ny)."""
+        if isinstance(ann, DrawLine):
+            if h_idx == 0:
+                ann.x1, ann.y1 = nx, ny
+            else:
+                ann.x2, ann.y2 = nx, ny
+        elif isinstance(ann, DrawRect):
+            if h_idx == 0:
+                ann.x1, ann.y1 = nx, ny
+            elif h_idx == 1:
+                ann.x2, ann.y1 = nx, ny
+            elif h_idx == 2:
+                ann.x2, ann.y2 = nx, ny
+            elif h_idx == 3:
+                ann.x1, ann.y2 = nx, ny
+        elif isinstance(ann, DrawCircle):
+            ann.r = max(4.0, ((nx - ann.cx) ** 2 + (ny - ann.cy) ** 2) ** 0.5)
+        elif isinstance(ann, DrawText):
+            ann.x, ann.y = nx, ny
+        elif isinstance(ann, DrawTextBox):
+            if h_idx == 0:
+                ann.x1, ann.y1 = nx, ny
+            elif h_idx == 1:
+                ann.x2, ann.y1 = nx, ny
+            elif h_idx == 2:
+                ann.x2, ann.y2 = nx, ny
+            elif h_idx == 3:
+                ann.x1, ann.y2 = nx, ny
+
+    def _rail_crossing_segments(self, xy1, xy2):
+        """Yield (p1, p2) subsegments of the line that fall inside horizontal rail strips."""
+        lay = self.layout
+        if not lay.has_rails:
+            return
+        x1, y1 = xy1
+        x2, y2 = xy2
+        for section in range(lay.sections):
+            for rail in RAIL_NAMES:
+                ry = lay.section_rail_y(rail, section)
+                y_lo, y_hi = ry - RAIL_H // 2, ry + RAIL_H // 2
+                if y1 == y2:
+                    if y_lo <= y1 <= y_hi:
+                        yield xy1, xy2
+                else:
+                    t_lo = (y_lo - y1) / (y2 - y1)
+                    t_hi = (y_hi - y1) / (y2 - y1)
+                    if t_lo > t_hi:
+                        t_lo, t_hi = t_hi, t_lo
+                    t0 = max(0.0, t_lo)
+                    t1 = min(1.0, t_hi)
+                    if t0 < t1:
+                        dx, dy = x2 - x1, y2 - y1
+                        yield ((int(x1 + t0 * dx), int(y1 + t0 * dy)),
+                               (int(x1 + t1 * dx), int(y1 + t1 * dy)))
+
     def _draw_wires(self, dc: wx.DC) -> None:
         lay = self.layout
         # Net-highlight halo: draw a fat cyan line behind each wire on the highlighted net
@@ -2465,6 +2739,11 @@ class BreadboardCanvas(wx.Panel):
             delete_hover = (wire is self._hover_wire)
             width = 5 if selected else 3
             color = '#ffffff' if selected else wire.color
+            # White border only on rail-crossing segments for contrast
+            if not selected and not delete_hover:
+                dc.SetPen(wx.Pen(wx.Colour('#ffffff'), 5))
+                for s1, s2 in self._rail_crossing_segments(xy1, xy2):
+                    dc.DrawLine(s1[0], s1[1], s2[0], s2[1])
             # Selection / delete-hover halo
             if selected:
                 dc.SetPen(wx.Pen(wx.Colour(wire.color), 7))
@@ -4606,9 +4885,11 @@ class BreadboardCanvas(wx.Panel):
     def _draw_annotations(self, dc: wx.DC) -> None:
         """Draw user annotation shapes (lines, rectangles, circles, text) on the canvas."""
         hover = self._hover_ann_idx
+        selected = self._selected_ann_idx
 
         for i, ann in enumerate(self._annotations):
             is_hover = (i == hover)
+            is_selected = (i == selected)
             if isinstance(ann, DrawLine):
                 color = '#ff4444' if is_hover else ann.color
                 dc.SetPen(wx.Pen(wx.Colour(color), ann.width + (2 if is_hover else 0)))
@@ -4639,6 +4920,53 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetTextForeground(wx.Colour(color))
                 dc.SetBackgroundMode(wx.TRANSPARENT)
                 dc.DrawText(ann.text, int(ann.x), int(ann.y))
+            elif isinstance(ann, DrawTextBox):
+                bx = int(min(ann.x1, ann.x2)); by = int(min(ann.y1, ann.y2))
+                bw = int(abs(ann.x2 - ann.x1)); bh = int(abs(ann.y2 - ann.y1))
+                border_color = '#ff4444' if is_hover else ann.color
+                if ann.fill:
+                    dc.SetBrush(wx.Brush(wx.Colour('#ffcccc' if is_hover else ann.fill_color)))
+                else:
+                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetPen(wx.Pen(wx.Colour(border_color), ann.width))
+                dc.DrawRectangle(bx, by, bw, bh)
+                # Draw wrapped text inside with padding
+                PAD = 4
+                if ann.text and bw > PAD * 2 and bh > PAD * 2:
+                    weight = wx.FONTWEIGHT_BOLD   if ann.bold   else wx.FONTWEIGHT_NORMAL
+                    style  = wx.FONTSTYLE_ITALIC  if ann.italic else wx.FONTSTYLE_NORMAL
+                    dc.SetFont(wx.Font(ann.font_size, wx.FONTFAMILY_DEFAULT, style, weight))
+                    dc.SetTextForeground(wx.Colour('#ff4444' if is_hover else ann.text_color))
+                    dc.SetBackgroundMode(wx.TRANSPARENT)
+                    _, line_h = dc.GetTextExtent('Ag')
+                    max_w = bw - PAD * 2
+                    ty = by + PAD
+                    for raw_line in ann.text.split('\n'):
+                        words = raw_line.split(' ') if raw_line else ['']
+                        cur = ''
+                        for word in words:
+                            test = (cur + ' ' + word).lstrip() if cur else word
+                            tw, _ = dc.GetTextExtent(test)
+                            if tw > max_w and cur:
+                                dc.DrawText(cur, bx + PAD, ty)
+                                ty += line_h + 1
+                                if ty + line_h > by + bh - PAD:
+                                    break
+                                cur = word
+                            else:
+                                cur = test
+                        else:
+                            if cur and ty + line_h <= by + bh - PAD:
+                                dc.DrawText(cur, bx + PAD, ty)
+                                ty += line_h + 1
+                            continue
+                        break
+            # Resize handles for selected annotation
+            if is_selected:
+                dc.SetBrush(wx.Brush(wx.Colour('#1a8cff')))
+                dc.SetPen(wx.Pen(wx.Colour('#ffffff'), 1))
+                for hx, hy in self._ann_handles(ann):
+                    dc.DrawRectangle(int(hx) - 4, int(hy) - 4, 8, 8)
 
         # In-progress shape preview (solid grey — avoid GTK scaled-DC PENSTYLE_DOT issue)
         if self._draw_start is not None and self._draw_preview is not None:
@@ -4655,6 +4983,11 @@ class BreadboardCanvas(wx.Panel):
             elif self.mode == MODE_DRAW_CIRCLE:
                 r = int(((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5)
                 dc.DrawCircle(int(x1), int(y1), r)
+            elif self.mode == MODE_DRAW_TEXTBOX:
+                x = int(min(x1, x2)); y = int(min(y1, y2))
+                w = int(abs(x2 - x1)); h = int(abs(y2 - y1))
+                dc.SetBrush(wx.Brush(wx.Colour(255, 251, 230, 120)))
+                dc.DrawRectangle(x, y, w, h)
 
     def _draw_validation_icons(self, dc: wx.DC) -> None:
         """Draw ⚡ / ? icons at the centroid of each validation issue's holes."""
@@ -4691,6 +5024,8 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_sim_overlay(self, dc: wx.DC) -> None:
         """Draw voltage labels at each placed component's first-pin hole."""
+        if not self.show_voltage_labels:
+            return
         if self._sim_result is None or not self._sim_result.net_voltages:
             return
         if not self.netlist:
@@ -4699,12 +5034,13 @@ class BreadboardCanvas(wx.Panel):
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_BOLD))
 
-        # Collect one label per net (avoid duplicates at same position)
-        drawn_positions: set = set()
-
+        # One label per net — pick the first hole encountered for each net name.
+        net_hole: dict = {}
         for ref, placed in self.board.placements.items():
             nets_for = self.netlist.nets_for_ref(ref)
             for pin_num, net in nets_for.items():
+                if net.name in net_hole:
+                    continue
                 voltage = self._sim_result.net_voltages.get(net.name)
                 if voltage is None:
                     continue
@@ -4714,24 +5050,24 @@ class BreadboardCanvas(wx.Panel):
                 xy = self.layout.hole_xy(hole)
                 if xy is None:
                     continue
-                cx, cy = xy
-                pos_key = (cx, cy)
-                if pos_key in drawn_positions:
-                    continue
-                drawn_positions.add(pos_key)
+                net_hole[net.name] = (xy, voltage)
 
-                label = f'{voltage:.2f}V'
-                tw, th = dc.GetTextExtent(label)
-                bx, by = cx - tw // 2 - 2, cy - th - 7
+        for net_name, (xy, voltage) in net_hole.items():
+            cx, cy = xy
+            label = f'{voltage:.2f}V'
+            tw, th = dc.GetTextExtent(label)
+            # Offset slightly to the right of the hole
+            bx = cx + 4
+            by = cy - th - 5
 
-                # Background pill
-                dc.SetBrush(wx.Brush('#1a1a6a'))
-                dc.SetPen(wx.Pen('#1a1a6a', 0))
-                dc.DrawRoundedRectangle(bx, by, tw + 4, th + 2, 2)
+            # Background pill
+            dc.SetBrush(wx.Brush('#1a1a6a'))
+            dc.SetPen(wx.Pen('#1a1a6a', 0))
+            dc.DrawRoundedRectangle(bx, by, tw + 4, th + 2, 2)
 
-                # Label text
-                dc.SetTextForeground('#e0e0ff')
-                dc.DrawText(label, bx + 2, by + 1)
+            # Label text
+            dc.SetTextForeground('#e0e0ff')
+            dc.DrawText(label, bx + 2, by + 1)
 
     def _draw_net_labels(self, dc: wx.DC) -> None:
         """Draw a legend box in the bottom-right corner listing signal nets.

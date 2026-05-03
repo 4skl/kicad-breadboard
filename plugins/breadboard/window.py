@@ -26,7 +26,7 @@ import wx.lib.stattext
 from .canvas import (BreadboardCanvas, CanvasLayout,
                      MODE_SELECT, MODE_WIRE, MODE_DELETE, MODE_NET_HIGHLIGHT,
                      MODE_DRAW_LINE, MODE_DRAW_RECT, MODE_DRAW_TEXT, MODE_DRAW_CIRCLE,
-                     WIRE_COLORS)
+                     MODE_DRAW_TEXTBOX, WIRE_COLORS)
 from .tray import ComponentTray
 from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
@@ -78,6 +78,7 @@ ID_DRAW_LINE     = wx.NewIdRef()
 ID_DRAW_RECT     = wx.NewIdRef()
 ID_DRAW_TEXT     = wx.NewIdRef()
 ID_DRAW_CIRCLE   = wx.NewIdRef()
+ID_DRAW_TEXTBOX  = wx.NewIdRef()
 
 # Wire color picker — labels mirror WIRE_COLORS order; first entry means "cycle automatically"
 _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
@@ -123,6 +124,7 @@ class BreadboardWindow(wx.Frame):
         self._project_path: Optional[str] = project_path
         self._netlist_path: Optional[str] = None   # last successfully loaded .net file
         self._refreshing_choices: bool = False     # suppress EVT_CHOICE during SetItems
+        self._sim_pane: Optional['SimPane'] = None
 
         self._build_ui()
         self._init_canvas_from_prefs()
@@ -474,6 +476,9 @@ class BreadboardWindow(wx.Frame):
         vt.AddTool(ID_DRAW_TEXT, 'Add Text',
                    _kicad_icon('text_24.png'),
                    shortHelp='Place text annotation — click position, type text', kind=wx.ITEM_CHECK)
+        vt.AddTool(ID_DRAW_TEXTBOX, 'Text Box',
+                   _kicad_icon('add_textbox_24.png'),
+                   shortHelp='Draw a text box — drag to define the box, then type text', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
         # --- Delete ---
@@ -536,11 +541,13 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Save current session (.kicad_bbrd)  [Ctrl+S]')
         tb.AddSeparator()
 
-        # Edit history (no undo stack yet — buttons are disabled placeholders)
+        # Edit history
         tb.AddTool(ID_UNDO, 'Undo', _kicad_icon('undo_24.png'),
                    shortHelp='Undo  (not yet available)')
         tb.AddTool(ID_REDO, 'Redo', _kicad_icon('redo_24.png'),
                    shortHelp='Redo  (not yet available)')
+        tb.AddTool(ID_CLEAR, 'Clear Board', wx.NullBitmap,
+                   shortHelp='Remove all placed components and wires')
         tb.AddSeparator()
 
         # Zoom
@@ -584,15 +591,12 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Check if your circuit matches the schematic')
         tb.AddTool(ID_CLEAR_WARNINGS, 'Clear ERC', _kicad_icon('ercwarn_24.png'),
                    shortHelp='Dismiss validation warning/short markers')
-        tb.AddTool(ID_SIMULATE, 'Simulate', _kicad_icon('sim_run_24.png'),
+        tb.AddTool(ID_SIMULATE, 'Simulate', _kicad_icon('simulator_24.png'),
                    shortHelp='Run SPICE DC simulation via ngspice')
         _export_icon = ('export_svg_24.png' if self.prefs.export_format == 'svg'
                         else 'export_png_24.png')
         tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon),
                    shortHelp='Save the breadboard as an image')
-        tb.AddSeparator()
-        tb.AddTool(ID_CLEAR, 'Clear Board', wx.NullBitmap,
-                   shortHelp='Remove all placed components and wires')
 
         tb.Realize()
 
@@ -619,6 +623,7 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self._on_draw_rect,     id=ID_DRAW_RECT)
         self.Bind(wx.EVT_TOOL, self._on_draw_circle,   id=ID_DRAW_CIRCLE)
         self.Bind(wx.EVT_TOOL, self._on_draw_text,     id=ID_DRAW_TEXT)
+        self.Bind(wx.EVT_TOOL, self._on_draw_textbox,  id=ID_DRAW_TEXTBOX)
         self.Bind(wx.EVT_TOOL, self._on_zoom_in,  id=ID_ZOOM_IN)
         self.Bind(wx.EVT_TOOL, self._on_zoom_out, id=ID_ZOOM_OUT)
         self.Bind(wx.EVT_TOOL, self._on_zoom_fit, id=ID_ZOOM_FIT)
@@ -655,6 +660,7 @@ class BreadboardWindow(wx.Frame):
         self._vtoolbar.ToggleTool(ID_DRAW_RECT,      mode == MODE_DRAW_RECT)
         self._vtoolbar.ToggleTool(ID_DRAW_CIRCLE,    mode == MODE_DRAW_CIRCLE)
         self._vtoolbar.ToggleTool(ID_DRAW_TEXT,      mode == MODE_DRAW_TEXT)
+        self._vtoolbar.ToggleTool(ID_DRAW_TEXTBOX,   mode == MODE_DRAW_TEXTBOX)
         self._vtoolbar.ToggleTool(ID_DELETE,         mode == MODE_DELETE)
         if mode == MODE_SELECT:
             self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
@@ -670,6 +676,8 @@ class BreadboardWindow(wx.Frame):
             self.SetStatusText('Mode: Draw Circle — click center, click to set radius  [Esc] cancel', 1)
         elif mode == MODE_DRAW_TEXT:
             self.SetStatusText('Mode: Add Text — click where to place the annotation  [Esc] exit', 1)
+        elif mode == MODE_DRAW_TEXTBOX:
+            self.SetStatusText('Mode: Text Box — drag to define box, release to enter text  [Esc] cancel', 1)
         elif mode == MODE_DELETE:
             self.SetStatusText('Mode: Delete — click component, wire, or annotation  [Esc] cancel', 1)
 
@@ -705,6 +713,12 @@ class BreadboardWindow(wx.Frame):
             self._set_mode(MODE_SELECT)
         else:
             self._set_mode(MODE_DRAW_TEXT)
+
+    def _on_draw_textbox(self, _evt) -> None:
+        if self.canvas.mode == MODE_DRAW_TEXTBOX:
+            self._set_mode(MODE_SELECT)
+        else:
+            self._set_mode(MODE_DRAW_TEXTBOX)
 
     def _on_wire(self, _evt) -> None:
         self._set_mode(MODE_WIRE)
@@ -1292,32 +1306,47 @@ class BreadboardWindow(wx.Frame):
             wx.MessageBox('Load a netlist or schematic before simulating.',
                           'Simulate', wx.OK | wx.ICON_INFORMATION, self)
             return
-        if not self.board.placements:
-            wx.MessageBox('Place some components on the board before simulating.',
-                          'Simulate', wx.OK | wx.ICON_INFORMATION, self)
-            return
         if not self.board.terminal_nets.get('GND'):
             wx.MessageBox('Assign the GND binding post to a schematic net before simulating.',
                           'Simulate', wx.OK | wx.ICON_INFORMATION, self)
             return
+        if self._sim_pane is None:
+            self._sim_pane = SimPane(
+                self.canvas, self.board,
+                on_run=self._run_simulation,
+                on_close=self._close_sim_pane,
+                on_volt_labels_toggle=self._on_volt_labels_toggle,
+            )
+        self._sim_pane.Show()
+        self._sim_pane.Raise()
 
-        dlg = SimulationDialog(self, self.board, self.netlist)
-        if dlg.ShowModal() == wx.ID_OK:
-            tv = dlg.get_terminal_voltages()
-            self.SetStatusText('Running ngspice simulation…', 0)
-            self.Update()
-            result = simulate(self.board, self.netlist, tv)
-            if result.error:
-                wx.MessageBox(f'Simulation failed:\n{result.error}',
-                              'Simulate', wx.OK | wx.ICON_ERROR, self)
-                self.SetStatusText('Simulation failed.', 0)
-            else:
-                self.canvas.set_simulation_result(result)
-                n = len(result.net_voltages)
-                self.SetStatusText(
-                    f'Simulation complete — {n} node voltage(s) computed.  '
-                    'Click "Simulate → Clear" to remove overlay.', 0)
-        dlg.Destroy()
+    def _run_simulation(self, terminal_voltages: dict) -> None:
+        if not self.board.placements:
+            self._sim_pane.show_error('No components placed on the board.')
+            return
+        self.SetStatusText('Running ngspice simulation…', 0)
+        self.Update()
+        result = simulate(self.board, self.netlist, terminal_voltages)
+        if result.error:
+            self._sim_pane.show_error(result.error, result)
+            self.SetStatusText('Simulation failed.', 0)
+        else:
+            self.canvas.set_simulation_result(result)
+            self._sim_pane.show_results(result)
+            self.SetStatusText(
+                f'Simulation complete — {len(result.net_voltages)} node voltage(s).', 0)
+
+    def _close_sim_pane(self) -> None:
+        if self._sim_pane:
+            self._sim_pane.Destroy()
+            self._sim_pane = None
+        self.canvas.clear_simulation()
+        self.canvas.Refresh()
+        self.SetStatusText('', 0)
+
+    def _on_volt_labels_toggle(self, show: bool) -> None:
+        self.canvas.show_voltage_labels = show
+        self.canvas.Refresh()
 
     def _on_clear(self, _evt) -> None:
         if wx.MessageBox(
@@ -1340,6 +1369,9 @@ class BreadboardWindow(wx.Frame):
             self._refresh_probe_choices()
             self._refresh_probe_buttons()
             self.canvas.clear_highlights()
+            if self._sim_pane:
+                self._sim_pane.refresh_sources(self.board)
+                self._sim_pane.clear_results()
             self.canvas.Refresh()
             self.SetStatusText('Board cleared.', 0)
 
@@ -1371,6 +1403,8 @@ class BreadboardWindow(wx.Frame):
         net = ch.GetString(sel) if sel > 0 else ''
         self.canvas.push_undo()
         self.board.assign_terminal(term_name, net)
+        if self._sim_pane:
+            self._sim_pane.refresh_sources(self.board)
         self.canvas.Refresh()
 
     def _refresh_terminal_choices(self) -> None:
@@ -1490,6 +1524,214 @@ class BreadboardWindow(wx.Frame):
                 f'Loaded {n_shown} component(s) from {Path(path).name}.{note}  '
                 'Click a component in the tray to place it.', 0
             )
+
+
+# ---------------------------------------------------------------------------
+# Simulation pane (persistent canvas overlay)
+# ---------------------------------------------------------------------------
+
+class SimPane(wx.Panel):
+    """Floating panel pinned to the top-left of BreadboardCanvas."""
+
+    _W = 230
+
+    def __init__(self, parent_canvas, board, *, on_run, on_close, on_volt_labels_toggle):
+        super().__init__(parent_canvas, style=wx.BORDER_SIMPLE)
+        self._on_run_cb    = on_run
+        self._on_close_cb  = on_close
+        self._on_volt_labels_toggle = on_volt_labels_toggle
+        self._volt_ctrls: dict = {}
+        self._result_text  = None
+        self._console_text = None
+        self._console_btn  = None
+        self._console_open = False
+        self._volt_labels_cb = None
+        self._build(board)
+        self.SetPosition(wx.Point(8, 8))
+
+    # ------------------------------------------------------------------
+
+    def _build(self, board) -> None:
+        self.DestroyChildren()
+        self._volt_ctrls = {}
+        self.SetBackgroundColour(wx.Colour(245, 245, 248))
+
+        outer = wx.BoxSizer(wx.VERTICAL)
+
+        # Header
+        hdr = wx.Panel(self)
+        hdr.SetBackgroundColour(wx.Colour(45, 45, 55))
+        hdr_sz = wx.BoxSizer(wx.HORIZONTAL)
+        title = wx.StaticText(hdr, label='⚡  Simulation')
+        title.SetForegroundColour(wx.WHITE)
+        title.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                              wx.FONTWEIGHT_BOLD))
+        close_btn = wx.Button(hdr, label='×', size=(22, 22),
+                              style=wx.BORDER_NONE | wx.BU_EXACTFIT)
+        close_btn.SetBackgroundColour(wx.Colour(45, 45, 55))
+        close_btn.SetForegroundColour(wx.Colour(180, 180, 180))
+        close_btn.Bind(wx.EVT_BUTTON, lambda _: self._on_close_cb())
+        hdr_sz.Add(title, 1, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 8)
+        hdr_sz.Add(close_btn, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 2)
+        hdr.SetSizer(hdr_sz)
+        outer.Add(hdr, 0, wx.EXPAND)
+
+        body = wx.BoxSizer(wx.VERTICAL)
+
+        # Sources
+        src_lbl = wx.StaticText(self, label='Sources')
+        src_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                wx.FONTWEIGHT_BOLD))
+        src_lbl.SetForegroundColour(wx.Colour(90, 90, 100))
+        body.Add(src_lbl, 0, wx.LEFT | wx.TOP, 8)
+
+        _TC = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30'}
+        grid = wx.FlexGridSizer(cols=3, vgap=4, hgap=6)
+        grid.AddGrowableCol(1)
+        for term in ('GND', 'V1', 'V2'):
+            net = board.terminal_nets.get(term, '')
+            lbl = wx.StaticText(self, label=term)
+            lbl.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                wx.FONTWEIGHT_BOLD))
+            lbl.SetForegroundColour(wx.Colour(_TC[term]))
+            net_lbl = wx.StaticText(self, label=net or '—')
+            net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                                    wx.FONTWEIGHT_NORMAL))
+            net_lbl.SetForegroundColour(wx.Colour(110, 110, 120))
+            if term == 'GND' or not net:
+                fixed = wx.StaticText(self, label='0 V' if term == 'GND' else '')
+                fixed.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                      wx.FONTWEIGHT_NORMAL))
+                grid.Add(lbl,   0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(net_lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(fixed, 0, wx.ALIGN_CENTRE_VERTICAL)
+                self._volt_ctrls[term] = None
+            else:
+                sp = wx.SpinCtrlDouble(self, min=-100.0, max=100.0,
+                                       initial=5.0, inc=0.5, size=(68, -1))
+                sp.SetDigits(2)
+                grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(net_lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
+                grid.Add(sp, 0, wx.ALIGN_CENTRE_VERTICAL)
+                self._volt_ctrls[term] = sp
+        body.Add(grid, 0, wx.EXPAND | wx.ALL, 8)
+
+        body.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
+
+        # Run button
+        run_btn = wx.Button(self, label='▶  Run Simulation')
+        run_btn.Bind(wx.EVT_BUTTON, self._on_run)
+        body.Add(run_btn, 0, wx.EXPAND | wx.ALL, 8)
+
+        # Voltage labels toggle
+        self._volt_labels_cb = wx.CheckBox(self, label='Show voltage labels on board')
+        self._volt_labels_cb.SetValue(True)
+        self._volt_labels_cb.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                             wx.FONTWEIGHT_NORMAL))
+        self._volt_labels_cb.Bind(wx.EVT_CHECKBOX,
+                                  lambda _: self._on_volt_labels_toggle(self._volt_labels_cb.GetValue()))
+        body.Add(self._volt_labels_cb, 0, wx.LEFT | wx.BOTTOM, 8)
+
+        # Results
+        self._result_text = wx.TextCtrl(
+            self, value='',
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_NONE,
+            size=(-1, 120),
+        )
+        self._result_text.SetBackgroundColour(wx.Colour(232, 232, 240))
+        self._result_text.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
+                                          wx.FONTWEIGHT_NORMAL))
+        self._result_text.Hide()
+        body.Add(self._result_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        # Console expander
+        self._console_btn = wx.Button(self, label='▶  Console',
+                                      style=wx.BORDER_NONE | wx.BU_LEFT)
+        self._console_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                          wx.FONTWEIGHT_NORMAL))
+        self._console_btn.SetForegroundColour(wx.Colour(90, 90, 100))
+        self._console_btn.Hide()
+        self._console_btn.Bind(wx.EVT_BUTTON, self._on_console_toggle)
+        body.Add(self._console_btn, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
+
+        self._console_text = wx.TextCtrl(
+            self, value='',
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL | wx.BORDER_NONE,
+            size=(-1, 160),
+        )
+        self._console_text.SetBackgroundColour(wx.Colour(28, 28, 36))
+        self._console_text.SetForegroundColour(wx.Colour(180, 220, 180))
+        self._console_text.SetFont(wx.Font(7, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
+                                           wx.FONTWEIGHT_NORMAL))
+        self._console_text.Hide()
+        body.Add(self._console_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        outer.Add(body, 0, wx.EXPAND)
+        self.SetSizer(outer)
+        self.SetMinSize(wx.Size(self._W, -1))
+        self.SetMaxSize(wx.Size(self._W, 9999))
+        self.Fit()
+
+    def refresh_sources(self, board) -> None:
+        self._build(board)
+
+    def _on_run(self, _evt) -> None:
+        tv = {t: sp.GetValue() for t, sp in self._volt_ctrls.items() if sp is not None}
+        self._on_run_cb(tv)
+
+    def _on_console_toggle(self, _evt) -> None:
+        self._console_open = not self._console_open
+        self._console_btn.SetLabel('▼  Console' if self._console_open else '▶  Console')
+        self._console_text.Show(self._console_open)
+        self.Fit()
+
+    def _populate_console(self, result) -> None:
+        parts = []
+        if result.spice_netlist:
+            parts.append('--- Netlist ---')
+            parts.append(result.spice_netlist)
+        if result.spice_output:
+            parts.append('--- ngspice output ---')
+            parts.append(result.spice_output)
+        self._console_text.SetValue('\n'.join(parts))
+        self._console_btn.Show()
+        if self._console_open:
+            self._console_text.Show()
+
+    def show_results(self, result) -> None:
+        lines = []
+        if result.net_voltages:
+            lines.append('Node voltages')
+            lines.append('─' * 28)
+            for net, v in sorted(result.net_voltages.items()):
+                lines.append(f'  {net:<18s}  {v:+.4f} V')
+        if result.branch_currents:
+            lines.append('')
+            lines.append('Branch currents')
+            lines.append('─' * 28)
+            for ref, i_a in sorted(result.branch_currents.items()):
+                ma = i_a * 1000
+                lines.append(f'  {ref:<18s}  {ma:+.3f} mA')
+        self._result_text.SetValue('\n'.join(lines))
+        self._result_text.Show()
+        self._populate_console(result)
+        self.Fit()
+
+    def show_error(self, msg: str, result=None) -> None:
+        self._result_text.SetValue(f'Error:\n{msg}')
+        self._result_text.Show()
+        if result is not None:
+            self._populate_console(result)
+        self.Fit()
+
+    def clear_results(self) -> None:
+        if self._result_text:
+            self._result_text.Hide()
+        if self._console_btn:
+            self._console_btn.Hide()
+        if self._console_text:
+            self._console_text.Hide()
+        self.Fit()
 
 
 # ---------------------------------------------------------------------------
