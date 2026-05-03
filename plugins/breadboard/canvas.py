@@ -4552,35 +4552,44 @@ class BreadboardCanvas(wx.Panel):
                                        flipped=ghost.flipped)
             return
 
-        # Two-pin two-step placement: use locked pin1 + hovered pin2
+        # Two-pin two-step placement: use locked first-click + hovered second-click.
+        # For diode-family (LED/D/D_Zener) first-click = anode (pin 2); the
+        # ghost body is drawn with cathode at p1 side, so swap for those types.
+        _diode_family = comp_def.type_id in ('LED', 'D', 'D_Zener')
         if comp_def.pin_count == 2 and not comp_def.is_dip:
             if self._place_pin1 is not None:
-                # Pin 1 is locked; pin 2 follows mouse
+                # First click is locked; second click (cathode for diodes) follows mouse
                 p1_xy = lay.hole_xy(self._place_pin1)
-                pin2_hole = ghost.anchor  # snapped to hovered hole
+                pin2_hole = ghost.anchor
                 p2_xy = lay.hole_xy(pin2_hole) if pin2_hole else None
                 if p2_xy is None:
-                    p2_xy = self._ghost_pos  # fall back to raw mouse
+                    p2_xy = self._ghost_pos
                 if p1_xy:
-                    self._draw_ghost_2pin(dc, comp_def, p1_xy, p2_xy)
-                    # Draw locked pin-1 indicator
+                    # Swap so cathode stripe lands at the second-click (p2) side
+                    if _diode_family:
+                        self._draw_ghost_2pin(dc, comp_def, p2_xy, p1_xy)
+                    else:
+                        self._draw_ghost_2pin(dc, comp_def, p1_xy, p2_xy)
+                    # Draw locked first-click indicator (anode for diodes)
                     dc.SetBrush(wx.Brush(wx.Colour(255, 200, 0, 180)))
                     dc.SetPen(wx.Pen('#ffcc00', 2))
                     dc.DrawCircle(p1_xy[0], p1_xy[1], HOLE_R + 5)
                 return
             else:
-                # Pin 1 not yet locked: show preview centered on hovered hole
+                # First click not yet locked: preview at hovered hole
                 if ghost.anchor is None:
                     return
                 p1_xy = lay.hole_xy(ghost.anchor)
                 if p1_xy is None:
                     return
-                # Show preview with pin 1 at the hovered hole; R flips direction
                 px_off = PITCH * 4 * (-1 if ghost.flipped else 1)
-                self._draw_ghost_2pin(dc, comp_def,
-                                      p1_xy,
-                                      (p1_xy[0] + px_off, p1_xy[1]))
-                # Highlight the hover hole as the future pin-1
+                p2_xy = (p1_xy[0] + px_off, p1_xy[1])
+                # Swap so the hovered hole shows as anode (no stripe) for diodes
+                if _diode_family:
+                    self._draw_ghost_2pin(dc, comp_def, p2_xy, p1_xy)
+                else:
+                    self._draw_ghost_2pin(dc, comp_def, p1_xy, p2_xy)
+                # Highlight the hover hole as the first-click target
                 dc.SetBrush(wx.Brush(wx.Colour(255, 200, 0, 100)))
                 dc.SetPen(wx.Pen('#ffcc0088', 2))
                 dc.DrawCircle(p1_xy[0], p1_xy[1], HOLE_R + 5)
