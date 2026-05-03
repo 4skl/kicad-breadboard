@@ -796,8 +796,9 @@ class BreadboardWindow(wx.Frame):
     def _on_open(self, _evt) -> None:
         with wx.FileDialog(
             self,
-            message='Open KiCad netlist or schematic',
-            wildcard='KiCad files (*.net;*.kicad_sch)|*.net;*.kicad_sch'
+            message='Open KiCad netlist, schematic, or session',
+            wildcard='All supported files (*.net;*.kicad_sch;*.kicad_bbrd)|*.net;*.kicad_sch;*.kicad_bbrd'
+                     '|Breadboard session (*.kicad_bbrd)|*.kicad_bbrd'
                      '|KiCad netlist (*.net)|*.net'
                      '|KiCad schematic (*.kicad_sch)|*.kicad_sch'
                      '|All files (*)|*',
@@ -806,6 +807,10 @@ class BreadboardWindow(wx.Frame):
             if dlg.ShowModal() != wx.ID_OK:
                 return
             path = dlg.GetPath()
+
+        if path.endswith('.kicad_bbrd'):
+            self._on_load(path=path)
+            return
 
         # Loading a different netlist while the board has content → clear first
         if path != self._netlist_path and (self.board.placements or self.board.wires):
@@ -987,18 +992,19 @@ class BreadboardWindow(wx.Frame):
             wx.MessageBox(f'Failed to save session:\n{exc}', 'Save session',
                           wx.OK | wx.ICON_ERROR, self)
 
-    def _on_load(self, _evt) -> None:
-        default_dir = self._project_path or ''
-        with wx.FileDialog(
-            self,
-            message='Load session',
-            defaultDir=default_dir,
-            wildcard='Breadboard session (*.kicad_bbrd)|*.kicad_bbrd|All files (*)|*',
-            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
-        ) as dlg:
-            if dlg.ShowModal() != wx.ID_OK:
-                return
-            path = dlg.GetPath()
+    def _on_load(self, _evt=None, *, path: str = '') -> None:
+        if not path:
+            default_dir = self._project_path or ''
+            with wx.FileDialog(
+                self,
+                message='Load session',
+                defaultDir=default_dir,
+                wildcard='Breadboard session (*.kicad_bbrd)|*.kicad_bbrd|All files (*)|*',
+                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+            ) as dlg:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return
+                path = dlg.GetPath()
         try:
             result = load_session(path)
         except Exception as exc:
