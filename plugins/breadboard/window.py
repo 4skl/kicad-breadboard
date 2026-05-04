@@ -32,7 +32,7 @@ from .prefs import Preferences, save_prefs, load_prefs
 from .model import (
     Breadboard, Netlist,
     parse_netlist, find_netlist, find_schematic,
-    simulate, SimResult,
+    simulate, simulate_transient, SimResult, VsinSource, find_vsin_sources,
     validate, IssueKind,
     ALL_DEFS, guess_type_id,
     save_session, load_session,
@@ -255,6 +255,7 @@ class BreadboardWindow(wx.Frame):
 
         self._probe_choices: dict = {}
         self._probe_place_btns: dict = {}
+        self._probe_labels: dict = {}   # CH1–CH4 label widgets for warning icons
         # widget refs for dynamic show/hide
         self._ch2_widgets = []      # [lbl, btn, choice] for the CH2 row
         self._ch3_widgets = []      # widgets for CH3 row
@@ -289,6 +290,8 @@ class BreadboardWindow(wx.Frame):
                 ch.SetSelection(0)
                 self._probe_place_btns[name] = btn
                 self._probe_choices[name] = ch
+                if name in ('CH1', 'CH2', 'CH3', 'CH4'):
+                    self._probe_labels[name] = lbl
                 grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
                 grid.Add(btn, 0, wx.ALIGN_CENTRE_VERTICAL)
                 grid.Add(ch,  1, wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL)
@@ -425,9 +428,11 @@ class BreadboardWindow(wx.Frame):
         self.tray.on_rpi_label_mode = lambda v: self.canvas.set_rpi_long_labels(v)
         self.tray.on_color_changed = lambda: self.canvas.Refresh()
         self.canvas.on_placed = lambda ref: self.tray.refresh_placed()
-        self.canvas.on_probe_placed = lambda name: self._refresh_probe_buttons()
+        self.canvas.on_probe_placed = self._on_probe_placed
         self.canvas.on_history_change = self._on_history_change
         self.canvas.on_restore = self._on_restore
+        self.canvas.on_terminal_right_click = self._on_terminal_right_click
+        self.canvas.on_transient_dclick = self._on_transient_thumb_dclick
 
         self.SetStatusBar(wx.StatusBar(self))
         self.GetStatusBar().SetFieldsCount(2)
@@ -546,7 +551,14 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Undo  (not yet available)')
         tb.AddTool(ID_REDO, 'Redo', _kicad_icon('redo_24.png'),
                    shortHelp='Redo  (not yet available)')
-        tb.AddTool(ID_CLEAR, 'Clear Board', wx.NullBitmap,
+        _clear_icon = wx.NullBitmap
+        try:
+            _img = wx.Image(str(_RESOURCES / 'icon.png'), wx.BITMAP_TYPE_PNG)
+            _img.Rescale(24, 24, wx.IMAGE_QUALITY_HIGH)
+            _clear_icon = wx.Bitmap(_img)
+        except Exception:
+            pass
+        tb.AddTool(ID_CLEAR, 'Clear Board', _clear_icon,
                    shortHelp='Remove all placed components and wires')
         tb.AddSeparator()
 
@@ -729,7 +741,10 @@ class BreadboardWindow(wx.Frame):
         self.canvas.set_wire_color(WIRE_COLORS[idx - 1] if idx > 0 else None)
 
     def _on_delete(self, _evt) -> None:
-        self._set_mode(MODE_DELETE)
+        if self.canvas.mode == MODE_DELETE:
+            self._set_mode(MODE_SELECT)
+        else:
+            self._set_mode(MODE_DELETE)
 
     def _on_zoom_in(self, _evt) -> None:
         self.canvas.zoom_center(1.2)
@@ -777,6 +792,8 @@ class BreadboardWindow(wx.Frame):
             self._set_mode(MODE_DELETE)
         elif key == wx.WXK_ESCAPE:
             self._set_mode(MODE_SELECT)
+        elif key in (wx.WXK_DELETE, wx.WXK_BACK):
+            self.canvas.delete_selection()
         elif key == wx.WXK_HOME and evt.ControlDown():
             self.canvas._fit_view()
         elif key in (ord('+'), ord('='), wx.WXK_NUMPAD_ADD):
@@ -1091,6 +1108,8 @@ class BreadboardWindow(wx.Frame):
             for w in self._ch4_widgets:
                 self._scope_grid.Show(w, p.scope_channels >= 4)
             self._instr_panel.Layout()
+            if self._sim_pane:
+                self._sim_pane.set_scope_channels(p.scope_channels, self.board)
 
         # PSU channel count
         if p.psu_channels != old.psu_channels:
@@ -1318,10 +1337,13 @@ class BreadboardWindow(wx.Frame):
             return
         if self._sim_pane is None:
             self._sim_pane = SimPane(
-                self.canvas, self.board,
+                self.canvas, self.board, self.netlist,
                 on_run=self._run_simulation,
                 on_close=self._close_sim_pane,
+                on_clear=self._clear_simulation,
                 on_volt_labels_toggle=self._on_volt_labels_toggle,
+                on_run_transient=self._run_transient_simulation,
+                scope_channels=self.prefs.scope_channels,
             )
         self._sim_pane.Show()
         self._sim_pane.Raise()
@@ -1372,6 +1394,12 @@ class BreadboardWindow(wx.Frame):
                 status += f', {w} warning(s)'
             self.SetStatusText(status, 0)
 
+    def _clear_simulation(self) -> None:
+        self.canvas.clear_simulation()
+        if self._sim_pane:
+            self._sim_pane.clear_results()
+        self.SetStatusText('', 0)
+
     def _close_sim_pane(self) -> None:
         if self._sim_pane:
             self._sim_pane.Destroy()
@@ -1379,6 +1407,69 @@ class BreadboardWindow(wx.Frame):
         self.canvas.clear_simulation()
         self.canvas.Refresh()
         self.SetStatusText('', 0)
+
+    def _run_transient_simulation(self, terminal_voltages: dict) -> None:
+        if not self.board.placements:
+            self._sim_pane.show_error('No components placed on the board.')
+            return
+
+        if self.netlist:
+            vresult = validate(self.board, self.netlist)
+            blocking = [i for i in vresult.issues
+                        if i.kind in (IssueKind.OPEN_NET, IssueKind.SHORT)]
+            if blocking:
+                self.canvas.set_validation_result(vresult)
+                lines = ['Wiring errors — fix before simulating:\n']
+                for issue in blocking:
+                    icon = '⚡' if issue.kind == IssueKind.SHORT else '?'
+                    lines.append(f'  {icon}  {issue.description}')
+                self._sim_pane.show_error('\n'.join(lines))
+                self.SetStatusText(
+                    f'Simulation blocked — {len(blocking)} wiring error(s).', 0)
+                return
+
+        self.canvas.clear_simulation()
+        self._sim_pane.show_running()
+        self.SetStatusText('Running transient simulation…', 0)
+        self.Update()
+
+        try:
+            result = simulate_transient(
+                self.board, self.netlist, terminal_voltages,
+                plot_nets=None,   # all nets — probes can move after run
+            )
+        except Exception as exc:
+            self._sim_pane.show_error(f'Unexpected error:\n{exc}')
+            self.SetStatusText('Transient simulation failed.', 0)
+            return
+
+        if result.error:
+            self._sim_pane.show_error(result.error, result)
+            self.SetStatusText('Transient simulation failed.', 0)
+            return
+
+        self.canvas.set_simulation_result(result)
+        self._sim_pane.show_results(result)
+        n = len(result.transient_traces)
+        w = len(result.warnings)
+        status = f'Transient complete — {n} trace(s)'
+        if w:
+            status += f', {w} warning(s)'
+        self.SetStatusText(status, 0)
+
+    def _on_transient_thumb_dclick(self, ch_name: str) -> None:
+        """Double-click on a waveform thumbnail — open the full waveform viewer."""
+        result = self.canvas._sim_result
+        if result is None or not result.transient_traces:
+            return
+        net_name = self.board.get_probe_net(ch_name)
+        if not net_name or net_name not in result.transient_traces:
+            return
+        # Show only this channel's trace
+        traces = {net_name: result.transient_traces[net_name]}
+        probe_nets = {ch_name: net_name}
+        from .waveform import WaveformFrame
+        WaveformFrame(self, traces, probe_nets, PROBE_META).Show()
 
     def _on_volt_labels_toggle(self, show: bool) -> None:
         self.canvas.show_voltage_labels = show
@@ -1461,9 +1552,79 @@ class BreadboardWindow(wx.Frame):
         finally:
             self._refreshing_choices = False
 
+    def _on_terminal_right_click(self, term_name: str, screen_pos) -> None:
+        """Show a net-assignment context menu for a binding post."""
+        if self.netlist is None:
+            return
+        net_names = sorted(net.name for net in self.netlist.nets if net.name)
+        current = self.board.get_terminal_net(term_name) or ''
+
+        menu = wx.Menu()
+        menu.SetTitle(f'{term_name}')
+
+        # Heading item (disabled, just shows the terminal name)
+        head = menu.Append(wx.ID_ANY, f'Assign {term_name} to net:')
+        head.Enable(False)
+        menu.AppendSeparator()
+
+        # "Unassign" at the top
+        id_unassign = wx.NewIdRef()
+        item = menu.AppendCheckItem(id_unassign, '(unassigned)')
+        item.Check(current == '')
+        menu.Bind(wx.EVT_MENU, lambda _: self._assign_terminal_from_menu(term_name, ''), id_unassign)
+
+        for net in net_names:
+            item_id = wx.NewIdRef()
+            item = menu.AppendCheckItem(item_id, net)
+            item.Check(net == current)
+            menu.Bind(wx.EVT_MENU,
+                      lambda _, n=net: self._assign_terminal_from_menu(term_name, n),
+                      item_id)
+
+        self.canvas.PopupMenu(menu, screen_pos)
+        menu.Destroy()
+
+    def _assign_terminal_from_menu(self, term_name: str, net: str) -> None:
+        self.canvas.push_undo()
+        self.board.assign_terminal(term_name, net)
+        self._refresh_terminal_choices()
+        if self._sim_pane:
+            self._sim_pane.refresh_sources(self.board)
+        self.canvas.Refresh()
+
     # ------------------------------------------------------------------
     # Instrument probe handlers
     # ------------------------------------------------------------------
+
+    def _net_at_hole(self, hole) -> Optional[str]:
+        """Return the schematic net name at hole via board connectivity + netlist."""
+        if self.netlist is None or hole is None:
+            return None
+        uf = self.board.build_connectivity()
+        target = uf.find(hole)
+        for ref, placed in self.board.placements.items():
+            nets_dict = self.netlist.nets_for_ref(ref)
+            for pin_num, net in nets_dict.items():
+                pin_hole = placed.pin_holes.get(pin_num)
+                if pin_hole is not None and uf.find(pin_hole) == target:
+                    return net.name
+        return None
+
+    def _on_probe_placed(self, name: str) -> None:
+        """Called after a probe is placed. Always syncs net to the hole's actual net."""
+        if name.startswith('CH') or name == 'FG+':
+            hole = self.board.get_probe_hole(name)
+            net = self._net_at_hole(hole) or ''
+            # GND (net '0') is always 0 V — clear assignment rather than track it
+            gnd = self.board.terminal_nets.get('GND', '')
+            if net == '0' or (gnd and net == gnd):
+                net = ''
+            self.board.assign_probe_net(name, net)
+        self._refresh_probe_buttons()
+        self._refresh_probe_choices()
+        if self._sim_pane:
+            self._sim_pane.refresh_probes(self.board)
+        self.canvas.Refresh()
 
     def _on_probe_choice(self, probe_name: str, _evt) -> None:
         if self._refreshing_choices:
@@ -1472,6 +1633,9 @@ class BreadboardWindow(wx.Frame):
         sel = ch.GetSelection()
         net = ch.GetString(sel) if sel > 0 else ''
         self.board.assign_probe_net(probe_name, net)
+        self._refresh_probe_warnings()
+        if self._sim_pane:
+            self._sim_pane.refresh_probes(self.board)
         self.canvas.Refresh()
 
     def _on_probe_place_btn(self, probe_name: str) -> None:
@@ -1479,6 +1643,8 @@ class BreadboardWindow(wx.Frame):
             # Already placed — remove it
             self.board.remove_probe(probe_name)
             self._refresh_probe_buttons()
+            if self._sim_pane:
+                self._sim_pane.refresh_probes(self.board)
             self.canvas.Refresh()
         else:
             # Start placement mode
@@ -1491,6 +1657,7 @@ class BreadboardWindow(wx.Frame):
         for name, btn in self._probe_place_btns.items():
             placed = self.board.get_probe_hole(name) is not None
             btn.SetLabel('Remove' if placed else 'Place')
+        self._refresh_probe_warnings()
 
     def _refresh_probe_choices(self) -> None:
         """Repopulate probe net dropdowns from the loaded netlist."""
@@ -1509,6 +1676,25 @@ class BreadboardWindow(wx.Frame):
                     ch.SetSelection(0)
         finally:
             self._refreshing_choices = False
+
+    def _refresh_probe_warnings(self) -> None:
+        """Update ⚠ indicator on each CH label when its placed hole doesn't match its assigned net."""
+        for name, lbl in self._probe_labels.items():
+            meta = PROBE_META[name]
+            assigned = self.board.get_probe_net(name)
+            hole = self.board.get_probe_hole(name)
+            mismatch = False
+            if assigned and hole is not None:
+                actual = self._net_at_hole(hole)
+                mismatch = actual is not None and actual != assigned
+            if mismatch:
+                lbl.SetLabel('⚠ ' + meta['label'])
+                lbl.SetForegroundColour(wx.Colour(200, 130, 0))
+                lbl.SetToolTip(f'Probe is on net "{self._net_at_hole(hole)}", not "{assigned}"')
+            else:
+                lbl.SetLabel(meta['label'])
+                lbl.SetForegroundColour(wx.Colour(meta['color']))
+                lbl.SetToolTip('')
 
     def _load_netlist(self, path: str) -> None:
         if path.endswith('.kicad_sch'):
@@ -1540,6 +1726,9 @@ class BreadboardWindow(wx.Frame):
 
         self._refresh_terminal_choices()
         self._refresh_probe_choices()
+        if self._sim_pane:
+            self._sim_pane._build(self.board, self.netlist)
+            wx.CallAfter(self._sim_pane.Fit)
 
         n_total = len(self.netlist.components)
         n_shown = sum(
@@ -1571,23 +1760,33 @@ class SimPane(wx.Panel):
 
     _W = 230
 
-    def __init__(self, parent_canvas, board, *, on_run, on_close, on_volt_labels_toggle):
+    def __init__(self, parent_canvas, board, netlist, *,
+                 on_run, on_close, on_clear, on_volt_labels_toggle, on_run_transient=None,
+                 scope_channels=2):
         super().__init__(parent_canvas, style=wx.BORDER_SIMPLE)
-        self._on_run_cb    = on_run
-        self._on_close_cb  = on_close
+        self._on_run_cb            = on_run
+        self._on_close_cb          = on_close
+        self._on_clear_cb          = on_clear
         self._on_volt_labels_toggle = on_volt_labels_toggle
-        self._volt_ctrls: dict = {}
-        self._result_text  = None
-        self._console_text = None
-        self._console_btn  = None
-        self._console_open = False
-        self._volt_labels_cb = None
+        self._on_run_transient_cb  = on_run_transient
+        self._netlist              = netlist
+        self._scope_channels       = scope_channels
+        self._volt_ctrls: dict     = {}
+        self._result_label         = None
+        self._result_text          = None
+        self._console_text         = None
+        self._console_btn          = None
+        self._console_open         = False
+        self._volt_labels_cb       = None
         self._build(board)
         self.SetPosition(wx.Point(8, 8))
 
     # ------------------------------------------------------------------
 
-    def _build(self, board) -> None:
+    def _build(self, board, netlist=None) -> None:
+        if netlist is not None:
+            self._netlist = netlist
+        self._board = board
         self.DestroyChildren()
         self._volt_ctrls = {}
         self.SetBackgroundColour(wx.Colour(245, 245, 248))
@@ -1654,10 +1853,15 @@ class SimPane(wx.Panel):
 
         body.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
 
-        # Run button
-        run_btn = wx.Button(self, label='▶  Run Simulation')
+        # Run / Clear buttons
+        btn_row = wx.BoxSizer(wx.HORIZONTAL)
+        run_btn = wx.Button(self, label='▶  Run')
         run_btn.Bind(wx.EVT_BUTTON, self._on_run)
-        body.Add(run_btn, 0, wx.EXPAND | wx.ALL, 8)
+        clr_btn = wx.Button(self, label='Clear')
+        clr_btn.Bind(wx.EVT_BUTTON, lambda _: self._on_clear_cb())
+        btn_row.Add(run_btn, 1, wx.EXPAND | wx.RIGHT, 4)
+        btn_row.Add(clr_btn, 0)
+        body.Add(btn_row, 0, wx.EXPAND | wx.ALL, 8)
 
         # Voltage labels toggle
         self._volt_labels_cb = wx.CheckBox(self, label='Show voltage labels on board')
@@ -1668,7 +1872,85 @@ class SimPane(wx.Panel):
                                   lambda _: self._on_volt_labels_toggle(self._volt_labels_cb.GetValue()))
         body.Add(self._volt_labels_cb, 0, wx.LEFT | wx.BOTTOM, 8)
 
+        # Transient Analysis section (only shown when VSIN sources are found)
+        if self._netlist and self._on_run_transient_cb:
+            vsin_list = find_vsin_sources(self._netlist)
+            if vsin_list:
+                body.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
+                tran_lbl = wx.StaticText(self, label='Transient Analysis')
+                tran_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                         wx.FONTWEIGHT_BOLD))
+                tran_lbl.SetForegroundColour(wx.Colour(90, 90, 100))
+                body.Add(tran_lbl, 0, wx.LEFT | wx.TOP, 8)
+
+                for src in vsin_list:
+                    freq = src.freq
+                    if freq >= 1e6:
+                        freq_str = f'{freq/1e6:.4g} MHz'
+                    elif freq >= 1e3:
+                        freq_str = f'{freq/1e3:.4g} kHz'
+                    else:
+                        freq_str = f'{freq:.4g} Hz'
+                    info_lbl = wx.StaticText(
+                        self,
+                        label=f'  {src.ref}: {freq_str}, {src.vampl:.4g} V ampl'
+                              + (f' + {src.voff:.4g} V dc' if src.voff else ''),
+                    )
+                    info_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
+                                             wx.FONTWEIGHT_NORMAL))
+                    info_lbl.SetForegroundColour(wx.Colour(110, 110, 120))
+                    body.Add(info_lbl, 0, wx.LEFT, 4)
+
+                # Oscilloscope channel status
+                ch_lbl = wx.StaticText(self, label='Channels')
+                ch_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                       wx.FONTWEIGHT_BOLD))
+                ch_lbl.SetForegroundColour(wx.Colour(90, 90, 100))
+                body.Add(ch_lbl, 0, wx.LEFT | wx.TOP, 8)
+
+                ch_grid = wx.FlexGridSizer(cols=2, vgap=2, hgap=6)
+                ch_grid.AddGrowableCol(1)
+                all_channels = ('CH1', 'CH2', 'CH3', 'CH4')
+                for ch_name in all_channels[:self._scope_channels]:
+                    meta = PROBE_META[ch_name]
+                    ch_dot = wx.StaticText(self, label=meta['label'])
+                    ch_dot.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                           wx.FONTWEIGHT_BOLD))
+                    net_name = board.get_probe_net(ch_name)
+                    hole = board.get_probe_hole(ch_name)
+                    if net_name:
+                        ch_dot.SetForegroundColour(wx.Colour(meta['color']))
+                        net_lbl = wx.StaticText(self, label=net_name)
+                        net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
+                                                wx.FONTWEIGHT_NORMAL))
+                        net_lbl.SetForegroundColour(wx.Colour(60, 60, 70))
+                    elif hole is not None:
+                        ch_dot.SetForegroundColour(wx.Colour(meta['color']))
+                        net_lbl = wx.StaticText(self, label='(no net)')
+                        net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                                                wx.FONTWEIGHT_NORMAL))
+                        net_lbl.SetForegroundColour(wx.Colour(160, 120, 40))
+                    else:
+                        ch_dot.SetForegroundColour(wx.Colour(180, 180, 180))
+                        net_lbl = wx.StaticText(self, label='not placed')
+                        net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                                                wx.FONTWEIGHT_NORMAL))
+                        net_lbl.SetForegroundColour(wx.Colour(160, 160, 160))
+                    ch_grid.Add(ch_dot,  0, wx.ALIGN_CENTRE_VERTICAL)
+                    ch_grid.Add(net_lbl, 1, wx.ALIGN_CENTRE_VERTICAL | wx.EXPAND)
+                body.Add(ch_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+
+                tran_btn = wx.Button(self, label='▶  Run Transient')
+                tran_btn.Bind(wx.EVT_BUTTON, self._on_run_transient)
+                body.Add(tran_btn, 0, wx.EXPAND | wx.ALL, 8)
+
         # Results
+        self._result_label = wx.StaticText(self, label='Simulation output')
+        self._result_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                           wx.FONTWEIGHT_NORMAL))
+        self._result_label.SetForegroundColour(wx.Colour(110, 110, 120))
+        self._result_label.Hide()
+        body.Add(self._result_label, 0, wx.LEFT | wx.TOP, 8)
         self._result_text = wx.TextCtrl(
             self, value='',
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_NONE,
@@ -1711,9 +1993,21 @@ class SimPane(wx.Panel):
     def refresh_sources(self, board) -> None:
         self._build(board)
 
+    def refresh_probes(self, board) -> None:
+        self._build(board)
+
+    def set_scope_channels(self, n: int, board) -> None:
+        self._scope_channels = n
+        self._build(board)
+
     def _on_run(self, _evt) -> None:
         tv = {t: sp.GetValue() for t, sp in self._volt_ctrls.items() if sp is not None}
         self._on_run_cb(tv)
+
+    def _on_run_transient(self, _evt) -> None:
+        tv = {t: sp.GetValue() for t, sp in self._volt_ctrls.items() if sp is not None}
+        if self._on_run_transient_cb:
+            self._on_run_transient_cb(tv)
 
     def _on_console_toggle(self, _evt) -> None:
         self._console_open = not self._console_open
@@ -1735,6 +2029,7 @@ class SimPane(wx.Panel):
             self._console_text.Show()
 
     def show_running(self) -> None:
+        self._result_label.Show()
         self._result_text.SetValue('Running simulation…')
         self._result_text.Show()
         wx.CallAfter(self.Fit)
@@ -1747,6 +2042,13 @@ class SimPane(wx.Panel):
             for w in result.warnings:
                 lines.append(f'  {w}')
             lines.append('')
+        if getattr(result, 'transient_traces', None):
+            lines.append('Transient traces')
+            lines.append('─' * 28)
+            for net in sorted(result.transient_traces):
+                tr = result.transient_traces[net]
+                n_pts = len(tr.times)
+                lines.append(f'  {net:<20s}  {n_pts} pts')
         if result.net_voltages:
             lines.append('Node voltages')
             lines.append('─' * 28)
@@ -1759,6 +2061,7 @@ class SimPane(wx.Panel):
             for ref, i_a in sorted(result.branch_currents.items()):
                 ma = i_a * 1000
                 lines.append(f'  {ref:<18s}  {ma:+.3f} mA')
+        self._result_label.Show()
         self._result_text.SetValue('\n'.join(lines))
         self._result_text.Show()
         self._populate_console(result)
@@ -1772,6 +2075,7 @@ class SimPane(wx.Panel):
             lines.append('─' * 28)
             for w in result.warnings:
                 lines.append(f'  {w}')
+        self._result_label.Show()
         self._result_text.SetValue('\n'.join(lines))
         self._result_text.Show()
         if result is not None:
@@ -1779,6 +2083,8 @@ class SimPane(wx.Panel):
         wx.CallAfter(self.Fit)
 
     def clear_results(self) -> None:
+        if self._result_label:
+            self._result_label.Hide()
         if self._result_text:
             self._result_text.Hide()
         if self._console_btn:

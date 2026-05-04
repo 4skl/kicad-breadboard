@@ -3,6 +3,8 @@ SPICE netlist generation and ngspice invocation for the breadboard plugin.
 
 Public API:
     simulate(board, netlist, terminal_voltages) -> SimResult
+    simulate_transient(board, netlist, terminal_voltages, plot_nets) -> SimResult
+    find_vsin_sources(netlist) -> List[VsinSource]
 """
 from __future__ import annotations
 
@@ -25,14 +27,32 @@ from .netlist import Netlist
 # ---------------------------------------------------------------------------
 
 @dataclass
+class TransientTrace:
+    net_name: str
+    times:    List[float]
+    values:   List[float]
+
+
+@dataclass
+class VsinSource:
+    ref:     str
+    freq:    float   # Hz
+    vampl:   float   # V peak amplitude
+    voff:    float   # V DC offset
+    net_pos: str     # net at + terminal
+    net_neg: str     # net at - terminal
+
+
+@dataclass
 class SimResult:
-    node_voltages:   Dict[str, float]   # spice_node_name → voltage in V
-    net_voltages:    Dict[str, float]   # original net_name → voltage in V
-    branch_currents: Dict[str, float]   # component ref → current in A
-    error:           Optional[str]      # None if simulation succeeded
-    spice_netlist:   str                # the generated netlist (for debugging)
-    spice_output:    str = ''           # raw ngspice stdout
-    warnings:        List[str] = field(default_factory=list)  # non-fatal issues
+    node_voltages:     Dict[str, float]              # spice_node_name → voltage in V
+    net_voltages:      Dict[str, float]              # original net_name → voltage in V
+    branch_currents:   Dict[str, float]              # component ref → current in A
+    error:             Optional[str]                 # None if simulation succeeded
+    spice_netlist:     str                           # the generated netlist (for debugging)
+    spice_output:      str = ''                      # raw ngspice stdout
+    warnings:          List[str] = field(default_factory=list)
+    transient_traces:  Dict[str, TransientTrace] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +155,54 @@ _SPICE_SFXS = [
 ]
 
 
+def _parse_spice_float(s: str) -> float:
+    """Convert a SPICE value string (e.g. '1k', '100Meg', '5u') to a Python float."""
+    s = s.strip()
+    if not s:
+        return 0.0
+    su = s.upper()
+    for sfx, mult in _SPICE_SFXS:
+        if su.endswith(sfx.upper()):
+            return float(s[:-len(sfx)]) * mult
+    return float(s)
+
+
+def _parse_sim_params(raw: str) -> Dict[str, str]:
+    """Parse a KiCad Sim.Params string like 'dc=0 ampl=1 f=1k ac=1' into a dict."""
+    result: Dict[str, str] = {}
+    for token in raw.split():
+        if '=' in token:
+            k, _, v = token.partition('=')
+            result[k.strip().lower()] = v.strip()
+    return result
+
+
+def find_vsin_sources(netlist: 'Netlist') -> List[VsinSource]:
+    """Return all VSIN sources found in the netlist with their AC parameters."""
+    sources: List[VsinSource] = []
+    for ref, comp in netlist.components.items():
+        if comp.symbol.upper() != 'VSIN':
+            continue
+        nets = netlist.nets_for_ref(ref)
+        net_pos = nets.get(1)
+        net_neg = nets.get(2)
+        if net_pos is None or net_neg is None:
+            continue
+        try:
+            # KiCad stores parameters in Sim.Params as "dc=0 ampl=1 f=1k ac=1"
+            sim_params = _parse_sim_params(comp.properties.get('Sim.Params', '') or '')
+            freq  = _parse_spice_float(sim_params.get('f',    comp.properties.get('FREQ',  '0') or '0'))
+            vampl = _parse_spice_float(sim_params.get('ampl', comp.properties.get('VAMPL', '0') or '0'))
+            voff  = _parse_spice_float(sim_params.get('dc',   comp.properties.get('VOFF',  '0') or '0'))
+        except (ValueError, OverflowError):
+            continue
+        sources.append(VsinSource(
+            ref=ref, freq=freq, vampl=vampl, voff=voff,
+            net_pos=net_pos.name, net_neg=net_neg.name,
+        ))
+    return sources
+
+
 def _half_spice_val(sv: str) -> str:
     """Return a SPICE value string equal to half of sv (for POT wiper at 50%)."""
     sv = sv.strip()
@@ -178,6 +246,35 @@ _MODELS = """\
 .model NMOS NMOS (VTO=2 KP=2e-5 LAMBDA=0.01 GAMMA=0.37)
 .model PMOS PMOS (VTO=-2 KP=2e-5 LAMBDA=0.01 GAMMA=0.37)
 """
+
+# Model names defined in _MODELS.
+_BUILTIN_MODELS = frozenset({
+    'Dgen', 'Dled', 'Dzen', 'QNPN', 'QPNP',
+    'JFET_N', 'JFET_P', 'NMOS', 'PMOS',
+})
+
+# KiCad properties that carry an external SPICE model name.
+_MODEL_PROPS = ('Spice_Model', 'Sim.Model', 'Sim.Internal_Model')
+
+
+def _external_model_conflicts(board: 'Breadboard', netlist: 'Netlist') -> List[str]:
+    """
+    Return one error string per placed component that references a SPICE model
+    we cannot use (i.e. not one of our built-in generics).
+    """
+    conflicts: List[str] = []
+    for ref, placed in board.placements.items():
+        nl_comp = netlist.components.get(ref)
+        if not nl_comp:
+            continue
+        for prop in _MODEL_PROPS:
+            model_name = nl_comp.properties.get(prop, '').strip()
+            if model_name and model_name not in _BUILTIN_MODELS:
+                conflicts.append(
+                    f'  • {ref} ({placed.type_id}): references model "{model_name}"'
+                )
+                break
+    return conflicts
 
 
 def _element_line(ref: str, type_id: str,
@@ -252,40 +349,35 @@ def _element_line(ref: str, type_id: str,
 # SPICE netlist builder
 # ---------------------------------------------------------------------------
 
-def _build_netlist(board: Breadboard, netlist: Netlist,
-                   terminal_voltages: Dict[str, float]) -> Tuple[str, Optional[str], List[str]]:
+def _build_component_lines(
+    board: Breadboard, netlist: Netlist,
+) -> Tuple[List[str], int, Dict[str, str], List[str]]:
     """
-    Build a SPICE netlist string from the board and netlist state.
+    Build the component element lines shared by both DC and transient netlists.
 
-    Returns (spice_text, error_or_None, warnings).
+    Returns (lines, component_count, node_map, warnings).
+    node_map is pre-populated with GND and terminal nets.
     """
     warnings: List[str] = []
-
-    # ---- Validate GND assignment ----
     gnd_net = board.terminal_nets.get('GND', '')
-    if not gnd_net:
-        return '', 'GND terminal not assigned', warnings
 
-    # ---- Net name → SPICE node map (starts with GND→0 and terminal nets) ----
-    node_map: Dict[str, str] = {gnd_net: '0'}
+    node_map: Dict[str, str] = {}
+    if gnd_net:
+        node_map[gnd_net] = '0'
     for net_name in board.terminal_nets.values():
         if net_name and net_name not in node_map:
             node_map[net_name] = _sanitize_node(net_name)
 
-    lines: list[str] = ['* Breadboard SPICE netlist', '']
-
+    lines: List[str] = []
     component_count = 0
 
     for ref, placed in board.placements.items():
-        # Get the net for each pin of this component
-        nets_dict = netlist.nets_for_ref(ref)   # {pin_num: Net}
+        nets_dict = netlist.nets_for_ref(ref)
         if not nets_dict:
             warnings.append(f'{ref} ({placed.type_id}): not in netlist — skipped')
             lines.append(f'* skipped: {ref} ({placed.type_id}) — no nets')
             continue
 
-        # Skip components with floating (no-connect) pins — they cause SPICE
-        # singular-matrix errors because the dangling node has no DC path.
         floating = [pin for pin, net in nets_dict.items()
                     if net.name.startswith('unconnected-')]
         if floating:
@@ -294,12 +386,10 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
             lines.append(f'* skipped: {ref} ({placed.type_id}) — floating pin(s)')
             continue
 
-        # Map pin_num → SPICE node
         pin_nodes: Dict[int, str] = {}
         for pin_num, net in nets_dict.items():
             pin_nodes[pin_num] = _node_for_net(net.name, node_map)
 
-        # Get component value from netlist
         nl_comp = netlist.components.get(ref)
         value = nl_comp.value if nl_comp else '1'
 
@@ -311,33 +401,148 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
             lines.append(element)
             component_count += 1
 
+    return lines, component_count, node_map, warnings
+
+
+_EXTERNAL_MODEL_MSG = (
+    'One or more components reference external SPICE models that this simulator '
+    'cannot load. Using generic fallbacks would give incorrect results.\n\n'
+    '{conflicts}\n\n'
+    'In KiCad Eeschema, open each component\'s properties → Simulation Model '
+    'and choose a built-in model type (Passive, Diode, BJT, etc.) without an '
+    'external model file. Then re-export the netlist and return to the breadboard.'
+)
+
+
+def _build_netlist(board: Breadboard, netlist: Netlist,
+                   terminal_voltages: Dict[str, float]) -> Tuple[str, Optional[str], List[str]]:
+    """
+    Build a SPICE DC (.op) netlist.  Returns (spice_text, error_or_None, warnings).
+    """
+    gnd_net = board.terminal_nets.get('GND', '')
+    if not gnd_net:
+        return '', 'GND terminal not assigned', []
+
+    conflicts = _external_model_conflicts(board, netlist)
+    if conflicts:
+        return '', _EXTERNAL_MODEL_MSG.format(conflicts='\n'.join(conflicts)), []
+
+    comp_lines, component_count, node_map, warnings = _build_component_lines(board, netlist)
+
     if component_count == 0:
         return '', 'No simulatable components on board', warnings
 
-    lines.append('')
+    lines: List[str] = ['* Breadboard SPICE netlist', ''] + comp_lines + ['']
 
-    # ---- Voltage sources for terminals V1, V2 ----
+    vsin_sources = find_vsin_sources(netlist)
+    net_to_vsin: Dict[str, VsinSource] = {src.net_pos: src for src in vsin_sources}
+
     for term in ('V1', 'V2'):
         net_name = board.terminal_nets.get(term, '')
         if not net_name:
             continue
-        voltage = terminal_voltages.get(term)
-        if voltage is None:
+        spice_node = _node_for_net(net_name, node_map)
+        src = net_to_vsin.get(net_name)
+        if src:
+            # VSIN source: reference its actual negative terminal and use dc as operating point
+            neg_node = _node_for_net(src.net_neg, node_map)
+            lines.append(f'V_bb_{term}  {spice_node}  {neg_node}  DC {src.voff:.6g}')
+        else:
+            voltage = terminal_voltages.get(term)
+            if voltage is not None:
+                lines.append(f'V_bb_{term}  {spice_node}  0  DC {voltage}')
+
+    lines += ['', _MODELS, '.op', '.end', '']
+    return '\n'.join(lines), None, warnings
+
+
+def _build_transient_netlist(
+    board: Breadboard,
+    netlist: Netlist,
+    terminal_voltages: Dict[str, float],
+    vsin_sources: List[VsinSource],
+    plot_nets: Optional[List[str]] = None,
+) -> Tuple[str, Optional[str], List[str], Dict[str, str]]:
+    """
+    Build a SPICE transient (.tran) netlist.
+
+    Returns (spice_text, error_or_None, warnings, node_map).
+    node_map is needed by the caller to map SPICE node names back to net names.
+    """
+    gnd_net = board.terminal_nets.get('GND', '')
+    if not gnd_net:
+        return '', 'GND terminal not assigned', [], {}
+
+    conflicts = _external_model_conflicts(board, netlist)
+    if conflicts:
+        return '', _EXTERNAL_MODEL_MSG.format(conflicts='\n'.join(conflicts)), [], {}
+
+    comp_lines, component_count, node_map, warnings = _build_component_lines(board, netlist)
+
+    if component_count == 0:
+        return '', 'No simulatable components on board', warnings, {}
+
+    # Build a map: net_pos → VsinSource for quick lookup
+    net_to_vsin: Dict[str, VsinSource] = {src.net_pos: src for src in vsin_sources}
+
+    # Determine simulation timing from VSIN frequencies
+    freqs = [src.freq for src in vsin_sources if src.freq > 0]
+    if freqs:
+        min_freq = min(freqs)
+        period = 1.0 / min_freq
+        tstop = 5.0 * period
+        tstep = tstop / 500.0
+    else:
+        tstep = 1e-5
+        tstop = 5e-3
+
+    lines: List[str] = ['* Breadboard SPICE transient netlist', ''] + comp_lines + ['']
+
+    for term in ('V1', 'V2'):
+        net_name = board.terminal_nets.get(term, '')
+        if not net_name:
             continue
         spice_node = _node_for_net(net_name, node_map)
-        lines.append(f'V_bb_{term}  {spice_node}  0  DC {voltage}')
+        src = net_to_vsin.get(net_name)
+        if src:
+            neg_node = _node_for_net(src.net_neg, node_map)
+            lines.append(
+                f'V_bb_{term}  {spice_node}  {neg_node}'
+                f'  SIN({src.voff:.6g} {src.vampl:.6g} {src.freq:.6g})'
+            )
+        else:
+            voltage = terminal_voltages.get(term)
+            if voltage is not None:
+                lines.append(f'V_bb_{term}  {spice_node}  0  DC {voltage}')
 
     lines.append('')
-
-    # ---- Models ----
     lines.append(_MODELS)
 
-    # ---- Analysis ----
-    lines.append('.op')
-    lines.append('.end')
-    lines.append('')
+    # Determine which nodes to print
+    if plot_nets:
+        print_nodes = [_node_for_net(n, node_map) for n in plot_nets
+                       if n and _node_for_net(n, node_map) != '0']
+    else:
+        # Print everything that isn't GND
+        print_nodes = [v for k, v in node_map.items() if v != '0']
 
-    return '\n'.join(lines), None, warnings
+    # Remove duplicates while preserving order
+    seen: set = set()
+    unique_nodes: List[str] = []
+    for n in print_nodes:
+        if n not in seen:
+            seen.add(n)
+            unique_nodes.append(n)
+
+    tstep_s = f'{tstep:.3g}'
+    tstop_s = f'{tstop:.3g}'
+    lines.append(f'.tran {tstep_s} {tstop_s}')
+    if unique_nodes:
+        node_list = '  '.join(f'v({n})' for n in unique_nodes)
+        lines.append(f'.print tran  {node_list}')
+    lines += ['.end', '']
+
+    return '\n'.join(lines), None, warnings, node_map
 
 
 # ---------------------------------------------------------------------------
@@ -372,9 +577,47 @@ def _find_ngspice() -> str:
     return 'ngspice'   # fall through; subprocess will raise FileNotFoundError
 
 
-def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str]]:
+_NGSPICE_ERROR_RE = re.compile(
+    r'^\s*(error|fatal)\b',
+    re.IGNORECASE,
+)
+_NGSPICE_WARN_RE = re.compile(
+    r'^\s*warning\b',
+    re.IGNORECASE,
+)
+# Lines that are routine ngspice banner / progress noise — not real warnings
+_NGSPICE_NOISE_RE = re.compile(
+    r'(ngspice.*release|note:|Doing analysis|No\.\ of\ Data|reference value'
+    r'|cpu\ time|Total\ analysis|tran:\ step|Transient\ analysis)',
+    re.IGNORECASE,
+)
+
+
+def _scan_ngspice_output(output: str) -> Tuple[Optional[str], List[str]]:
     """
-    Write spice_text to a temporary file, run ngspice -b, return (output, error_or_None).
+    Scan ngspice output for error and warning lines.
+    Returns (error_or_None, warnings_list).
+    Errors take priority: if any error line is found the first is returned as error.
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped or _NGSPICE_NOISE_RE.search(stripped):
+            continue
+        if _NGSPICE_ERROR_RE.match(stripped):
+            errors.append(stripped)
+        elif _NGSPICE_WARN_RE.match(stripped):
+            warnings.append(stripped)
+    if errors:
+        return '\n'.join(errors), warnings
+    return None, warnings
+
+
+def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str], List[str]]:
+    """
+    Write spice_text to a temporary file, run ngspice -b.
+    Returns (output, error_or_None, ngspice_warnings).
     """
     tmp_path = None
     try:
@@ -391,17 +634,19 @@ def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str]]:
         )
         combined = result.stdout + result.stderr
         if result.returncode != 0:
-            # Extract a useful snippet from stderr
             err_lines = (result.stderr or result.stdout).strip().splitlines()
             snippet = '\n'.join(err_lines[:10]) if err_lines else 'ngspice failed'
-            return combined, f'ngspice error (rc={result.returncode}):\n{snippet}'
-        return combined, None
+            return combined, f'ngspice error (rc={result.returncode}):\n{snippet}', []
+
+        # Even on rc=0, ngspice may emit Error/Warning lines
+        scan_err, scan_warns = _scan_ngspice_output(combined)
+        return combined, scan_err, scan_warns
 
     except FileNotFoundError:
-        return '', 'ngspice not found on PATH'
+        return '', 'ngspice not found on PATH', []
 
     except subprocess.TimeoutExpired:
-        return '', 'ngspice timed out after 30 s'
+        return '', 'ngspice timed out after 30 s', []
 
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -481,7 +726,89 @@ def _parse_output(output: str) -> Tuple[Dict[str, float], Dict[str, float]]:
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Transient output parser
+# ---------------------------------------------------------------------------
+
+def _parse_transient_output(
+    output: str,
+    node_map: Dict[str, str],
+) -> Dict[str, TransientTrace]:
+    """
+    Parse ngspice .print tran tabular output.
+
+    Returns {net_name: TransientTrace}.
+    """
+    # Invert node_map: spice_node (lowercase) → net_name
+    spice_to_net: Dict[str, str] = {}
+    for net_name, node in node_map.items():
+        spice_to_net[node.lower()] = net_name
+
+    lines = output.splitlines()
+
+    # Find the header line: contains "Index" and "time"
+    header_idx = -1
+    col_names: List[str] = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        lo = stripped.lower()
+        if lo.startswith('index') and 'time' in lo:
+            col_names = stripped.split()
+            header_idx = i
+            break
+
+    if header_idx < 0 or len(col_names) < 3:
+        return {}
+
+    # col_names[0] = 'Index', col_names[1] = 'time', col_names[2..] = 'v(node)'
+    # Map column index → net_name
+    col_nets: List[Optional[str]] = [None, None]  # Index, time slots
+    for col in col_names[2:]:
+        lo = col.lower()
+        # Strip v(...) wrapper if present
+        if lo.startswith('v(') and lo.endswith(')'):
+            node = lo[2:-1]
+        else:
+            node = lo
+        net = spice_to_net.get(node, node)
+        col_nets.append(net)
+
+    # Collect time and value lists
+    times_list: List[float] = []
+    col_data: List[List[float]] = [[] for _ in col_names]
+
+    for line in lines[header_idx + 1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('-') or stripped.lower().startswith('index'):
+            continue
+        parts = stripped.split()
+        if len(parts) < len(col_names):
+            continue
+        try:
+            t = float(parts[1])
+            times_list.append(t)
+            for j in range(2, len(col_names)):
+                col_data[j].append(float(parts[j]))
+        except (ValueError, IndexError):
+            # Partial row or end of table — stop
+            if times_list:
+                break
+
+    traces: Dict[str, TransientTrace] = {}
+    for j in range(2, len(col_names)):
+        net_name = col_nets[j]
+        if net_name is None:
+            continue
+        traces[net_name] = TransientTrace(
+            net_name=net_name,
+            times=times_list[:],
+            values=col_data[j][:],
+        )
+
+    return traces
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
 # ---------------------------------------------------------------------------
 
 def simulate(board: Breadboard, netlist: Netlist,
@@ -505,7 +832,8 @@ def simulate(board: Breadboard, netlist: Netlist,
             warnings=build_warnings,
         )
 
-    output, run_err = _run_ngspice(spice_text)
+    output, run_err, run_warns = _run_ngspice(spice_text)
+    all_warnings = build_warnings + run_warns
     if run_err:
         return SimResult(
             node_voltages={},
@@ -514,7 +842,7 @@ def simulate(board: Breadboard, netlist: Netlist,
             error=run_err,
             spice_netlist=spice_text,
             spice_output=output or '',
-            warnings=build_warnings,
+            warnings=all_warnings,
         )
 
     node_voltages, branch_currents_raw = _parse_output(output)
@@ -545,6 +873,12 @@ def simulate(board: Breadboard, netlist: Netlist,
         net_name = spice_to_net.get(spice_node, spice_node)
         net_voltages[net_name] = voltage
 
+    # ngspice never outputs node 0 (GND = 0 V by definition) — add it explicitly
+    # so that components connected to GND get their pin voltage resolved.
+    gnd_net = board.terminal_nets.get('GND', '')
+    if gnd_net and gnd_net not in net_voltages:
+        net_voltages[gnd_net] = 0.0
+
     # ---- Normalise branch current keys to component refs ----
     # ngspice names them like "v_bb_v1#branch" or "r1#branch" → strip to ref
     branch_currents: Dict[str, float] = {}
@@ -559,5 +893,67 @@ def simulate(board: Breadboard, netlist: Netlist,
         error=None,
         spice_netlist=spice_text,
         spice_output=output,
-        warnings=build_warnings,
+        warnings=all_warnings,
+    )
+
+
+def simulate_transient(
+    board: Breadboard,
+    netlist: Netlist,
+    terminal_voltages: Dict[str, float],
+    plot_nets: Optional[List[str]] = None,
+) -> SimResult:
+    """
+    Run a transient (.tran) simulation using VSIN source parameters from the netlist.
+
+    plot_nets: net names to include in .print tran (defaults to all non-GND nodes).
+    Returns a SimResult with .transient_traces populated on success.
+    """
+    vsin_sources = find_vsin_sources(netlist)
+    if not vsin_sources:
+        return SimResult(
+            node_voltages={}, net_voltages={}, branch_currents={},
+            error='No VSIN sources found in netlist — cannot run transient analysis.',
+            spice_netlist='',
+        )
+
+    spice_text, build_err, build_warnings, node_map = _build_transient_netlist(
+        board, netlist, terminal_voltages, vsin_sources, plot_nets
+    )
+    if build_err:
+        return SimResult(
+            node_voltages={}, net_voltages={}, branch_currents={},
+            error=build_err,
+            spice_netlist=spice_text,
+            warnings=build_warnings,
+        )
+
+    output, run_err, run_warns = _run_ngspice(spice_text)
+    all_warnings = build_warnings + run_warns
+    if run_err:
+        return SimResult(
+            node_voltages={}, net_voltages={}, branch_currents={},
+            error=run_err,
+            spice_netlist=spice_text,
+            spice_output=output or '',
+            warnings=all_warnings,
+        )
+
+    traces = _parse_transient_output(output, node_map)
+    if not traces:
+        return SimResult(
+            node_voltages={}, net_voltages={}, branch_currents={},
+            error='Transient simulation produced no output — check the console.',
+            spice_netlist=spice_text,
+            spice_output=output or '',
+            warnings=all_warnings,
+        )
+
+    return SimResult(
+        node_voltages={}, net_voltages={}, branch_currents={},
+        error=None,
+        spice_netlist=spice_text,
+        spice_output=output,
+        warnings=all_warnings,
+        transient_traces=traces,
     )

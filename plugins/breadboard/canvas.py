@@ -271,6 +271,43 @@ def _resistor_bands(ohms: float) -> Optional[Tuple[str, str, str, str]]:
     return _BAND_COLORS[d1], _BAND_COLORS[d2], c3, _GOLD   # gold = ±5 %
 
 
+_R_CAP = 1.5   # half-height of resistor body at lead-attachment ends
+
+
+def _res_body_half_height(x: float, body_half: float, body_h: float) -> float:
+    """Half-height of the bezier barrel body at local x (origin at centre)."""
+    if abs(x) >= body_half:
+        return _R_CAP
+    # x traces body_half * smoothstep(t); invert to find t, then eval y
+    S = (x + body_half) / (2.0 * body_half)  # 0..1
+    t = S  # linear initial guess for Newton
+    for _ in range(8):
+        ft  = 3*t*t - 2*t*t*t - S
+        dft = 6*t*(1.0 - t)
+        if abs(dft) < 1e-10:
+            break
+        t = max(0.0, min(1.0, t - ft / dft))
+    return _R_CAP + 3.0 * t * (1.0 - t) * (body_h / 2.0 - _R_CAP)
+
+
+def _resistor_body_poly(body_half: float, body_h: float, n: int = 16):
+    """Polygon approximating the bezier barrel shape (local coords, y-down)."""
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        S = 3*t*t - 2*t*t*t
+        x = -body_half + 2.0 * body_half * S
+        y = -(_R_CAP + 3.0 * t * (1.0 - t) * (body_h / 2.0 - _R_CAP))
+        pts.append((x, y))
+    for i in range(n, -1, -1):
+        t = i / n
+        S = 3*t*t - 2*t*t*t
+        x = -body_half + 2.0 * body_half * S
+        y =   _R_CAP + 3.0 * t * (1.0 - t) * (body_h / 2.0 - _R_CAP)
+        pts.append((x, y))
+    return pts
+
+
 # ---------------------------------------------------------------------------
 # Layout helper
 # ---------------------------------------------------------------------------
@@ -633,6 +670,47 @@ class CanvasLayout:
 
         return best
 
+    def nearest_probe_hole(self, px: int, py: int) -> Optional[Hole]:
+        """Return the nearest TieHole or RailHole (no terminals), within snap radius."""
+        best: Optional[Hole] = None
+        best_d = PITCH
+
+        for section in range(self.sections):
+            for col in range(1, self.columns + 1):
+                cx = self.col_x(col)
+                if abs(cx - px) > best_d:
+                    continue
+                for row in ALL_ROWS:
+                    ry = self.section_row_y(row, section)
+                    d = math.hypot(cx - px, ry - py)
+                    if d < best_d:
+                        best_d = d
+                        best = TieHole(col, row, section)
+
+        if self.has_rails:
+            for section in range(self.sections):
+                for rail in RAIL_NAMES:
+                    ry = self.section_rail_y(rail, section)
+                    if abs(ry - py) > best_d:
+                        continue
+                    for idx in range(1, RAIL_LEN + 1):
+                        rx = self.rail_x(idx)
+                        d = math.hypot(rx - px, ry - py)
+                        if d < best_d:
+                            best_d = d
+                            best = RailHole(rail, idx, section)
+
+        for rail, cx in self._vert_rail_cx.items():
+            if abs(cx - px) > best_d:
+                continue
+            for idx, ry in enumerate(self._vert_hole_y, 1):
+                d = math.hypot(cx - px, ry - py)
+                if d < best_d:
+                    best_d = d
+                    best = RailHole(rail, idx)
+
+        return best
+
 
 # ---------------------------------------------------------------------------
 # Ghost: preview of a component being dragged onto the canvas
@@ -661,8 +739,8 @@ class _ShapePropsDialog(wx.Dialog):
         gs.AddGrowableCol(1)
 
         gs.Add(wx.StaticText(self, label='Line width:'), flag=wx.ALIGN_CENTER_VERTICAL)
-        self._width = wx.SpinCtrl(self, value=str(width), min=1, max=10, size=(60, -1))
-        gs.Add(self._width)
+        self._width = wx.SpinCtrl(self, value=str(width), min=1, max=10, size=(80, -1))
+        gs.Add(self._width, flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
 
         gs.Add(wx.StaticText(self, label='Color:'), flag=wx.ALIGN_CENTER_VERTICAL)
         self._color = wx.ColourPickerCtrl(self, colour=wx.Colour(color))
@@ -723,8 +801,8 @@ class _TextPropsDialog(wx.Dialog):
         gs.Add(self._text, flag=wx.EXPAND)
 
         gs.Add(wx.StaticText(self, label='Font size:'), flag=wx.ALIGN_CENTER_VERTICAL)
-        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72, size=(60, -1))
-        gs.Add(self._size)
+        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72, size=(80, -1))
+        gs.Add(self._size, flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
 
         gs.Add(wx.StaticText(self, label='Color:'), flag=wx.ALIGN_CENTER_VERTICAL)
         self._color = wx.ColourPickerCtrl(self, colour=wx.Colour(color))
@@ -786,8 +864,8 @@ class _TextBoxPropsDialog(wx.Dialog):
         gs.Add(self._text, flag=wx.EXPAND)
 
         gs.Add(wx.StaticText(self, label='Font size:'), flag=wx.ALIGN_CENTER_VERTICAL)
-        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72, size=(60, -1))
-        gs.Add(self._size)
+        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72, size=(80, -1))
+        gs.Add(self._size, flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
 
         gs.Add(wx.StaticText(self, label='Text color:'), flag=wx.ALIGN_CENTER_VERTICAL)
         self._text_color = wx.ColourPickerCtrl(self, colour=wx.Colour(text_color))
@@ -811,7 +889,7 @@ class _TextBoxPropsDialog(wx.Dialog):
 
         gs.Add(wx.StaticText(self, label='Border:'), flag=wx.ALIGN_CENTER_VERTICAL)
         border_row = wx.BoxSizer(wx.HORIZONTAL)
-        self._width = wx.SpinCtrl(self, value=str(width), min=0, max=10, size=(50, -1))
+        self._width = wx.SpinCtrl(self, value=str(width), min=0, max=10, size=(80, -1))
         border_row.Add(wx.StaticText(self, label='w='), 0, wx.ALIGN_CENTER_VERTICAL)
         border_row.Add(self._width, 0)
         border_row.AddSpacer(8)
@@ -925,6 +1003,10 @@ class BreadboardCanvas(wx.Panel):
         self._drag_label_start_mouse: Tuple[int, int] = (0, 0)
         self._drag_label_start_offset: Tuple[int, int] = (0, 0)
 
+        self._transient_thumb_bounds: Dict[str, Tuple[int,int,int,int]] = {}  # ch → (bx,by,W,H)
+        self._thumb_drag_ch: Optional[str] = None       # CH being drag-initiated from thumbnail
+        self._thumb_drag_start: Tuple[float,float] = (0.0, 0.0)  # board coords at mousedown
+
         self._rpi_long_labels: bool = False   # toggle for RPi alt-function pin names
         self._dip_fn_labels:   bool = False   # toggle for DIP IC pin-function labels
 
@@ -933,6 +1015,8 @@ class BreadboardCanvas(wx.Panel):
         self.on_probe_placed: Optional[callable] = None  # called with probe name
         self.on_history_change: Optional[callable] = None  # called(can_undo, can_redo)
         self.on_restore: Optional[callable] = None  # called after undo/redo for full UI refresh
+        self.on_terminal_right_click: Optional[callable] = None  # called(term_name, screen_pos)
+        self.on_transient_dclick: Optional[callable] = None      # called(ch_name)
 
         # Simulation overlay
         self._sim_result = None   # SimResult or None
@@ -1200,12 +1284,36 @@ class BreadboardCanvas(wx.Panel):
     def begin_probe_drag(self, probe_name: str) -> None:
         """Start probe placement via drag — release over a hole to place."""
         self.push_undo()
-        self.board.remove_probe(probe_name)   # allow re-placing an already placed probe
+        self.board.remove_probe(probe_name)
+        self.board.assign_probe_net(probe_name, '')   # clear so placement re-detects net
         self.set_mode(MODE_PROBE)
         self._placing_probe = probe_name
         self._probe_drag = True
         self.CaptureMouse()
         self.SetFocus()
+
+    def delete_selection(self) -> None:
+        """Delete whichever object is currently selected (wire, component, or probe)."""
+        if self._selected_wire is not None:
+            self.push_undo()
+            self.board.remove_wire(self._selected_wire)
+            self._selected_wire = None
+            self.Refresh()
+        elif self._selected_ref is not None:
+            self.push_undo()
+            self.layout.clear_module_ref(self._selected_ref)
+            self.board.remove(self._selected_ref)
+            if self.on_placed:
+                self.on_placed(self._selected_ref)
+            self._selected_ref = None
+            self.Refresh()
+        elif self._selected_probe is not None:
+            self.push_undo()
+            self.board.remove_probe(self._selected_probe)
+            if self.on_probe_placed:
+                self.on_probe_placed(self._selected_probe)
+            self._selected_probe = None
+            self.Refresh()
 
     def begin_place(self, comp_def: ComponentDef, ref: str) -> None:
         """Called from the tray when a component card is clicked."""
@@ -1341,6 +1449,7 @@ class BreadboardCanvas(wx.Panel):
 
     def clear_simulation(self) -> None:
         self._sim_result = None
+        self._transient_thumb_bounds = {}
         self.Refresh()
 
     def _led_forward_voltage(self, ref: str) -> Optional[float]:
@@ -1390,7 +1499,8 @@ class BreadboardCanvas(wx.Panel):
             return
         bw = self.layout.total_width()
         bh = self.layout.total_height
-        self._zoom = min(cw / bw, ch / bh, 1.0)
+        _pad = 12
+        self._zoom = min((cw - _pad * 2) / bw, (ch - _pad * 2) / bh)
         self._pan_x = (cw - bw * self._zoom) / 2
         self._pan_y = (ch - bh * self._zoom) / 2
         self.Refresh()
@@ -1438,26 +1548,7 @@ class BreadboardCanvas(wx.Panel):
             elif self._selected_ref is not None:
                 self._flip_component(self._selected_ref)
         elif key in (wx.WXK_DELETE, wx.WXK_BACK):
-            if self._selected_wire is not None:
-                self.push_undo()
-                self.board.remove_wire(self._selected_wire)
-                self._selected_wire = None
-                self.Refresh()
-            elif self._selected_ref is not None:
-                self.push_undo()
-                self.layout.clear_module_ref(self._selected_ref)
-                self.board.remove(self._selected_ref)
-                if self.on_placed:
-                    self.on_placed(self._selected_ref)
-                self._selected_ref = None
-                self.Refresh()
-            elif self._selected_probe is not None:
-                self.push_undo()
-                self.board.remove_probe(self._selected_probe)
-                if self.on_placed:
-                    self.on_placed(self._selected_probe)
-                self._selected_probe = None
-                self.Refresh()
+            self.delete_selection()
         elif key == wx.WXK_HOME and evt.ControlDown():
             self._fit_view()
         elif key in (ord('+'), ord('='), wx.WXK_NUMPAD_ADD):
@@ -1490,8 +1581,8 @@ class BreadboardCanvas(wx.Panel):
             return
 
         if self.mode == MODE_PROBE and self._placing_probe:
-            hole = self.layout.nearest_hole(px, py)
-            if hole is not None and not isinstance(hole, Terminal):
+            hole = self.layout.nearest_probe_hole(px, py)
+            if hole is not None:
                 self.push_undo()
                 self.board.place_probe(self._placing_probe, hole)
                 name = self._placing_probe
@@ -1544,6 +1635,9 @@ class BreadboardCanvas(wx.Panel):
                     dlg.Destroy()
                 self._draw_start = None
                 self._draw_preview = None
+                if self._annotations:
+                    self._selected_ann_idx = len(self._annotations) - 1
+                self.set_mode(MODE_SELECT)
             self.Refresh()
             return
 
@@ -1595,6 +1689,9 @@ class BreadboardCanvas(wx.Panel):
                         dlg.Destroy()
                 self._draw_start = None
                 self._draw_preview = None
+                if self._annotations:
+                    self._selected_ann_idx = len(self._annotations) - 1
+                self.set_mode(MODE_SELECT)
             self.Refresh()
             return
 
@@ -1611,11 +1708,25 @@ class BreadboardCanvas(wx.Panel):
                 self._annotations.append(DrawText(px, py, dlg.text,
                     color=dlg.color, font_size=dlg.font_size,
                     bold=dlg.bold, italic=dlg.italic))
+                self._selected_ann_idx = len(self._annotations) - 1
+                self.set_mode(MODE_SELECT)
             dlg.Destroy()
             self.Refresh()
             return
 
         if self.mode == MODE_SELECT:
+            # Check waveform thumbnails first (transient mode)
+            thumb_ch = self._transient_thumb_at(px, py)
+            if thumb_ch:
+                self._selected_probe = thumb_ch
+                self._selected_ref = None
+                self._selected_wire = None
+                self._thumb_drag_ch = thumb_ch
+                self._thumb_drag_start = (px, py)
+                self.SetFocus()
+                self.Refresh()
+                return
+
             label_name = self._probe_label_at(px, py)
             if label_name:
                 self._dragging_probe_label = label_name
@@ -1705,6 +1816,10 @@ class BreadboardCanvas(wx.Panel):
     def _on_left_dclick(self, evt: wx.MouseEvent) -> None:
         px, py = self._board_pos(*evt.GetPosition())
         if self.mode == MODE_SELECT:
+            thumb_ch = self._transient_thumb_at(px, py)
+            if thumb_ch and self.on_transient_dclick:
+                self.on_transient_dclick(thumb_ch)
+                return
             ann_idx = self._ann_at(px, py)
             if ann_idx is not None:
                 self._edit_annotation(ann_idx)
@@ -1780,8 +1895,8 @@ class BreadboardCanvas(wx.Panel):
             if self.HasCapture():
                 self.ReleaseMouse()
             px, py = self._board_pos(*evt.GetPosition())
-            hole = self.layout.nearest_hole(px, py)
-            if hole is not None and not isinstance(hole, Terminal):
+            hole = self.layout.nearest_probe_hole(px, py)
+            if hole is not None:
                 # undo was already pushed by begin_probe_drag (which removed the probe)
                 self.board.place_probe(self._placing_probe, hole)
                 if self.on_probe_placed:
@@ -1792,6 +1907,8 @@ class BreadboardCanvas(wx.Panel):
             self.set_mode(MODE_SELECT)
             self.Refresh()
             return
+        if self._thumb_drag_ch:
+            self._thumb_drag_ch = None
         if self._dragging_probe_label:
             self._dragging_probe_label = None
             self.Refresh()
@@ -1922,6 +2039,14 @@ class BreadboardCanvas(wx.Panel):
             return
         px, py = self._board_pos(*evt.GetPosition())
 
+        if self._thumb_drag_ch and evt.LeftIsDown():
+            sx, sy = self._thumb_drag_start
+            if abs(px - sx) > 5 or abs(py - sy) > 5:
+                ch = self._thumb_drag_ch
+                self._thumb_drag_ch = None
+                self.begin_probe_drag(ch)
+            return
+
         if self._dragging_probe_label:
             if not evt.LeftIsDown():
                 # Button released without firing LEFT_UP (e.g. focus change)
@@ -2000,8 +2125,7 @@ class BreadboardCanvas(wx.Panel):
                 else:
                     self._ghost.anchor = anchor if isinstance(anchor, TieHole) else None
         if self.mode == MODE_PROBE:
-            h = self.layout.nearest_hole(px, py)
-            self._probe_hover = h if h is not None and not isinstance(h, Terminal) else None
+            self._probe_hover = self.layout.nearest_probe_hole(px, py)
         if self.mode in _DRAW_MODES and self._draw_start is not None:
             self._draw_preview = (px, py)
         if self.mode == MODE_DELETE:
@@ -2020,6 +2144,12 @@ class BreadboardCanvas(wx.Panel):
 
     def _on_right_down(self, evt: wx.MouseEvent) -> None:
         px, py = self._board_pos(*evt.GetPosition())
+        # Right-click on a binding post terminal → net assignment menu
+        if self.on_terminal_right_click and self.show_binding_posts:
+            for t_name, (tx, ty) in self.layout._term_pos.items():
+                if (px - tx) ** 2 + (py - ty) ** 2 <= TERM_R ** 2:
+                    self.on_terminal_right_click(t_name, evt.GetPosition())
+                    return
         # Right-click on a placed DIP or 3-pin component → flip it
         ref = self._comp_at(px, py)
         if ref:
@@ -2149,8 +2279,8 @@ class BreadboardCanvas(wx.Panel):
         return best_wire
 
     def _probe_label_at(self, px: int, py: int) -> Optional[str]:
-        """Return the name of the placed probe whose flag rect contains (px, py)."""
-        flag_w, flag_h = 24, 14
+        """Return the name of the placed probe whose icon contains (px, py)."""
+        body_w, body_h, tip_h = 28, 12, 5
         for name in PROBE_NAMES:
             hole = self.board.get_probe_hole(name)
             if hole is None:
@@ -2158,10 +2288,19 @@ class BreadboardCanvas(wx.Panel):
             xy = self.layout.hole_xy(hole)
             if xy is None:
                 continue
-            fcx, fcy = self._probe_flag_pos(name, int(xy[0]), int(xy[1]))
-            if (fcx - flag_w // 2 <= px <= fcx + flag_w // 2 and
-                    fcy <= py <= fcy + flag_h):
+            hx, hy = int(xy[0]), int(xy[1])
+            fcx, fcy = self._probe_flag_pos(name, hx, hy)
+            body_left = fcx - body_w // 2
+            if (body_left <= px <= body_left + body_w and
+                    fcy <= py <= fcy + body_h + tip_h):
                 return name
+        return None
+
+    def _transient_thumb_at(self, px: float, py: float) -> Optional[str]:
+        """Return the CH name whose waveform thumbnail contains (px, py), or None."""
+        for ch_name, (bx, by, w, h) in self._transient_thumb_bounds.items():
+            if bx <= px <= bx + w and by <= py <= by + h:
+                return ch_name
         return None
 
     def _ann_at(self, px: float, py: float, tol: float = 8.0) -> Optional[int]:
@@ -2200,6 +2339,8 @@ class BreadboardCanvas(wx.Panel):
             self.board.remove(ref)
             if self._selected_ref == ref:
                 self._selected_ref = None
+            if self.on_placed:
+                self.on_placed(ref)
             self.Refresh()
             return
         # Check for probe markers
@@ -4106,6 +4247,7 @@ class BreadboardCanvas(wx.Panel):
                 gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
 
+                _res_gc_path = None
                 if placed.type_id == 'C':
                     gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
                     comp = self.netlist.components.get(ref) if self.netlist else None
@@ -4116,6 +4258,19 @@ class BreadboardCanvas(wx.Panel):
                     label = f'{ref} {val_lbl}' if val_lbl else ref
                     lw, lh = gc.GetTextExtent(label)
                     gc.DrawText(label, -lw / 2, -lh / 2)
+                elif placed.type_id == 'R':
+                    # Smooth bezier barrel: narrow at lead ends, full-height in centre
+                    _res_gc_path = gc.CreatePath()
+                    _res_gc_path.MoveToPoint(-body_half, -_R_CAP)
+                    _res_gc_path.AddCurveToPoint(-body_half, -body_h / 2,
+                                                  body_half, -body_h / 2,
+                                                  body_half, -_R_CAP)
+                    _res_gc_path.AddLineToPoint(body_half, _R_CAP)
+                    _res_gc_path.AddCurveToPoint(body_half, body_h / 2,
+                                                  -body_half, body_h / 2,
+                                                  -body_half, _R_CAP)
+                    _res_gc_path.CloseSubpath()
+                    gc.DrawPath(_res_gc_path)
                 else:
                     gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
@@ -4133,8 +4288,13 @@ class BreadboardCanvas(wx.Panel):
                         no_pen = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(0, 0, 0, 0)).Width(0))
                         gc.SetPen(no_pen)
                         for bx_pos, bcolor in zip(positions, bands):
+                            bh = _res_body_half_height(bx_pos + 2.5, body_half, body_h)
                             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
-                            gc.DrawRectangle(bx_pos, -body_h / 2 + 1, 5, body_h - 2)
+                            gc.DrawRectangle(bx_pos, -bh + 1, 5, 2 * bh - 2)
+                    if _res_gc_path is not None:
+                        gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+                        gc.DrawPath(_res_gc_path)
 
                 elif placed.type_id in ('D', 'D_Zener'):
                     # Cathode stripe: a path shaped like the left slice of the rounded
@@ -4174,6 +4334,10 @@ class BreadboardCanvas(wx.Panel):
                     dc.SetTextForeground('#ffffff')
                     tw, th = dc.GetTextExtent(label)
                     dc.DrawText(label, int(mx) - tw // 2, int(my) - th // 2)
+                elif placed.type_id == 'R':
+                    _dc_pts = [wx.Point(int(mx + x), int(my + y))
+                               for x, y in _resistor_body_pts(body_half, body_h)]
+                    dc.DrawPolygon(_dc_pts)
                 else:
                     dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
 
@@ -4182,16 +4346,26 @@ class BreadboardCanvas(wx.Panel):
                     ohms = _parse_ohms(comp.value) if comp else None
                     bands = _resistor_bands(ohms) if ohms is not None else None
                     if bands:
+                        _taper_dc = min(5.0, body_half * 0.3)
+                        _flat_x = int(mx - body_half + _taper_dc)
+                        _flat_w = int(body_half * 2 - 2 * _taper_dc)
                         positions = [
-                            int(mx - body_half) + 3,
+                            int(mx - body_half) + int(max(3, _taper_dc)),
                             int(mx - body_half) + 9,
                             int(mx - body_half) + 15,
                             int(mx + body_half) - 8,
                         ]
+                        dc.SetClippingRegion(_flat_x, by, _flat_w, int(body_h))
                         dc.SetPen(wx.Pen(wx.Colour(0, 0, 0, 0), 0))
                         for band_x, bcolor in zip(positions, bands):
                             dc.SetBrush(wx.Brush(wx.Colour(bcolor)))
                             dc.DrawRectangle(band_x, by + 1, 5, int(body_h) - 2)
+                        dc.DestroyClippingRegion()
+                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetPen(wx.Pen(border_color, pen_w))
+                    _dc_pts2 = [wx.Point(int(mx + x), int(my + y))
+                                for x, y in _resistor_body_pts(body_half, body_h)]
+                    dc.DrawPolygon(_dc_pts2)
 
                 elif placed.type_id in ('D', 'D_Zener'):
                     # DC fallback: inset stripe stays clear of corner overflow
@@ -4378,30 +4552,53 @@ class BreadboardCanvas(wx.Panel):
                           hx: int, hy: int,
                           fcx: int, fcy_top: int,
                           label: str, color: str) -> None:
-        """Draw a coloured flag at (fcx, fcy_top) with a leaderline back to (hx, hy)."""
-        flag_w, flag_h = 24, 14
-        fx = fcx - flag_w // 2
+        """Draw a static oscilloscope probe icon: colored barrel with small pointer tip."""
+        body_w, body_h = 28, 12
+        stripe_w = 6
+        tip_h = 5   # downward-pointing triangle height
 
-        c = wx.Colour(color)
-        # Leaderline from hole edge to flag bottom-centre
-        dc.SetPen(wx.Pen(c, 2))
-        dc.DrawLine(hx, hy - HOLE_R, fcx, fcy_top + flag_h)
+        c       = wx.Colour(color)
+        dark    = wx.Colour(42, 42, 42)
+        outline = wx.Colour(90, 90, 90)
 
+        body_left = fcx - body_w // 2
+        body_bot  = fcy_top + body_h
+
+        # Small downward triangle "tip" below the barrel
+        tip_pts = [
+            wx.Point(fcx - 4, body_bot),
+            wx.Point(fcx + 4, body_bot),
+            wx.Point(fcx,     body_bot + tip_h),
+        ]
+        dc.SetBrush(wx.Brush(dark))
+        dc.SetPen(wx.Pen(outline, 1))
+        dc.DrawPolygon(tip_pts)
+
+        # Body dark background
+        dc.SetBrush(wx.Brush(dark))
+        dc.SetPen(wx.Pen(outline, 1))
+        dc.DrawRoundedRectangle(body_left, fcy_top, body_w, body_h, 3)
+
+        # Colored left stripe (rounded on left, straight on right)
         dc.SetBrush(wx.Brush(c))
-        dc.SetPen(wx.Pen('#222222', 1))
-        dc.DrawRoundedRectangle(fx, fcy_top, flag_w, flag_h, 3)
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.DrawRoundedRectangle(body_left, fcy_top, stripe_w, body_h, 3)
+        dc.DrawRectangle(body_left + 3, fcy_top, stripe_w - 3, body_h)
 
+        # Channel label
         dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_BOLD))
         dc.SetTextForeground('#ffffff')
         tw, th = dc.GetTextExtent(label)
-        dc.DrawText(label, fcx - tw // 2, fcy_top + (flag_h - th) // 2)
+        text_x = body_left + stripe_w + 1
+        text_w = body_w - stripe_w - 1
+        dc.DrawText(label, text_x + (text_w - tw) // 2,
+                    fcy_top + (body_h - th) // 2)
 
     def _probe_flag_pos(self, name: str, hx: int, hy: int) -> Tuple[int, int]:
-        """Return (flag_center_x, flag_top_y) for the given probe, applying its offset."""
-        flag_h = 14
+        """Return (body_center_x, body_top_y) for the given probe, applying its offset."""
         dx, dy = self.board.get_probe_label_offset(name)
-        return hx + dx, hy - flag_h - 12 + dy
+        return hx + dx, hy - 20 + dy
 
     def _draw_probes(self, dc: wx.DC) -> None:
         for name in PROBE_NAMES:
@@ -4870,6 +5067,14 @@ class BreadboardCanvas(wx.Panel):
         gc.SetPen(gc.CreatePen(border_pen))
         if comp_def.type_id == 'C':
             gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
+        elif comp_def.type_id == 'R':
+            _gpts = _resistor_body_pts(body_half, body_h)
+            _grp = gc.CreatePath()
+            _grp.MoveToPoint(*_gpts[0])
+            for _gp in _gpts[1:]:
+                _grp.AddLineToPoint(*_gp)
+            _grp.CloseSubpath()
+            gc.DrawPath(_grp)
         else:
             gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
@@ -5032,11 +5237,15 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawText(symbol, cx - tw // 2, cy - th // 2)
 
     def _draw_sim_overlay(self, dc: wx.DC) -> None:
-        """Draw voltage labels at each placed component's first-pin hole."""
-        if not self.show_voltage_labels:
+        if not self.show_voltage_labels or self._sim_result is None:
             return
-        if self._sim_result is None or not self._sim_result.net_voltages:
-            return
+        if getattr(self._sim_result, 'transient_traces', None):
+            self._draw_transient_overlay(dc)
+        elif getattr(self._sim_result, 'net_voltages', None):
+            self._draw_voltage_labels(dc)
+
+    def _draw_voltage_labels(self, dc: wx.DC) -> None:
+        """Draw voltage labels at each placed component's first-pin hole (.op results)."""
         if not self.netlist:
             return
 
@@ -5065,18 +5274,80 @@ class BreadboardCanvas(wx.Panel):
             cx, cy = xy
             label = f'{voltage:.2f}V'
             tw, th = dc.GetTextExtent(label)
-            # Offset slightly to the right of the hole
             bx = cx + 4
             by = cy - th - 5
 
-            # Background pill
             dc.SetBrush(wx.Brush('#1a1a6a'))
             dc.SetPen(wx.Pen('#1a1a6a', 0))
             dc.DrawRoundedRectangle(bx, by, tw + 4, th + 2, 2)
-
-            # Label text
             dc.SetTextForeground('#e0e0ff')
             dc.DrawText(label, bx + 2, by + 1)
+
+    def _draw_transient_overlay(self, dc: wx.DC) -> None:
+        """Draw a small waveform thumbnail next to each placed CH probe (transient results)."""
+        traces = self._sim_result.transient_traces
+        W, H, PAD = 80, 26, 3   # thumbnail size in board pixels
+
+        self._transient_thumb_bounds = {}
+
+        for ch_name in ('CH1', 'CH2', 'CH3', 'CH4'):
+            hole = self.board.get_probe_hole(ch_name)
+            if hole is None:
+                continue
+            net_name = self.board.get_probe_net(ch_name)
+            if not net_name or net_name not in traces:
+                continue
+            tr = traces[net_name]
+            if len(tr.times) < 2:
+                continue
+
+            xy = self.layout.hole_xy(hole)
+            if xy is None:
+                continue
+            hx, hy = int(xy[0]), int(xy[1])
+
+            # Anchor: start from the probe flag position, extend right
+            fcx, fcy = self._probe_flag_pos(ch_name, hx, hy)
+            bx = fcx + 14          # just right of the flag
+            by = fcy               # aligned with flag top
+
+            self._transient_thumb_bounds[ch_name] = (bx, by, W, H)
+
+            color = wx.Colour(PROBE_META[ch_name]['color'])
+
+            # Background box — thicker border when selected
+            selected = self._selected_probe == ch_name
+            dc.SetBrush(wx.Brush(wx.Colour(15, 15, 28)))
+            dc.SetPen(wx.Pen(color, 2 if selected else 1))
+            dc.DrawRectangle(bx, by, W, H)
+            if selected:
+                dc.SetPen(wx.Pen(wx.Colour(255, 255, 255, 80), 1))
+                dc.DrawRectangle(bx + 1, by + 1, W - 2, H - 2)
+
+            # Waveform line
+            vals = tr.values
+            vmin, vmax = min(vals), max(vals)
+            v_range = vmax - vmin if vmax != vmin else 1.0
+            inner_w = W - PAD * 2
+            inner_h = H - PAD * 2
+
+            n = len(vals)
+            step = max(1, n // inner_w)
+            pts = []
+            for i in range(0, n, step):
+                sx = bx + PAD + inner_w * i // n
+                sy = by + PAD + inner_h - int(inner_h * (vals[i] - vmin) / v_range)
+                pts.append(wx.Point(sx, sy))
+
+            dc.SetPen(wx.Pen(color, 1))
+            if len(pts) > 1:
+                dc.DrawLines(pts)
+
+            # Net name label bottom-left
+            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                               wx.FONTWEIGHT_NORMAL))
+            dc.SetTextForeground(wx.Colour(160, 160, 180))
+            dc.DrawText(net_name[:12], bx + PAD, by + H - PAD - 7)
 
     def _draw_net_labels(self, dc: wx.DC) -> None:
         """Draw a legend box in the bottom-right corner listing signal nets.

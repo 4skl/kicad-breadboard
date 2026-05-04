@@ -123,6 +123,7 @@ class NetlistComponent:
     lib: str
     description: str = ''
     pin_count: int = 0  # number of distinct pins appearing in nets
+    properties: Dict[str, str] = field(default_factory=dict)  # KiCad symbol properties, e.g. FREQ, VAMPL
 
 
 @dataclass
@@ -190,9 +191,16 @@ def parse(path: str | Path) -> Netlist:
             lib   = _val(_find(libsrc, 'lib'))   if libsrc else ''
             part  = _val(_find(libsrc, 'part'))  if libsrc else ''
             desc  = _val(_find(libsrc, 'description')) if libsrc else ''
+            props: Dict[str, str] = {}
+            for prop in _find_all(comp, 'property'):
+                pname = _val(_find(prop, 'name'))
+                pval  = _val(_find(prop, 'value'))
+                if pname:
+                    props[pname] = pval
             if ref:
                 components[ref] = NetlistComponent(
-                    ref=ref, value=value, symbol=part, lib=lib, description=desc
+                    ref=ref, value=value, symbol=part, lib=lib, description=desc,
+                    properties=props,
                 )
 
     # --- nets ---

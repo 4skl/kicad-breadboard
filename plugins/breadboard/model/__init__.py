@@ -11,6 +11,7 @@ from .breadboard import (
 from .components import ComponentDef, ALL_DEFS, guess_type_id, TO92_PINOUT_VARIANTS, RPi_PIN_NAMES_LONG, ARDUINO_UNO_FN_NAMES, LED_COLORS
 from .netlist import Netlist, NetlistComponent, Net, parse as parse_netlist, find_netlist, find_schematic
 from .schematic import parse_schematic
-from .simulation import simulate, SimResult
+from .simulation import (simulate, simulate_transient, SimResult,
+                          TransientTrace, VsinSource, find_vsin_sources)
 from .validator import validate, ValidationResult, ValidationIssue, IssueKind
 from .session import save_session, load_session

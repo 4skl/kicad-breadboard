@@ -310,7 +310,12 @@ def validate(board: Breadboard, netlist: Netlist) -> ValidationResult:
         if net_name:
             net_holes.setdefault(net_name, []).append(Terminal(term_name))
             terminal_pin_counts[net_name] = terminal_pin_counts.get(net_name, 0) + 1
+    # Scope probes (CH1-CH4, SCOPE_GND) are high-impedance observers — exclude from
+    # connectivity so a misplaced probe never causes a spurious SHORT or OPEN_NET.
+    _SCOPE_PROBES = frozenset(('CH1', 'CH2', 'CH3', 'CH4', 'SCOPE_GND'))
     for probe_name in PROBE_NAMES:
+        if probe_name in _SCOPE_PROBES:
+            continue
         hole    = board.get_probe_hole(probe_name)
         net_name = board.get_probe_net(probe_name)
         if hole is not None and net_name:
