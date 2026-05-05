@@ -271,39 +271,41 @@ def _resistor_bands(ohms: float) -> Optional[Tuple[str, str, str, str]]:
     return _BAND_COLORS[d1], _BAND_COLORS[d2], c3, _GOLD   # gold = ±5 %
 
 
-_R_CAP = 1.5   # half-height of resistor body at lead-attachment ends
+_R_END_HH = 6.5   # resistor body half-height at end caps  (13 px full)
+_R_MID_HH = 5.0   # resistor body half-height at centre   (10 px full)
+# Bezier control-point half-height: gives exactly _R_MID_HH at t=0.5
+_R_CP_HH  = (4.0 * _R_MID_HH - _R_END_HH) / 3.0   # = 4.5
 
 
-def _res_body_half_height(x: float, body_half: float, body_h: float) -> float:
-    """Half-height of the bezier barrel body at local x (origin at centre)."""
+def _res_body_half_height(x: float, body_half: float) -> float:
+    """Half-height of the bone-shaped resistor body at local x (origin at centre)."""
     if abs(x) >= body_half:
-        return _R_CAP
-    # x traces body_half * smoothstep(t); invert to find t, then eval y
-    S = (x + body_half) / (2.0 * body_half)  # 0..1
-    t = S  # linear initial guess for Newton
+        return _R_END_HH
+    S = (x + body_half) / (2.0 * body_half)
+    t = S
     for _ in range(8):
         ft  = 3*t*t - 2*t*t*t - S
         dft = 6*t*(1.0 - t)
         if abs(dft) < 1e-10:
             break
         t = max(0.0, min(1.0, t - ft / dft))
-    return _R_CAP + 3.0 * t * (1.0 - t) * (body_h / 2.0 - _R_CAP)
+    return _R_END_HH - 3.0 * t * (1.0 - t) * (_R_END_HH - _R_CP_HH)
 
 
-def _resistor_body_poly(body_half: float, body_h: float, n: int = 16):
-    """Polygon approximating the bezier barrel shape (local coords, y-down)."""
+def _resistor_body_poly(body_half: float, n: int = 16):
+    """Polygon approximating the bone-shaped resistor body (local coords, y-down)."""
     pts = []
     for i in range(n + 1):
         t = i / n
         S = 3*t*t - 2*t*t*t
         x = -body_half + 2.0 * body_half * S
-        y = -(_R_CAP + 3.0 * t * (1.0 - t) * (body_h / 2.0 - _R_CAP))
+        y = -(_R_END_HH - 3.0 * t * (1.0 - t) * (_R_END_HH - _R_CP_HH))
         pts.append((x, y))
     for i in range(n, -1, -1):
         t = i / n
         S = 3*t*t - 2*t*t*t
         x = -body_half + 2.0 * body_half * S
-        y =   _R_CAP + 3.0 * t * (1.0 - t) * (body_h / 2.0 - _R_CAP)
+        y =   _R_END_HH - 3.0 * t * (1.0 - t) * (_R_END_HH - _R_CP_HH)
         pts.append((x, y))
     return pts
 
@@ -4259,16 +4261,16 @@ class BreadboardCanvas(wx.Panel):
                     lw, lh = gc.GetTextExtent(label)
                     gc.DrawText(label, -lw / 2, -lh / 2)
                 elif placed.type_id == 'R':
-                    # Smooth bezier barrel: narrow at lead ends, full-height in centre
+                    # Bone shape: wide end caps, narrower in the middle
                     _res_gc_path = gc.CreatePath()
-                    _res_gc_path.MoveToPoint(-body_half, -_R_CAP)
-                    _res_gc_path.AddCurveToPoint(-body_half, -body_h / 2,
-                                                  body_half, -body_h / 2,
-                                                  body_half, -_R_CAP)
-                    _res_gc_path.AddLineToPoint(body_half, _R_CAP)
-                    _res_gc_path.AddCurveToPoint(body_half, body_h / 2,
-                                                  -body_half, body_h / 2,
-                                                  -body_half, _R_CAP)
+                    _res_gc_path.MoveToPoint(-body_half, -_R_END_HH)
+                    _res_gc_path.AddCurveToPoint(-body_half, -_R_CP_HH,
+                                                  body_half, -_R_CP_HH,
+                                                  body_half, -_R_END_HH)
+                    _res_gc_path.AddLineToPoint(body_half, _R_END_HH)
+                    _res_gc_path.AddCurveToPoint(body_half,  _R_CP_HH,
+                                                 -body_half,  _R_CP_HH,
+                                                 -body_half,  _R_END_HH)
                     _res_gc_path.CloseSubpath()
                     gc.DrawPath(_res_gc_path)
                 else:
@@ -4288,7 +4290,7 @@ class BreadboardCanvas(wx.Panel):
                         no_pen = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(0, 0, 0, 0)).Width(0))
                         gc.SetPen(no_pen)
                         for bx_pos, bcolor in zip(positions, bands):
-                            bh = _res_body_half_height(bx_pos + 2.5, body_half, body_h)
+                            bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
                             gc.DrawRectangle(bx_pos, -bh + 1, 5, 2 * bh - 2)
                     if _res_gc_path is not None:
@@ -4336,7 +4338,7 @@ class BreadboardCanvas(wx.Panel):
                     dc.DrawText(label, int(mx) - tw // 2, int(my) - th // 2)
                 elif placed.type_id == 'R':
                     _dc_pts = [wx.Point(int(mx + x), int(my + y))
-                               for x, y in _resistor_body_poly(body_half, body_h)]
+                               for x, y in _resistor_body_poly(body_half)]
                     dc.DrawPolygon(_dc_pts)
                 else:
                     dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
@@ -4354,13 +4356,13 @@ class BreadboardCanvas(wx.Panel):
                         ]
                         dc.SetPen(wx.Pen(wx.Colour(0, 0, 0, 0), 0))
                         for bx_pos, bcolor in zip(positions, bands):
-                            bh = _res_body_half_height(bx_pos + 2.5, body_half, body_h)
+                            bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             dc.SetBrush(wx.Brush(wx.Colour(bcolor)))
                             dc.DrawRectangle(int(mx + bx_pos), int(my - bh + 1), 5, int(2 * bh - 2))
                     dc.SetBrush(wx.TRANSPARENT_BRUSH)
                     dc.SetPen(wx.Pen(border_color, pen_w))
                     _dc_pts2 = [wx.Point(int(mx + x), int(my + y))
-                                for x, y in _resistor_body_poly(body_half, body_h)]
+                                for x, y in _resistor_body_poly(body_half)]
                     dc.DrawPolygon(_dc_pts2)
 
                 elif placed.type_id in ('D', 'D_Zener'):
@@ -4863,17 +4865,28 @@ class BreadboardCanvas(wx.Panel):
                 dc.DrawLine(int(px_g), pin_y_g, int(ax_g), int(flat_y_g))
 
             dome_up_g = in_top != ghost.flipped
-            gc = wx.GraphicsContext.Create(dc)
-            path = gc.CreatePath()
-            path.MoveToPoint(cx_mid_g - body_half_g, flat_y_g)
-            path.AddLineToPoint(cx_mid_g + body_half_g, flat_y_g)
-            path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, not dome_up_g)
-            path.CloseSubpath()
-            gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
-            gc.SetPen(gc.CreatePen(
-                wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1)
-                .Style(wx.PENSTYLE_DOT)))
-            gc.DrawPath(path)
+            gc = _make_gc(dc)
+            if gc is not None:
+                path = gc.CreatePath()
+                path.MoveToPoint(cx_mid_g - body_half_g, flat_y_g)
+                path.AddLineToPoint(cx_mid_g + body_half_g, flat_y_g)
+                path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, not dome_up_g)
+                path.CloseSubpath()
+                gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+                gc.SetPen(gc.CreatePen(
+                    wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1)))
+                gc.DrawPath(path)
+            else:
+                dc.SetBrush(wx.Brush(ghost_color))
+                dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88), 1))
+                if dome_up_g:
+                    dc.DrawArc(int(cx_mid_g + body_half_g), int(flat_y_g),
+                               int(cx_mid_g - body_half_g), int(flat_y_g),
+                               int(cx_mid_g), int(flat_y_g))
+                else:
+                    dc.DrawArc(int(cx_mid_g - body_half_g), int(flat_y_g),
+                               int(cx_mid_g + body_half_g), int(flat_y_g),
+                               int(cx_mid_g), int(flat_y_g))
 
             # Pin name labels on the side away from the body (ghost variant)
             dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -5065,14 +5078,14 @@ class BreadboardCanvas(wx.Panel):
             gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
         elif comp_def.type_id == 'R':
             _grp = gc.CreatePath()
-            _grp.MoveToPoint(-body_half, -_R_CAP)
-            _grp.AddCurveToPoint(-body_half, -body_h / 2,
-                                  body_half, -body_h / 2,
-                                  body_half, -_R_CAP)
-            _grp.AddLineToPoint(body_half, _R_CAP)
-            _grp.AddCurveToPoint(body_half, body_h / 2,
-                                  -body_half, body_h / 2,
-                                  -body_half, _R_CAP)
+            _grp.MoveToPoint(-body_half, -_R_END_HH)
+            _grp.AddCurveToPoint(-body_half, -_R_CP_HH,
+                                  body_half, -_R_CP_HH,
+                                  body_half, -_R_END_HH)
+            _grp.AddLineToPoint(body_half, _R_END_HH)
+            _grp.AddCurveToPoint(body_half,  _R_CP_HH,
+                                 -body_half,  _R_CP_HH,
+                                 -body_half,  _R_END_HH)
             _grp.CloseSubpath()
             gc.DrawPath(_grp)
         else:
