@@ -3128,7 +3128,7 @@ class BreadboardCanvas(wx.Panel):
                     dc.DrawLine(px, pin_y, int(ax), int(flat_y))
 
                 # D-shaped body
-                dome_up = in_top != placed.flipped
+                dome_up = not bool(placed.flipped)
                 dc.SetBrush(wx.Brush(wx.Colour(comp_def.color)))
                 dc.SetPen(wx.Pen('#333333', 2 if selected else 1))
                 gc = _make_gc(dc)
@@ -3176,7 +3176,7 @@ class BreadboardCanvas(wx.Panel):
                         continue
                     name = comp_def.pin_names.get(pin_num, str(pin_num))
                     ptw, pth = dc.GetTextExtent(name)
-                    if in_top:
+                    if dome_up:
                         dc.DrawText(name, pxy[0] - ptw // 2, pin_y + label_gap)
                     else:
                         dc.DrawText(name, pxy[0] - ptw // 2, pin_y - pth - label_gap)
@@ -4864,7 +4864,7 @@ class BreadboardCanvas(wx.Panel):
             for px_g, ax_g in zip(pin_xs_g, attach_xs_g):
                 dc.DrawLine(int(px_g), pin_y_g, int(ax_g), int(flat_y_g))
 
-            dome_up_g = in_top != ghost.flipped
+            dome_up_g = not bool(ghost.flipped)
             gc = _make_gc(dc)
             if gc is not None:
                 path = gc.CreatePath()
@@ -4899,7 +4899,7 @@ class BreadboardCanvas(wx.Panel):
                     continue
                 name_g = comp_def.pin_names.get(pin_num_g, str(pin_num_g))
                 ptw_g, pth_g = dc.GetTextExtent(name_g)
-                if in_top:
+                if dome_up_g:
                     dc.DrawText(name_g, pxy_g[0] - ptw_g // 2,
                                 int(pin_y_g) + label_gap_g)
                 else:
