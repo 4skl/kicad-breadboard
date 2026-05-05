@@ -2376,7 +2376,7 @@ class BreadboardCanvas(wx.Panel):
         h = self.layout.total_height
         bmp = wx.Bitmap(w, h)
         mdc = wx.MemoryDC(bmp)
-        mdc.SetBackground(wx.Brush('#f0f0f0'))
+        mdc.SetBackground(wx.Brush(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE)))
         mdc.Clear()
         self._draw_board(mdc)
         mdc.SelectObject(wx.NullBitmap)
@@ -2392,7 +2392,7 @@ class BreadboardCanvas(wx.Panel):
 
     def _on_paint(self, _evt) -> None:
         dc = wx.AutoBufferedPaintDC(self)
-        dc.SetBackground(wx.Brush('#f0f0f0'))
+        dc.SetBackground(wx.Brush(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE)))
         dc.Clear()
         if not self._pan_initialized:
             self._fit_view()
@@ -4336,7 +4336,7 @@ class BreadboardCanvas(wx.Panel):
                     dc.DrawText(label, int(mx) - tw // 2, int(my) - th // 2)
                 elif placed.type_id == 'R':
                     _dc_pts = [wx.Point(int(mx + x), int(my + y))
-                               for x, y in _resistor_body_pts(body_half, body_h)]
+                               for x, y in _resistor_body_poly(body_half, body_h)]
                     dc.DrawPolygon(_dc_pts)
                 else:
                     dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
@@ -4346,25 +4346,21 @@ class BreadboardCanvas(wx.Panel):
                     ohms = _parse_ohms(comp.value) if comp else None
                     bands = _resistor_bands(ohms) if ohms is not None else None
                     if bands:
-                        _taper_dc = min(5.0, body_half * 0.3)
-                        _flat_x = int(mx - body_half + _taper_dc)
-                        _flat_w = int(body_half * 2 - 2 * _taper_dc)
                         positions = [
-                            int(mx - body_half) + int(max(3, _taper_dc)),
-                            int(mx - body_half) + 9,
-                            int(mx - body_half) + 15,
-                            int(mx + body_half) - 8,
+                            -body_half + 3,
+                            -body_half + 9,
+                            -body_half + 15,
+                            body_half - 8,
                         ]
-                        dc.SetClippingRegion(_flat_x, by, _flat_w, int(body_h))
                         dc.SetPen(wx.Pen(wx.Colour(0, 0, 0, 0), 0))
-                        for band_x, bcolor in zip(positions, bands):
+                        for bx_pos, bcolor in zip(positions, bands):
+                            bh = _res_body_half_height(bx_pos + 2.5, body_half, body_h)
                             dc.SetBrush(wx.Brush(wx.Colour(bcolor)))
-                            dc.DrawRectangle(band_x, by + 1, 5, int(body_h) - 2)
-                        dc.DestroyClippingRegion()
+                            dc.DrawRectangle(int(mx + bx_pos), int(my - bh + 1), 5, int(2 * bh - 2))
                     dc.SetBrush(wx.TRANSPARENT_BRUSH)
                     dc.SetPen(wx.Pen(border_color, pen_w))
                     _dc_pts2 = [wx.Point(int(mx + x), int(my + y))
-                                for x, y in _resistor_body_pts(body_half, body_h)]
+                                for x, y in _resistor_body_poly(body_half, body_h)]
                     dc.DrawPolygon(_dc_pts2)
 
                 elif placed.type_id in ('D', 'D_Zener'):
@@ -5068,11 +5064,15 @@ class BreadboardCanvas(wx.Panel):
         if comp_def.type_id == 'C':
             gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
         elif comp_def.type_id == 'R':
-            _gpts = _resistor_body_pts(body_half, body_h)
             _grp = gc.CreatePath()
-            _grp.MoveToPoint(*_gpts[0])
-            for _gp in _gpts[1:]:
-                _grp.AddLineToPoint(*_gp)
+            _grp.MoveToPoint(-body_half, -_R_CAP)
+            _grp.AddCurveToPoint(-body_half, -body_h / 2,
+                                  body_half, -body_h / 2,
+                                  body_half, -_R_CAP)
+            _grp.AddLineToPoint(body_half, _R_CAP)
+            _grp.AddCurveToPoint(body_half, body_h / 2,
+                                  -body_half, body_h / 2,
+                                  -body_half, _R_CAP)
             _grp.CloseSubpath()
             gc.DrawPath(_grp)
         else:

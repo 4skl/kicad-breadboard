@@ -274,7 +274,7 @@ class BreadboardWindow(wx.Frame):
             sub = wx.StaticText(self._instr_panel, label=group_label)
             sub.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
                                 wx.FONTWEIGHT_NORMAL))
-            sub.SetForegroundColour('#555555')
+            sub.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
             instr_sizer.Add(sub, 0, wx.LEFT | wx.TOP, 8)
 
             grid = wx.FlexGridSizer(rows=len(probe_list), cols=3, vgap=3, hgap=4)
@@ -349,7 +349,7 @@ class BreadboardWindow(wx.Frame):
             k.SetFont(hk_font)
             d = wx.StaticText(tray_panel, label=desc)
             d.SetFont(hk_font)
-            d.SetForegroundColour('#444444')
+            d.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
             grid.Add(k, pos=(row, 0), flag=wx.ALIGN_RIGHT)
             grid.Add(d, pos=(row, 1))
             return row + 1
@@ -381,7 +381,7 @@ class BreadboardWindow(wx.Frame):
         def _info_link(label, url):
             lbl = wx.lib.stattext.GenStaticText(tray_panel, label=label)
             lbl.SetFont(info_font)
-            lbl.SetForegroundColour('#666666')
+            lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
             lbl.SetCursor(wx.Cursor(wx.CURSOR_HAND))
             lbl.Bind(wx.EVT_LEFT_DOWN, lambda _e: wx.LaunchDefaultBrowser(url))
             return lbl
@@ -389,7 +389,7 @@ class BreadboardWindow(wx.Frame):
         info_top = wx.lib.stattext.GenStaticText(tray_panel,
                                   label=f'\nRelease: {PLUGIN_VERSION}\nMade with \u2665 by')
         info_top.SetFont(info_font)
-        info_top.SetForegroundColour('#666666')
+        info_top.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
 
         info_sizer = wx.BoxSizer(wx.VERTICAL)
         info_sizer.Add(info_top, 0)
@@ -1789,7 +1789,7 @@ class SimPane(wx.Panel):
         self._board = board
         self.DestroyChildren()
         self._volt_ctrls = {}
-        self.SetBackgroundColour(wx.Colour(245, 245, 248))
+        self.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
 
         outer = wx.BoxSizer(wx.VERTICAL)
 
@@ -1817,7 +1817,7 @@ class SimPane(wx.Panel):
         src_lbl = wx.StaticText(self, label='Sources')
         src_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                 wx.FONTWEIGHT_BOLD))
-        src_lbl.SetForegroundColour(wx.Colour(90, 90, 100))
+        src_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
         body.Add(src_lbl, 0, wx.LEFT | wx.TOP, 8)
 
         _TC = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30'}
@@ -1832,7 +1832,7 @@ class SimPane(wx.Panel):
             net_lbl = wx.StaticText(self, label=net or '—')
             net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
                                     wx.FONTWEIGHT_NORMAL))
-            net_lbl.SetForegroundColour(wx.Colour(110, 110, 120))
+            net_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
             if term == 'GND' or not net:
                 fixed = wx.StaticText(self, label='0 V' if term == 'GND' else '')
                 fixed.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -1880,7 +1880,7 @@ class SimPane(wx.Panel):
                 tran_lbl = wx.StaticText(self, label='Transient Analysis')
                 tran_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                          wx.FONTWEIGHT_BOLD))
-                tran_lbl.SetForegroundColour(wx.Colour(90, 90, 100))
+                tran_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
                 body.Add(tran_lbl, 0, wx.LEFT | wx.TOP, 8)
 
                 for src in vsin_list:
@@ -1898,14 +1898,14 @@ class SimPane(wx.Panel):
                     )
                     info_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
                                              wx.FONTWEIGHT_NORMAL))
-                    info_lbl.SetForegroundColour(wx.Colour(110, 110, 120))
+                    info_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
                     body.Add(info_lbl, 0, wx.LEFT, 4)
 
                 # Oscilloscope channel status
                 ch_lbl = wx.StaticText(self, label='Channels')
                 ch_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                        wx.FONTWEIGHT_BOLD))
-                ch_lbl.SetForegroundColour(wx.Colour(90, 90, 100))
+                ch_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
                 body.Add(ch_lbl, 0, wx.LEFT | wx.TOP, 8)
 
                 ch_grid = wx.FlexGridSizer(cols=2, vgap=2, hgap=6)
@@ -1923,7 +1923,7 @@ class SimPane(wx.Panel):
                         net_lbl = wx.StaticText(self, label=net_name)
                         net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
                                                 wx.FONTWEIGHT_NORMAL))
-                        net_lbl.SetForegroundColour(wx.Colour(60, 60, 70))
+                        net_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT))
                     elif hole is not None:
                         ch_dot.SetForegroundColour(wx.Colour(meta['color']))
                         net_lbl = wx.StaticText(self, label='(no net)')
@@ -1935,7 +1935,7 @@ class SimPane(wx.Panel):
                         net_lbl = wx.StaticText(self, label='not placed')
                         net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
                                                 wx.FONTWEIGHT_NORMAL))
-                        net_lbl.SetForegroundColour(wx.Colour(160, 160, 160))
+                        net_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
                     ch_grid.Add(ch_dot,  0, wx.ALIGN_CENTRE_VERTICAL)
                     ch_grid.Add(net_lbl, 1, wx.ALIGN_CENTRE_VERTICAL | wx.EXPAND)
                 body.Add(ch_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
@@ -1948,7 +1948,7 @@ class SimPane(wx.Panel):
         self._result_label = wx.StaticText(self, label='Simulation output')
         self._result_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                            wx.FONTWEIGHT_NORMAL))
-        self._result_label.SetForegroundColour(wx.Colour(110, 110, 120))
+        self._result_label.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
         self._result_label.Hide()
         body.Add(self._result_label, 0, wx.LEFT | wx.TOP, 8)
         self._result_text = wx.TextCtrl(
@@ -1956,7 +1956,8 @@ class SimPane(wx.Panel):
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_NONE,
             size=(-1, 120),
         )
-        self._result_text.SetBackgroundColour(wx.Colour(232, 232, 240))
+        self._result_text.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
+        self._result_text.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT))
         self._result_text.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
                                           wx.FONTWEIGHT_NORMAL))
         self._result_text.Hide()
@@ -1967,7 +1968,6 @@ class SimPane(wx.Panel):
                                       style=wx.BORDER_NONE | wx.BU_LEFT)
         self._console_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                           wx.FONTWEIGHT_NORMAL))
-        self._console_btn.SetForegroundColour(wx.Colour(90, 90, 100))
         self._console_btn.Hide()
         self._console_btn.Bind(wx.EVT_BUTTON, self._on_console_toggle)
         body.Add(self._console_btn, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
@@ -2128,7 +2128,7 @@ class SimulationDialog(wx.Dialog):
             net_lbl = wx.StaticText(self, label=f'= {net or "(unassigned)"}')
             net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
                                     wx.FONTWEIGHT_NORMAL))
-            net_lbl.SetForegroundColour('#666666')
+            net_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
             if term == 'GND':
                 val_lbl = wx.StaticText(self, label='0 V  (fixed)')
                 grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
@@ -2154,7 +2154,7 @@ class SimulationDialog(wx.Dialog):
                   'inductors, diodes, LEDs, and BJTs are supported.')
         info.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
                              wx.FONTWEIGHT_NORMAL))
-        info.SetForegroundColour('#555555')
+        info.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
         sizer.Add(info, 0, wx.LEFT | wx.RIGHT, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
