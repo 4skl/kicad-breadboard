@@ -273,13 +273,37 @@ def _resistor_bands(ohms: float) -> Optional[Tuple[str, str, str, str]]:
 
 _R_END_HH = 6.5   # end-cap half-height (13 px full)
 _R_CAP_W  = 9.0   # end-cap width (each side inward from body edge)
-_R_MID_HH = 3.0   # middle bar half-height (6 px full, thinner than end caps)
-_R_CAP_R  = 5.5   # end-cap corner radius (pill-shaped when ≈ half-height)
+_R_MID_HH = 4.0   # middle bar half-height (8 px full)
+_R_CAP_R  = 4.0   # end-cap corner radius (must be < _R_CAP_W/2 = 4.5)
 
 
 def _res_body_half_height(x: float, body_half: float) -> float:
     """Half-height of the dumbbell resistor body at local x (origin at centre)."""
     return _R_END_HH if abs(x) > body_half - _R_CAP_W else _R_MID_HH
+
+
+def _make_res_path(gc, body_half: float):
+    """Outer contour of the dumbbell resistor shape as a single closed GraphicsPath."""
+    r, bh, cw, eh, mh = _R_CAP_R, body_half, _R_CAP_W, _R_END_HH, _R_MID_HH
+    p = gc.CreatePath()
+    p.MoveToPoint(-bh + r, -eh)
+    p.AddArc(-bh + r, -eh + r, r, -math.pi / 2, -math.pi, False)   # TL
+    p.AddLineToPoint(-bh, eh - r)
+    p.AddArc(-bh + r,  eh - r, r,  math.pi,      math.pi / 2, False)  # BL
+    p.AddLineToPoint(-bh + cw, eh)
+    p.AddLineToPoint(-bh + cw, mh)
+    p.AddLineToPoint( bh - cw, mh)
+    p.AddLineToPoint( bh - cw, eh)
+    p.AddLineToPoint( bh - r,  eh)
+    p.AddArc( bh - r,  eh - r, r,  math.pi / 2,  0,           False)  # BR
+    p.AddLineToPoint( bh, -eh + r)
+    p.AddArc( bh - r, -eh + r, r,  0,            -math.pi / 2, False)  # TR
+    p.AddLineToPoint( bh - cw, -eh)
+    p.AddLineToPoint( bh - cw, -mh)
+    p.AddLineToPoint(-bh + cw, -mh)
+    p.AddLineToPoint(-bh + cw, -eh)
+    p.CloseSubpath()
+    return p
 
 
 # ---------------------------------------------------------------------------
@@ -4232,13 +4256,9 @@ class BreadboardCanvas(wx.Panel):
                     lw, lh = gc.GetTextExtent(label)
                     gc.DrawText(label, -lw / 2, -lh / 2)
                 elif placed.type_id == 'R':
-                    # Dumbbell: two pill-shaped end caps + thin middle bar
-                    gc.DrawRoundedRectangle(-body_half, -_R_END_HH,
-                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
-                    gc.DrawRectangle(-body_half + _R_CAP_W, -_R_MID_HH,
-                                     2 * (body_half - _R_CAP_W), 2 * _R_MID_HH)
-                    gc.DrawRoundedRectangle(body_half - _R_CAP_W, -_R_END_HH,
-                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
+                    _rp = _make_res_path(gc, body_half)
+                    gc.FillPath(_rp)
+                    gc.StrokePath(_rp)
                 else:
                     gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
@@ -4259,13 +4279,10 @@ class BreadboardCanvas(wx.Panel):
                             bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
                             gc.DrawRectangle(bx_pos, -bh + 1, 5, 2 * bh - 2)
-                    # Redraw border on top to clean up band overflow at shape edges
+                    # Redraw outer border on top to clean up band overflow at edges
                     gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-                    gc.DrawRoundedRectangle(-body_half, -_R_END_HH,
-                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
-                    gc.DrawRoundedRectangle(body_half - _R_CAP_W, -_R_END_HH,
-                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
+                    gc.StrokePath(_rp)
 
                 elif placed.type_id in ('D', 'D_Zener'):
                     # Cathode stripe: a path shaped like the left slice of the rounded
@@ -5038,7 +5055,7 @@ class BreadboardCanvas(wx.Panel):
             gc.DrawEllipse(-button_r_pb, -button_r_pb, button_r_pb * 2, button_r_pb * 2)
             return
 
-        body_half = max(length * 0.25, 8.0)
+        body_half = min(max(length * 0.25, 8.0), 1.25 * PITCH)
 
         bx1, by1 = mx - ux * body_half, my - uy * body_half
         bx2, by2 = mx + ux * body_half, my + uy * body_half
@@ -5059,10 +5076,7 @@ class BreadboardCanvas(wx.Panel):
         if comp_def.type_id == 'C':
             gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
         elif comp_def.type_id == 'R':
-            gc.DrawRoundedRectangle(-body_half, -_R_END_HH, _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
-            gc.DrawRectangle(-body_half + _R_CAP_W, -_R_MID_HH,
-                             2 * (body_half - _R_CAP_W), 2 * _R_MID_HH)
-            gc.DrawRoundedRectangle(body_half - _R_CAP_W, -_R_END_HH, _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
+            gc.DrawPath(_make_res_path(gc, body_half))
         else:
             gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
