@@ -31,6 +31,7 @@ class Preferences:
     psu_channels: int = 3              # number of PSU channels shown (1, 2, or 3)
     show_net_labels: bool = True       # show signal net labels on the board
     show_binding_posts: bool = True    # draw binding-post terminals on the board
+    num_terminals: int = 3             # number of binding-post terminals shown (2, 3, or 4)
     export_format: str = 'png'         # 'png' or 'svg'
     board_layout: str = 'full'         # 'mini', 'half', 'full', 'double', 'triple'
     binding_post_side: str = 'left'    # 'left', 'right', 'top', 'bottom'

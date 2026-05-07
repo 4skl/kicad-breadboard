@@ -45,7 +45,7 @@ VERT_RAIL_LEN_PER_SECTION = 20                  # holes per section on vertical 
 ALL_RAIL_NAMES = RAIL_NAMES + VERT_RAIL_NAMES + VERT_RAIL_NAMES_RIGHT
 RAIL_LEN = 50       # holes per rail: 25 left + 25 right (10 groups of 5)
 RAIL_SPLIT = 25     # rails are split into two electrically separate halves here
-TERMINAL_NAMES = ('GND', 'V1', 'V2')
+TERMINAL_NAMES = ('GND', 'V1', 'V2', 'V3')
 
 # Derived per-layout constants
 _LAYOUT_PARAMS: Dict[str, Tuple[int, int]] = {
@@ -188,6 +188,7 @@ class Wire:
     h1: Hole
     h2: Hole
     color: str = '#e8c020'  # default jumper wire yellow
+    mid_point: Optional[Tuple[int, int]] = None  # bend point in canvas px, or None for straight
 
 
 class Breadboard:

@@ -437,7 +437,7 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
     vsin_sources = find_vsin_sources(netlist)
     net_to_vsin: Dict[str, VsinSource] = {src.net_pos: src for src in vsin_sources}
 
-    for term in ('V1', 'V2'):
+    for term in ('V1', 'V2', 'V3'):
         net_name = board.terminal_nets.get(term, '')
         if not net_name:
             continue
@@ -498,7 +498,7 @@ def _build_transient_netlist(
 
     lines: List[str] = ['* Breadboard SPICE transient netlist', ''] + comp_lines + ['']
 
-    for term in ('V1', 'V2'):
+    for term in ('V1', 'V2', 'V3'):
         net_name = board.terminal_nets.get(term, '')
         if not net_name:
             continue

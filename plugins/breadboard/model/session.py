@@ -99,11 +99,14 @@ def save_session(board: Breadboard, netlist_path: Optional[str], path: str,
         doc['placements'].append(entry)
 
     for wire in board.wires:
-        doc['wires'].append({
+        entry = {
             'h1': _hole_to_json(wire.h1),
             'h2': _hole_to_json(wire.h2),
             'color': wire.color,
-        })
+        }
+        if wire.mid_point:
+            entry['mid'] = list(wire.mid_point)
+        doc['wires'].append(entry)
 
     probes = {}
     for name in PROBE_NAMES:
@@ -181,7 +184,10 @@ def load_session(path: str) -> Dict[str, Any]:
         board.place(placed)
 
     for w in raw.get('wires', []):
-        board.add_wire(_hole_from_json(w['h1']), _hole_from_json(w['h2']), w.get('color', '#e8c020'))
+        wire = board.add_wire(_hole_from_json(w['h1']), _hole_from_json(w['h2']), w.get('color', '#e8c020'))
+        mid = w.get('mid')
+        if mid and len(mid) == 2:
+            wire.mid_point = (int(mid[0]), int(mid[1]))
 
     for name, info in raw.get('probes', {}).items():
         if name in PROBE_NAMES:

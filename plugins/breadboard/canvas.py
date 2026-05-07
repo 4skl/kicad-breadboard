@@ -130,6 +130,7 @@ TERM_COLORS = {
     'GND': ('#3a3a3a', '#707070'),   # (body colour, highlight ring colour)
     'V1':  ('#bb2020', '#ee7070'),
     'V2':  ('#1a7a30', '#55bb66'),
+    'V3':  ('#1a5a8a', '#4499cc'),
 }
 
 WIRE_COLORS = [
@@ -273,7 +274,7 @@ def _resistor_bands(ohms: float) -> Optional[Tuple[str, str, str, str]]:
 
 _R_END_HH = 6.5   # end-cap half-height (13 px full)
 _R_CAP_W  = 9.0   # end-cap width (each side inward from body edge)
-_R_MID_HH = 4.0   # middle bar half-height (8 px full)
+_R_MID_HH = 4.5   # middle bar half-height (9 px full)
 _R_CAP_R  = 4.0   # end-cap corner radius (must be < _R_CAP_W/2 = 4.5)
 
 
@@ -285,23 +286,28 @@ def _res_body_half_height(x: float, body_half: float) -> float:
 def _make_res_path(gc, body_half: float):
     """Outer contour of the dumbbell resistor shape as a single closed GraphicsPath."""
     r, bh, cw, eh, mh = _R_CAP_R, body_half, _R_CAP_W, _R_END_HH, _R_MID_HH
+    # S-curve width at each cap↔bar junction — capped so it fits between the end-cap
+    # corner arc and the far edge of the middle bar.
+    S = max(0.0, min((eh - mh) * 2.0, bh - cw - r))
     p = gc.CreatePath()
     p.MoveToPoint(-bh + r, -eh)
     p.AddArc(-bh + r, -eh + r, r, -math.pi / 2, -math.pi, False)   # TL
     p.AddLineToPoint(-bh, eh - r)
     p.AddArc(-bh + r,  eh - r, r,  math.pi,      math.pi / 2, False)  # BL
-    p.AddLineToPoint(-bh + cw, eh)
-    p.AddLineToPoint(-bh + cw, mh)
-    p.AddLineToPoint( bh - cw, mh)
-    p.AddLineToPoint( bh - cw, eh)
+    # Bottom: cap → S-curve → bar → S-curve → cap
+    p.AddLineToPoint(-bh + cw - S, eh)
+    p.AddCurveToPoint(-bh + cw, eh,  -bh + cw, mh,  -bh + cw + S, mh)
+    p.AddLineToPoint( bh - cw - S, mh)
+    p.AddCurveToPoint( bh - cw, mh,   bh - cw, eh,   bh - cw + S, eh)
     p.AddLineToPoint( bh - r,  eh)
     p.AddArc( bh - r,  eh - r, r,  math.pi / 2,  0,           False)  # BR
     p.AddLineToPoint( bh, -eh + r)
     p.AddArc( bh - r, -eh + r, r,  0,            -math.pi / 2, False)  # TR
-    p.AddLineToPoint( bh - cw, -eh)
-    p.AddLineToPoint( bh - cw, -mh)
-    p.AddLineToPoint(-bh + cw, -mh)
-    p.AddLineToPoint(-bh + cw, -eh)
+    # Top: cap → S-curve → bar → S-curve → cap
+    p.AddLineToPoint( bh - cw + S, -eh)
+    p.AddCurveToPoint( bh - cw, -eh,   bh - cw, -mh,   bh - cw - S, -mh)
+    p.AddLineToPoint(-bh + cw + S, -mh)
+    p.AddCurveToPoint(-bh + cw, -mh,  -bh + cw, -eh,  -bh + cw - S, -eh)
     p.CloseSubpath()
     return p
 
@@ -319,7 +325,8 @@ class CanvasLayout:
     """
 
     def __init__(self, board_layout: str = 'full', binding_post_side: str = 'left',
-                 show_branding: bool = False, rail_split: bool = True):
+                 show_branding: bool = False, rail_split: bool = True,
+                 num_terminals: int = 3):
         # Normalize legacy 'top'/'bottom' → 'top_right'/'bottom_right'
         if binding_post_side == 'top':    binding_post_side = 'top_right'
         if binding_post_side == 'bottom': binding_post_side = 'bottom_right'
@@ -411,13 +418,14 @@ class CanvasLayout:
             term_cx = board_right + TERM_R + _POST_BOARD_GAP
 
         # --- Binding post positions ---
-        n = len(TERMINAL_NAMES)
+        _active_terminals = TERMINAL_NAMES[:max(2, min(num_terminals, len(TERMINAL_NAMES)))]
+        n = len(_active_terminals)
         if _is_horiz:
             v_margin = int(self.total_height * 0.18)
             spacing  = (self.total_height - 2 * v_margin) // max(1, n - 1)
             self._term_pos = {
                 name: (term_cx, v_margin + i * spacing)
-                for i, name in enumerate(TERMINAL_NAMES)
+                for i, name in enumerate(_active_terminals)
             }
         else:
             h_spacing = TERM_R * 3 + 12
@@ -431,7 +439,7 @@ class CanvasLayout:
                      else (self.total_height - bot_extra + MARGIN // 2 + TERM_R + 4)
             self._term_pos = {
                 name: (start_x + i * h_spacing, term_y)
-                for i, name in enumerate(TERMINAL_NAMES)
+                for i, name in enumerate(_active_terminals)
             }
 
         # Legacy _term_y for any code still using it
@@ -960,6 +968,11 @@ class BreadboardCanvas(wx.Panel):
         self._drag_comp: Optional[str] = None        # ref being repositioned on board
         self._drag_offset: Tuple[int, int] = (0, 0)  # mouse offset from pin-1 hole
 
+        self._wire_bend_drag: bool = False            # currently dragging a wire bend handle
+        self._wire_bend_candidate: Optional[Wire] = None  # wire that may start a bend drag
+        self._wire_bend_start_mouse: Tuple[int, int] = (0, 0)
+        self._wire_bend_pre_snap: Optional[dict] = None
+
         self._pin_drag_ref:  Optional[str]  = None   # ref whose pin is being repositioned
         self._pin_drag_num:  Optional[int]  = None   # which pin number is being dragged
         self._pin_drag_hole: Optional[Hole] = None   # current snap target for that pin
@@ -1137,7 +1150,8 @@ class BreadboardCanvas(wx.Panel):
                 for ref, p in b.placements.items()
             ],
             'wires': [
-                {'h1': _hole_to_json(w.h1), 'h2': _hole_to_json(w.h2), 'color': w.color}
+                {'h1': _hole_to_json(w.h1), 'h2': _hole_to_json(w.h2), 'color': w.color,
+                 **({'mid': list(w.mid_point)} if w.mid_point else {})}
                 for w in b.wires
             ],
             'probes': {
@@ -1177,7 +1191,9 @@ class BreadboardCanvas(wx.Panel):
                 led_color=p.get('led_color', ''),
             ))
         for w in snap.get('wires', []):
-            b.add_wire(_hole_from_json(w['h1']), _hole_from_json(w['h2']), w['color'])
+            wire = b.add_wire(_hole_from_json(w['h1']), _hole_from_json(w['h2']), w['color'])
+            if 'mid' in w and len(w['mid']) == 2:
+                wire.mid_point = (int(w['mid'][0]), int(w['mid'][1]))
         for name, info in snap.get('probes', {}).items():
             if info.get('hole'):
                 b.place_probe(name, _hole_from_json(info['hole']))
@@ -1784,6 +1800,14 @@ class BreadboardCanvas(wx.Panel):
                 if wire:
                     self._selected_ann_idx = None
                     self.SetFocus()
+                    # Track for potential bend drag
+                    self._wire_bend_candidate = wire
+                    self._wire_bend_start_mouse = (px, py)
+                    self._wire_bend_pre_snap = self._board_snapshot()
+                    # Capture at mouse-down so the SplitterWindow sash never
+                    # receives stray events during the drag.
+                    if not self.HasCapture():
+                        self.CaptureMouse()
                 else:
                     # Check resize handles of currently selected annotation first
                     h_idx = None
@@ -1817,6 +1841,12 @@ class BreadboardCanvas(wx.Panel):
             thumb_ch = self._transient_thumb_at(px, py)
             if thumb_ch and self.on_transient_dclick:
                 self.on_transient_dclick(thumb_ch)
+                return
+            wire = self._wire_at(px, py)
+            if wire and wire.mid_point:
+                self.push_undo()
+                wire.mid_point = None
+                self.Refresh()
                 return
             ann_idx = self._ann_at(px, py)
             if ann_idx is not None:
@@ -1911,6 +1941,27 @@ class BreadboardCanvas(wx.Panel):
             self._dragging_probe_label = None
             self.Refresh()
             return
+        if self._wire_bend_drag:
+            if self.HasCapture():
+                self.ReleaseMouse()
+            self._wire_bend_drag = False
+            self._wire_bend_candidate = None
+            if self._wire_bend_pre_snap is not None:
+                cur = self._board_snapshot()
+                if self._wire_bend_pre_snap != cur:
+                    self._undo_stack.append(self._wire_bend_pre_snap)
+                    if len(self._undo_stack) > 50:
+                        self._undo_stack.pop(0)
+                    self._redo_stack.clear()
+                    self._notify_history()
+                self._wire_bend_pre_snap = None
+            self.Refresh()
+            return
+        # Clear bend candidate on any mouse-up (click without drag)
+        if self._wire_bend_candidate and self.HasCapture():
+            self.ReleaseMouse()
+        self._wire_bend_candidate = None
+        self._wire_bend_pre_snap = None
         if self._drag_ann_idx is not None:
             if self._drag_ann_pre_snap is not None:
                 cur = self._board_snapshot()
@@ -2097,6 +2148,27 @@ class BreadboardCanvas(wx.Panel):
                 my = int(py - self._drag_offset[1])
                 self.board.set_module_position(self._drag_comp, mx, my)
                 self._sync_module_pins(self._drag_comp)
+            elif comp_def and comp_def.pin_count >= 3 and not comp_def.is_dip:
+                # Live snap for TO-92: move all legs together during drag
+                tpx = px - self._drag_offset[0]
+                tpy = py - self._drag_offset[1]
+                new_anchor = self.layout.nearest_hole(tpx, tpy)
+                if isinstance(new_anchor, TieHole):
+                    try:
+                        p.pin_holes = comp_def.place(new_anchor, flipped=p.flipped)
+                    except (AssertionError, IndexError, KeyError):
+                        pass
+            self.Refresh()
+            return
+
+        # Wire bend drag: upgrade candidate to active drag once mouse moves enough
+        if self._wire_bend_candidate and not self._wire_bend_drag:
+            dx = px - self._wire_bend_start_mouse[0]
+            dy = py - self._wire_bend_start_mouse[1]
+            if dx * dx + dy * dy > 16:
+                self._wire_bend_drag = True
+        if self._wire_bend_drag and self._selected_wire is not None:
+            self._selected_wire.mid_point = (int(px), int(py))
             self.Refresh()
             return
 
@@ -2229,6 +2301,9 @@ class BreadboardCanvas(wx.Panel):
             if comp_def and comp_def.is_module:
                 # Use generous padding to cover the full board body, not just GPIO pins
                 pad_x, pad_y = 90, 120
+            elif comp_def and comp_def.pin_count >= 3 and not comp_def.is_dip:
+                # TO-92 dome extends r_body=12px beyond the pin row
+                pad_x, pad_y = 6, 14
             else:
                 pad_x, pad_y = 6, 10
             if (min(xs) - pad_x <= px <= max(xs) + pad_x and
@@ -2270,7 +2345,12 @@ class BreadboardCanvas(wx.Panel):
             xy2 = self.layout.hole_xy(w.h2)
             if xy1 is None or xy2 is None:
                 continue
-            d = _point_to_segment_dist(px, py, xy1[0], xy1[1], xy2[0], xy2[1])
+            if w.mid_point:
+                mid = w.mid_point
+                d = min(_point_to_segment_dist(px, py, xy1[0], xy1[1], mid[0], mid[1]),
+                        _point_to_segment_dist(px, py, mid[0], mid[1], xy2[0], xy2[1]))
+            else:
+                d = _point_to_segment_dist(px, py, xy1[0], xy1[1], xy2[0], xy2[1])
             if d < TOLERANCE and d < best_d:
                 best_d = d
                 best_wire = w
@@ -2858,6 +2938,17 @@ class BreadboardCanvas(wx.Panel):
                         yield ((int(x1 + t0 * dx), int(y1 + t0 * dy)),
                                (int(x1 + t1 * dx), int(y1 + t1 * dy)))
 
+    def _wire_points(self, wire, xy1, xy2):
+        """Return list of (x, y) points for drawing: 2 if straight, 3 if bent."""
+        if wire.mid_point:
+            return [xy1, wire.mid_point, xy2]
+        return [xy1, xy2]
+
+    def _draw_wire_polyline(self, dc: wx.DC, pts, pen: wx.Pen) -> None:
+        dc.SetPen(pen)
+        for i in range(len(pts) - 1):
+            dc.DrawLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+
     def _draw_wires(self, dc: wx.DC) -> None:
         lay = self.layout
         # Net-highlight halo: draw a fat cyan line behind each wire on the highlighted net
@@ -2868,35 +2959,41 @@ class BreadboardCanvas(wx.Panel):
                     xy1 = lay.hole_xy(wire.h1)
                     xy2 = lay.hole_xy(wire.h2)
                     if xy1 and xy2:
-                        dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
+                        pts = self._wire_points(wire, xy1, xy2)
+                        self._draw_wire_polyline(dc, pts, dc.GetPen())
         for wire in self.board.wires:
             xy1 = lay.hole_xy(wire.h1)
             xy2 = lay.hole_xy(wire.h2)
             if xy1 is None or xy2 is None:
                 continue
+            pts = self._wire_points(wire, xy1, xy2)
             selected = (wire is self._selected_wire)
             delete_hover = (wire is self._hover_wire)
             width = 5 if selected else 3
             color = '#ffffff' if selected else wire.color
-            # White border only on rail-crossing segments for contrast
-            if not selected and not delete_hover:
+            # White border only on rail-crossing segments for contrast (straight wires only)
+            if not selected and not delete_hover and not wire.mid_point:
                 dc.SetPen(wx.Pen(wx.Colour('#ffffff'), 5))
                 for s1, s2 in self._rail_crossing_segments(xy1, xy2):
                     dc.DrawLine(s1[0], s1[1], s2[0], s2[1])
             # Selection / delete-hover halo
             if selected:
-                dc.SetPen(wx.Pen(wx.Colour(wire.color), 7))
-                dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
+                self._draw_wire_polyline(dc, pts, wx.Pen(wx.Colour(wire.color), 7))
             elif delete_hover:
-                dc.SetPen(wx.Pen(wx.Colour('#ff4444'), 7))
-                dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
-            dc.SetPen(wx.Pen(wx.Colour(color), width))
-            dc.DrawLine(xy1[0], xy1[1], xy2[0], xy2[1])
+                self._draw_wire_polyline(dc, pts, wx.Pen(wx.Colour('#ff4444'), 7))
+            self._draw_wire_polyline(dc, pts, wx.Pen(wx.Colour(color), width))
             # End dots
             dc.SetBrush(wx.Brush(color))
             dc.SetPen(wx.Pen(color, 1))
             dc.DrawCircle(xy1[0], xy1[1], 4)
             dc.DrawCircle(xy2[0], xy2[1], 4)
+            # Bend handle: show on selected wire
+            if selected:
+                hx, hy = wire.mid_point if wire.mid_point else (
+                    (xy1[0] + xy2[0]) // 2, (xy1[1] + xy2[1]) // 2)
+                dc.SetBrush(wx.Brush(wx.Colour('#ffffff')))
+                dc.SetPen(wx.Pen(wx.Colour(wire.color), 2))
+                dc.DrawCircle(hx, hy, 5)
 
     def _draw_components(self, dc: wx.DC) -> None:
         for ref, placed in self.board.placements.items():
@@ -4278,7 +4375,7 @@ class BreadboardCanvas(wx.Panel):
                         for bx_pos, bcolor in zip(positions, bands):
                             bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
-                            gc.DrawRectangle(bx_pos, -bh + 1, 5, 2 * bh - 2)
+                            gc.DrawRectangle(bx_pos, -bh, 5, 2 * bh)
                     # Redraw outer border on top to clean up band overflow at edges
                     gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
@@ -4347,7 +4444,7 @@ class BreadboardCanvas(wx.Panel):
                         for bx_pos, bcolor in zip(positions, bands):
                             bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             dc.SetBrush(wx.Brush(wx.Colour(bcolor)))
-                            dc.DrawRectangle(int(mx + bx_pos), int(my - bh + 1), 5, int(2 * bh - 2))
+                            dc.DrawRectangle(int(mx + bx_pos), int(my - bh), 5, int(2 * bh))
                     dc.SetBrush(wx.TRANSPARENT_BRUSH)
                     dc.SetPen(wx.Pen(border_color, pen_w))
                     dc.DrawRoundedRectangle(int(mx - body_half), int(my - _R_END_HH),
@@ -5279,6 +5376,10 @@ class BreadboardCanvas(wx.Panel):
             tw, th = dc.GetTextExtent(label)
             bx = cx + 4
             by = cy - th - 5
+
+            # Indicator line from the measured hole to the label
+            dc.SetPen(wx.Pen('#1a1a6a', 1))
+            dc.DrawLine(cx, cy, bx, by + th + 2)
 
             dc.SetBrush(wx.Brush('#1a1a6a'))
             dc.SetPen(wx.Pen('#1a1a6a', 0))

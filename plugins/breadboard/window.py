@@ -85,10 +85,46 @@ _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan
 _WIRE_COLOR_LABELS = ['Auto'] + _WIRE_COLOR_NAMES
 
 _KICAD_ICON_ARCHIVE = '/usr/share/kicad/resources/images.tar.gz'
+_ICONS_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / 'kicad_icons' / 'images'
 _icon_cache: dict = {}
 
+
+_DARK_PANEL_COLOUR = wx.Colour(0x47, 0x47, 0x47)
+
+
+def _is_dark_mode() -> bool:
+    bg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE)
+    return (int(bg.Red()) + int(bg.Green()) + int(bg.Blue())) < 382
+
+
+def _panel_bg() -> wx.Colour:
+    return _DARK_PANEL_COLOUR if _is_dark_mode() else wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE)
+
+
+def _local_icon(name: str, size: int = 24) -> 'wx.Bitmap':
+    """Load a PNG from kicad_icons/images/ and scale to size×size."""
+    path = _ICONS_IMAGES_DIR / name
+    try:
+        img = wx.Image(str(path), wx.BITMAP_TYPE_PNG)
+        if img.GetWidth() != size or img.GetHeight() != size:
+            img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
+        return wx.Bitmap(img)
+    except Exception:
+        return wx.NullBitmap
+
+
 def _kicad_icon(name: str) -> 'wx.Bitmap':
-    """Load a 24×24 PNG from the KiCad icon archive; returns NullBitmap on any error."""
+    """Load a 24×24 PNG from the KiCad icon archive.
+
+    In dark mode, automatically tries the _dark_ variant first
+    (e.g. save_24.png → save_dark_24.png).
+    Returns NullBitmap on any error.
+    """
+    import re as _re
+    if _is_dark_mode():
+        dark_name = _re.sub(r'_(\d+\.png)$', r'_dark_\1', name)
+        if dark_name != name:
+            name = dark_name
     if name in _icon_cache:
         return _icon_cache[name]
     import io, tarfile
@@ -180,6 +216,7 @@ class BreadboardWindow(wx.Frame):
 
         # --- Left panel: component tray only ---
         left_panel = wx.Panel(main_panel)
+        left_panel.SetBackgroundColour(_panel_bg())
         left_panel.SetMinSize((130, -1))
         left_sizer = wx.BoxSizer(wx.VERTICAL)
         comp_label = wx.StaticText(left_panel, label='Components')
@@ -211,7 +248,7 @@ class BreadboardWindow(wx.Frame):
 
         # --- Right panel: binding posts, instruments, hotkeys ---
         tray_panel = wx.Panel(inner_splitter)
-        tray_panel.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
+        tray_panel.SetBackgroundColour(_panel_bg())
         tray_sizer = wx.BoxSizer(wx.VERTICAL)
 
         # --- Binding-post assignment section ---
@@ -223,21 +260,27 @@ class BreadboardWindow(wx.Frame):
                                    wx.FONTWEIGHT_BOLD))
         binding_sizer.Add(term_label, 0, wx.LEFT | wx.TOP | wx.RIGHT, 6)
 
-        _TERM_COLORS = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30'}
+        _TERM_COLORS = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30', 'V3': '#1a5a8a'}
         self._term_choices: dict = {}
-        term_grid = wx.FlexGridSizer(rows=3, cols=2, vgap=4, hgap=6)
-        term_grid.AddGrowableCol(1)
-        for name in ('GND', 'V1', 'V2'):
-            lbl = wx.StaticText(self._binding_panel, label=name)
+        self._term_row_panels: dict = {}
+        term_rows_sizer = wx.BoxSizer(wx.VERTICAL)
+        for name in ('GND', 'V1', 'V2', 'V3'):
+            row = wx.Panel(self._binding_panel)
+            row_sz = wx.BoxSizer(wx.HORIZONTAL)
+            lbl = wx.StaticText(row, label=name)
             lbl.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                 wx.FONTWEIGHT_BOLD))
             lbl.SetForegroundColour(_TERM_COLORS[name])
-            ch = wx.Choice(self._binding_panel, choices=['(unassigned)'])
+            ch = wx.Choice(row, choices=['(unassigned)'])
             ch.SetSelection(0)
             self._term_choices[name] = ch
-            term_grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
-            term_grid.Add(ch, 1, wx.EXPAND)
-        binding_sizer.Add(term_grid, 0, wx.EXPAND | wx.ALL, 6)
+            row_sz.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 6)
+            row_sz.Add(ch, 1, wx.EXPAND)
+            row.SetSizer(row_sz)
+            term_rows_sizer.Add(row, 0, wx.EXPAND | wx.BOTTOM, 4)
+            self._term_row_panels[name] = row
+        binding_sizer.Add(term_rows_sizer, 0, wx.EXPAND | wx.ALL, 6)
+        self._term_rows_sizer = term_rows_sizer
         self._binding_panel.SetSizer(binding_sizer)
         tray_sizer.Add(self._binding_panel, 0, wx.EXPAND)
 
@@ -453,19 +496,9 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Highlight net — click a hole to show its connections', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
-        # --- Wiring / connectivity tools ---
+        # --- Wiring ---
         vt.AddTool(ID_WIRE, 'Wire', _kicad_icon('add_line_24.png'),
                    shortHelp='Draw jumper wire  [W]', kind=wx.ITEM_CHECK)
-        vt.AddTool(ID_NOCONN, 'No Connect', _kicad_icon('noconn_24.png'),
-                   shortHelp='No-connect marker (coming soon)', kind=wx.ITEM_CHECK)
-        vt.AddTool(ID_ADD_LABEL, 'Net Label', _kicad_icon('add_label_24.png'),
-                   shortHelp='Place net label (coming soon)', kind=wx.ITEM_CHECK)
-        vt.AddTool(ID_ADD_GLABEL, 'Global Label', _kicad_icon('add_glabel_24.png'),
-                   shortHelp='Global label / terminal assign (coming soon)', kind=wx.ITEM_CHECK)
-        vt.AddTool(ID_ADD_POWER, 'Power Symbol', _kicad_icon('add_power_24.png'),
-                   shortHelp='Connect to power rail (coming soon)', kind=wx.ITEM_CHECK)
-        vt.AddTool(ID_ADD_JUNCTION, 'Junction', _kicad_icon('add_junction_24.png'),
-                   shortHelp='Add wire junction (coming soon)', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
         # --- Annotation drawing tools ---
@@ -489,18 +522,8 @@ class BreadboardWindow(wx.Frame):
         # --- Delete ---
         vt.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png'),
                    shortHelp='Delete component, wire, or annotation  [D]', kind=wx.ITEM_CHECK)
-        vt.AddSeparator()
-
-        # --- Measurement (placeholder) ---
-        vt.AddTool(ID_MEASURE, 'Measure', _kicad_icon('measurement_24.png'),
-                   shortHelp='Measurement tool (coming soon)', kind=wx.ITEM_CHECK)
 
         vt.Realize()
-
-        # Disable placeholder tools until implemented
-        for _id in (ID_NOCONN, ID_ADD_LABEL, ID_ADD_GLABEL,
-                    ID_ADD_POWER, ID_ADD_JUNCTION, ID_MEASURE):
-            vt.EnableTool(_id, False)
 
         # Reflect initial mode (SELECT)
         vt.ToggleTool(ID_SELECT, True)
@@ -536,25 +559,31 @@ class BreadboardWindow(wx.Frame):
 
     def _build_toolbar(self) -> None:
         tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_TEXT)
-        tb.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
-        tb.SetToolBitmapSize((24, 24))
+        tb.SetBackgroundColour(_panel_bg())
+        tb.SetToolBitmapSize((20, 20))
 
-        # File
+        # File + prefs
         tb.AddTool(ID_OPEN, 'Open', _kicad_icon('directory_open_24.png'),
                    shortHelp='Open a KiCad netlist (.net)  [Ctrl+O]')
         tb.AddTool(ID_SAVE, 'Save', _kicad_icon('save_24.png'),
                    shortHelp='Save current session (.kicad_bbrd)  [Ctrl+S]')
+        _export_icon = ('export_svg_24.png' if self.prefs.export_format == 'svg'
+                        else 'export_png_24.png')
+        tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon),
+                   shortHelp='Save the breadboard as an image')
+        tb.AddTool(ID_PREFS, 'Preferences', _local_icon('preficon.png'),
+                   shortHelp='Open preferences')
         tb.AddSeparator()
 
-        # Edit history
+        # Edit history + clear
         tb.AddTool(ID_UNDO, 'Undo', _kicad_icon('undo_24.png'),
-                   shortHelp='Undo  (not yet available)')
+                   shortHelp='Undo  [Ctrl+Z]')
         tb.AddTool(ID_REDO, 'Redo', _kicad_icon('redo_24.png'),
-                   shortHelp='Redo  (not yet available)')
+                   shortHelp='Redo  [Ctrl+Y]')
         _clear_icon = wx.NullBitmap
         try:
             _img = wx.Image(str(_RESOURCES / 'icon.png'), wx.BITMAP_TYPE_PNG)
-            _img.Rescale(24, 24, wx.IMAGE_QUALITY_HIGH)
+            _img.Rescale(20, 20, wx.IMAGE_QUALITY_HIGH)
             _clear_icon = wx.Bitmap(_img)
         except Exception:
             pass
@@ -571,6 +600,15 @@ class BreadboardWindow(wx.Frame):
                    shortHelp='Fit board in view  [Ctrl+Home]')
         tb.AddSeparator()
 
+        # Schematic sync
+        _update_icon_name = ('update_bbrd_from_sch_dark_64.png' if _is_dark_mode()
+                             else 'update_bbrd_from_sch_64.png')
+        tb.AddTool(ID_UPDATE, 'Update', _local_icon(_update_icon_name),
+                   shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
+        tb.AddTool(ID_EESCHEMA, 'Schematic', _kicad_icon('icon_eeschema_24_24.png'),
+                   shortHelp='Open schematic in Eeschema')
+        tb.AddSeparator()
+
         # Interaction modes
         tb.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png'),
                    shortHelp='Select and move placed components  [Esc]',
@@ -585,30 +623,18 @@ class BreadboardWindow(wx.Frame):
             'Wire colour — Auto cycles through colours each wire; pick one to fix it.')
         self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
         tb.AddControl(self._wire_color_choice)
-        tb.AddSeparator()
         tb.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png'),
                    shortHelp='Delete a component or wire  [D]',
                    kind=wx.ITEM_CHECK)
         tb.AddSeparator()
 
-        # Schematic
-        tb.AddTool(ID_UPDATE, 'Update', _kicad_icon('update_pcb_from_sch_24.png'),
-                   shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
-        tb.AddTool(ID_EESCHEMA, 'Schematic', _kicad_icon('icon_eeschema_24_24.png'),
-                   shortHelp='Open schematic in Eeschema')
-        tb.AddSeparator()
-
-        # Validate, simulate, and export
+        # Validate / simulate / clear labels
         tb.AddTool(ID_VALIDATE, 'Validate', _kicad_icon('erc_24.png'),
                    shortHelp='Check if your circuit matches the schematic')
-        tb.AddTool(ID_CLEAR_WARNINGS, 'Clear ERC', _kicad_icon('ercwarn_24.png'),
-                   shortHelp='Dismiss validation warning/short markers')
         tb.AddTool(ID_SIMULATE, 'Simulate', _kicad_icon('simulator_24.png'),
                    shortHelp='Run SPICE DC simulation via ngspice')
-        _export_icon = ('export_svg_24.png' if self.prefs.export_format == 'svg'
-                        else 'export_png_24.png')
-        tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon),
-                   shortHelp='Save the breadboard as an image')
+        tb.AddTool(ID_CLEAR_WARNINGS, 'Clear Labels', _kicad_icon('ercwarn_24.png'),
+                   shortHelp='Dismiss validation warning/short markers')
 
         tb.Realize()
 
@@ -643,6 +669,7 @@ class BreadboardWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, lambda _: self.canvas.undo(), id=ID_UNDO)
         self.Bind(wx.EVT_TOOL, lambda _: self.canvas.redo(), id=ID_REDO)
         self.Bind(wx.EVT_MENU, self._on_prefs,          id=ID_PREFS)
+        self.Bind(wx.EVT_TOOL, self._on_prefs,          id=ID_PREFS)
         self.Bind(wx.EVT_MENU, self._on_check_updates,  id=ID_HELP_UPDATES)
         self.Bind(wx.EVT_MENU, self._on_report_issue,   id=ID_HELP_ISSUE)
         self.Bind(wx.EVT_TOOL, self._on_validate,       id=ID_VALIDATE)
@@ -1044,7 +1071,8 @@ class BreadboardWindow(wx.Frame):
         if saved_layout != self.prefs.board_layout:
             self.prefs.board_layout = saved_layout
         self.canvas.layout = CanvasLayout(saved_layout, self.prefs.binding_post_side,
-                                          self.prefs.show_branding, self.prefs.rail_split)
+                                          self.prefs.show_branding, self.prefs.rail_split,
+                                          self.prefs.num_terminals)
         self.canvas._populate_module_pins()
         self.canvas._pan_initialized = False
 
@@ -1086,6 +1114,14 @@ class BreadboardWindow(wx.Frame):
         if p.show_binding_posts != old.show_binding_posts:
             self.canvas.show_binding_posts = p.show_binding_posts
             self._tray_sizer.Show(self._binding_panel, p.show_binding_posts)
+            self._tray_panel.Layout()
+
+        # Number of terminals
+        if p.num_terminals != old.num_terminals:
+            self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
+                                              p.show_branding, p.rail_split,
+                                              p.num_terminals)
+            self._refresh_terminal_rows(p.num_terminals)
             self._tray_panel.Layout()
 
         # Instruments panel visibility
@@ -1140,19 +1176,22 @@ class BreadboardWindow(wx.Frame):
                 self.tray.board = self.board
                 self.tray.refresh_placed()
                 self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
-                                                  p.show_branding, p.rail_split)
+                                                  p.show_branding, p.rail_split,
+                                                  p.num_terminals)
                 self.canvas._pan_initialized = False
 
         # Rail split toggle — rebuilds static topology and layout, placements unchanged
         if p.rail_split != old.rail_split:
             self.board.set_rail_split(p.rail_split)
             self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
-                                              p.show_branding, p.rail_split)
+                                              p.show_branding, p.rail_split,
+                                              p.num_terminals)
 
         # Binding post side or branding (canvas layout only, no data change)
         if p.binding_post_side != old.binding_post_side or p.show_branding != old.show_branding:
             self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
-                                              p.show_branding, p.rail_split)
+                                              p.show_branding, p.rail_split,
+                                              p.num_terminals)
             self.canvas._pan_initialized = False
 
         # Baseboard
@@ -1183,12 +1222,22 @@ class BreadboardWindow(wx.Frame):
         self.canvas.show_branding      = p.show_branding
         self.canvas.branding_image     = p.branding_image
         self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
-                                          p.show_branding, p.rail_split)
+                                          p.show_branding, p.rail_split,
+                                          p.num_terminals)
         self.canvas._pan_initialized = False
         self._tray_sizer.Show(self._binding_panel, p.show_binding_posts)
         self._tray_sizer.Show(self._hotkey_line,   p.show_hotkeys)
         self._tray_sizer.Show(self._hotkey_sizer,  p.show_hotkeys)
+        self._refresh_terminal_rows(p.num_terminals)
         self._tray_panel.Layout()
+
+    def _refresh_terminal_rows(self, num_terminals: int) -> None:
+        """Show/hide terminal rows in the binding panel based on num_terminals."""
+        for i, name in enumerate(('GND', 'V1', 'V2', 'V3')):
+            row = self._term_row_panels.get(name)
+            if row:
+                row.Show(i < num_terminals)
+        self._binding_panel.Layout()
 
     # ------------------------------------------------------------------
     # Help menu handlers
@@ -1789,7 +1838,7 @@ class SimPane(wx.Panel):
         self._board = board
         self.DestroyChildren()
         self._volt_ctrls = {}
-        self.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
+        self.SetBackgroundColour(_panel_bg())
 
         outer = wx.BoxSizer(wx.VERTICAL)
 
@@ -2329,6 +2378,14 @@ class PreferencesDialog(wx.Dialog):
         self._cb_binding.SetValue(prefs.show_binding_posts)
         sizer.Add(self._cb_binding, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
+        _term_row = wx.BoxSizer(wx.HORIZONTAL)
+        _term_row.Add(wx.StaticText(self, label='Number of terminals:'),
+                      0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 6)
+        self._ch_num_terminals = wx.Choice(self, choices=['2', '3', '4'])
+        self._ch_num_terminals.SetSelection(max(0, min(prefs.num_terminals - 2, 2)))
+        _term_row.Add(self._ch_num_terminals, 0)
+        sizer.Add(_term_row, 0, wx.LEFT | wx.TOP, 10)
+
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
@@ -2366,6 +2423,7 @@ class PreferencesDialog(wx.Dialog):
             show_net_labels=self._cb_labels.IsChecked(),
             show_hotkeys=self._cb_hotkeys.IsChecked(),
             show_binding_posts=self._cb_binding.IsChecked(),
+            num_terminals=self._ch_num_terminals.GetSelection() + 2,
             export_format='svg' if self._rb_svg.GetValue() else 'png',
             board_layout=_layout_map[self._ch_layout.GetSelection()],
             binding_post_side=_side_map[self._ch_post_side.GetSelection()],
