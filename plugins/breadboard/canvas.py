@@ -271,43 +271,15 @@ def _resistor_bands(ohms: float) -> Optional[Tuple[str, str, str, str]]:
     return _BAND_COLORS[d1], _BAND_COLORS[d2], c3, _GOLD   # gold = ±5 %
 
 
-_R_END_HH = 6.5   # resistor body half-height at end caps  (13 px full)
-_R_MID_HH = 5.0   # resistor body half-height at centre   (10 px full)
-# Bezier control-point half-height: gives exactly _R_MID_HH at t=0.5
-_R_CP_HH  = (4.0 * _R_MID_HH - _R_END_HH) / 3.0   # = 4.5
+_R_END_HH = 6.5   # end-cap half-height (13 px full)
+_R_CAP_W  = 9.0   # end-cap width (each side inward from body edge)
+_R_MID_HH = 3.0   # middle bar half-height (6 px full, thinner than end caps)
+_R_CAP_R  = 5.5   # end-cap corner radius (pill-shaped when ≈ half-height)
 
 
 def _res_body_half_height(x: float, body_half: float) -> float:
-    """Half-height of the bone-shaped resistor body at local x (origin at centre)."""
-    if abs(x) >= body_half:
-        return _R_END_HH
-    S = (x + body_half) / (2.0 * body_half)
-    t = S
-    for _ in range(8):
-        ft  = 3*t*t - 2*t*t*t - S
-        dft = 6*t*(1.0 - t)
-        if abs(dft) < 1e-10:
-            break
-        t = max(0.0, min(1.0, t - ft / dft))
-    return _R_END_HH - 3.0 * t * (1.0 - t) * (_R_END_HH - _R_CP_HH)
-
-
-def _resistor_body_poly(body_half: float, n: int = 16):
-    """Polygon approximating the bone-shaped resistor body (local coords, y-down)."""
-    pts = []
-    for i in range(n + 1):
-        t = i / n
-        S = 3*t*t - 2*t*t*t
-        x = -body_half + 2.0 * body_half * S
-        y = -(_R_END_HH - 3.0 * t * (1.0 - t) * (_R_END_HH - _R_CP_HH))
-        pts.append((x, y))
-    for i in range(n, -1, -1):
-        t = i / n
-        S = 3*t*t - 2*t*t*t
-        x = -body_half + 2.0 * body_half * S
-        y =   _R_END_HH - 3.0 * t * (1.0 - t) * (_R_END_HH - _R_CP_HH)
-        pts.append((x, y))
-    return pts
+    """Half-height of the dumbbell resistor body at local x (origin at centre)."""
+    return _R_END_HH if abs(x) > body_half - _R_CAP_W else _R_MID_HH
 
 
 # ---------------------------------------------------------------------------
@@ -4249,7 +4221,6 @@ class BreadboardCanvas(wx.Panel):
                 gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
 
-                _res_gc_path = None
                 if placed.type_id == 'C':
                     gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
                     comp = self.netlist.components.get(ref) if self.netlist else None
@@ -4261,18 +4232,13 @@ class BreadboardCanvas(wx.Panel):
                     lw, lh = gc.GetTextExtent(label)
                     gc.DrawText(label, -lw / 2, -lh / 2)
                 elif placed.type_id == 'R':
-                    # Bone shape: wide end caps, narrower in the middle
-                    _res_gc_path = gc.CreatePath()
-                    _res_gc_path.MoveToPoint(-body_half, -_R_END_HH)
-                    _res_gc_path.AddCurveToPoint(-body_half, -_R_CP_HH,
-                                                  body_half, -_R_CP_HH,
-                                                  body_half, -_R_END_HH)
-                    _res_gc_path.AddLineToPoint(body_half, _R_END_HH)
-                    _res_gc_path.AddCurveToPoint(body_half,  _R_CP_HH,
-                                                 -body_half,  _R_CP_HH,
-                                                 -body_half,  _R_END_HH)
-                    _res_gc_path.CloseSubpath()
-                    gc.DrawPath(_res_gc_path)
+                    # Dumbbell: two pill-shaped end caps + thin middle bar
+                    gc.DrawRoundedRectangle(-body_half, -_R_END_HH,
+                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
+                    gc.DrawRectangle(-body_half + _R_CAP_W, -_R_MID_HH,
+                                     2 * (body_half - _R_CAP_W), 2 * _R_MID_HH)
+                    gc.DrawRoundedRectangle(body_half - _R_CAP_W, -_R_END_HH,
+                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
                 else:
                     gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
@@ -4293,10 +4259,13 @@ class BreadboardCanvas(wx.Panel):
                             bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
                             gc.DrawRectangle(bx_pos, -bh + 1, 5, 2 * bh - 2)
-                    if _res_gc_path is not None:
-                        gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
-                        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-                        gc.DrawPath(_res_gc_path)
+                    # Redraw border on top to clean up band overflow at shape edges
+                    gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+                    gc.DrawRoundedRectangle(-body_half, -_R_END_HH,
+                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
+                    gc.DrawRoundedRectangle(body_half - _R_CAP_W, -_R_END_HH,
+                                            _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
 
                 elif placed.type_id in ('D', 'D_Zener'):
                     # Cathode stripe: a path shaped like the left slice of the rounded
@@ -4337,9 +4306,12 @@ class BreadboardCanvas(wx.Panel):
                     tw, th = dc.GetTextExtent(label)
                     dc.DrawText(label, int(mx) - tw // 2, int(my) - th // 2)
                 elif placed.type_id == 'R':
-                    _dc_pts = [wx.Point(int(mx + x), int(my + y))
-                               for x, y in _resistor_body_poly(body_half)]
-                    dc.DrawPolygon(_dc_pts)
+                    dc.DrawRoundedRectangle(int(mx - body_half), int(my - _R_END_HH),
+                                             int(_R_CAP_W), int(2 * _R_END_HH), int(_R_CAP_R))
+                    dc.DrawRectangle(int(mx - body_half + _R_CAP_W), int(my - _R_MID_HH),
+                                     int(2 * (body_half - _R_CAP_W)), int(2 * _R_MID_HH))
+                    dc.DrawRoundedRectangle(int(mx + body_half - _R_CAP_W), int(my - _R_END_HH),
+                                             int(_R_CAP_W), int(2 * _R_END_HH), int(_R_CAP_R))
                 else:
                     dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
 
@@ -4361,9 +4333,10 @@ class BreadboardCanvas(wx.Panel):
                             dc.DrawRectangle(int(mx + bx_pos), int(my - bh + 1), 5, int(2 * bh - 2))
                     dc.SetBrush(wx.TRANSPARENT_BRUSH)
                     dc.SetPen(wx.Pen(border_color, pen_w))
-                    _dc_pts2 = [wx.Point(int(mx + x), int(my + y))
-                                for x, y in _resistor_body_poly(body_half)]
-                    dc.DrawPolygon(_dc_pts2)
+                    dc.DrawRoundedRectangle(int(mx - body_half), int(my - _R_END_HH),
+                                             int(_R_CAP_W), int(2 * _R_END_HH), int(_R_CAP_R))
+                    dc.DrawRoundedRectangle(int(mx + body_half - _R_CAP_W), int(my - _R_END_HH),
+                                             int(_R_CAP_W), int(2 * _R_END_HH), int(_R_CAP_R))
 
                 elif placed.type_id in ('D', 'D_Zener'):
                     # DC fallback: inset stripe stays clear of corner overflow
@@ -4807,7 +4780,11 @@ class BreadboardCanvas(wx.Panel):
         _TO92_TYPES    = frozenset({'NPN', 'PNP', 'JFET_N', 'JFET_P', 'BS170', 'NMOS', 'PMOS'})
         _SLIDER_TYPES  = frozenset({'SPDT', 'SP3T'})
         base_color = wx.Colour(comp_def.color)
-        ghost_color = wx.Colour(base_color.Red(), base_color.Green(), base_color.Blue(), 0x88)
+        r0, g0, b0 = base_color.Red(), base_color.Green(), base_color.Blue()
+        # Lighten without alpha: wx.Brush alpha is unreliable on GTK (may render transparent)
+        ghost_color = wx.Colour((r0 * 2 + 255) // 3, (g0 * 2 + 255) // 3, (b0 * 2 + 255) // 3)
+        _ghost_pen  = wx.GraphicsPenInfo(
+            wx.Colour(max(0, r0 - 40), max(0, g0 - 40), max(0, b0 - 40))).Width(1)
 
         if comp_def.type_id in _SLIDER_TYPES:
             sample_hole = next(iter(pin_holes.values()))
@@ -4820,11 +4797,11 @@ class BreadboardCanvas(wx.Panel):
             body_left_g  = float(x_min_g - 4)
             body_right_g = float(x_max_g + 4)
             body_w_g = body_right_g - body_left_g
-            face_col = wx.Colour(0x99, 0x99, 0x99, 0x88)
-            gc = wx.GraphicsContext.Create(dc)
-            dot_pen = gc.CreatePen(
-                wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88))
-                .Width(1).Style(wx.PENSTYLE_DOT))
+            face_col = wx.Colour(0xcc, 0xcc, 0xcc)
+            gc = _make_gc(dc)
+            if gc is None:
+                return
+            dot_pen = gc.CreatePen(_ghost_pen)
             if in_top:
                 body_top_g = float(y_min_g - BODY_H_G - 2)
                 gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
@@ -4860,7 +4837,7 @@ class BreadboardCanvas(wx.Panel):
             step_g      = (2 * body_half_g - 2 * inset_g) / 2
             attach_xs_g = [cx_mid_g - body_half_g + inset_g + i * step_g for i in range(3)]
             pin_xs_g    = sorted(xy[0] for xy in holes_xy)
-            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88), 3))
             for px_g, ax_g in zip(pin_xs_g, attach_xs_g):
                 dc.DrawLine(int(px_g), pin_y_g, int(ax_g), int(flat_y_g))
 
@@ -4873,12 +4850,11 @@ class BreadboardCanvas(wx.Panel):
                 path.AddArc(cx_mid_g, flat_y_g, r_body_g, 0.0, math.pi, not dome_up_g)
                 path.CloseSubpath()
                 gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
-                gc.SetPen(gc.CreatePen(
-                    wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1)))
+                gc.SetPen(gc.CreatePen(_ghost_pen))
                 gc.DrawPath(path)
             else:
                 dc.SetBrush(wx.Brush(ghost_color))
-                dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88), 1))
+                dc.SetPen(wx.Pen(wx.Colour(max(0, r0 - 40), max(0, g0 - 40), max(0, b0 - 40)), 1))
                 if dome_up_g:
                     dc.DrawArc(int(cx_mid_g + body_half_g), int(flat_y_g),
                                int(cx_mid_g - body_half_g), int(flat_y_g),
@@ -4923,25 +4899,21 @@ class BreadboardCanvas(wx.Panel):
                     elif isinstance(hole, TieHole) and hole.row in BOT_ROWS:
                         dc.DrawRectangle(hx - 1, body_rect.GetBottom() - 1, 3, 7)
 
-            # Body via GraphicsContext — avoids PENSTYLE_DOT invisibility on GTK
-            # and handles alpha correctly (dc colour strings don't support 8-digit hex)
-            base = wx.Colour(comp_def.color)
-            ghost_fill = wx.Colour(base.Red(), base.Green(), base.Blue(), 0x88)
-            gc = wx.GraphicsContext.Create(dc)
-            gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_fill)))
-            gc.SetPen(gc.CreatePen(
-                wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88))
-                .Width(1).Style(wx.PENSTYLE_DOT)))
-            gc.DrawRoundedRectangle(float(body_rect.GetX()), float(body_rect.GetY()),
-                                    float(body_rect.GetWidth()), float(body_rect.GetHeight()),
-                                    4.0)
+            # Body via GraphicsContext
+            gc = _make_gc(dc)
+            if gc is not None:
+                gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
+                gc.SetPen(gc.CreatePen(_ghost_pen))
+                gc.DrawRoundedRectangle(float(body_rect.GetX()), float(body_rect.GetY()),
+                                        float(body_rect.GetWidth()), float(body_rect.GetHeight()),
+                                        4.0)
 
             # Pin-1 orientation marker (DIP: dot on body edge; POT: dot on top edge)
             p1_hole = pin_holes.get(1)
             p1_xy = lay.hole_xy(p1_hole) if p1_hole else None
             if p1_xy:
-                dc.SetBrush(wx.Brush('#ffffff88'))
-                dc.SetPen(wx.Pen('#33333388', 1))
+                dc.SetBrush(wx.Brush('#ffffff'))
+                dc.SetPen(wx.Pen('#333333', 1))
                 if comp_def.is_dip:
                     if isinstance(p1_hole, TieHole) and p1_hole.row in TOP_ROWS:
                         dot_y = body_rect.GetY() + 12
@@ -4966,16 +4938,20 @@ class BreadboardCanvas(wx.Panel):
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
 
         base = wx.Colour(comp_def.color)
-        ghost_color = wx.Colour(base.Red(), base.Green(), base.Blue(), 0x88)
-        border_pen = gc_pen = wx.GraphicsPenInfo(wx.Colour(0x88, 0x88, 0x88, 0x88)).Width(1).Style(wx.PENSTYLE_DOT)
+        r0, g0, b0 = base.Red(), base.Green(), base.Blue()
+        ghost_color = wx.Colour((r0 * 2 + 255) // 3, (g0 * 2 + 255) // 3, (b0 * 2 + 255) // 3)
+        border_pen = gc_pen = wx.GraphicsPenInfo(
+            wx.Colour(max(0, r0 - 40), max(0, g0 - 40), max(0, b0 - 40))).Width(1)
 
         if comp_def.type_id == 'LED':
             r = 13.0
             r_inner = 10.0
-            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88), 3))
             dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
             dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
-            gc = wx.GraphicsContext.Create(dc)
+            gc = _make_gc(dc)
+            if gc is None:
+                return
             gc.Translate(mx, my)
             gc.Rotate(angle)
             gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
@@ -4990,7 +4966,7 @@ class BreadboardCanvas(wx.Panel):
             sp.AddArc(0, 0, r, -(math.pi - theta), math.pi - theta, False)
             sp.AddLineToPoint(-stripe_x, -y_isect)
             sp.CloseSubpath()
-            k_col = wx.Colour(0x11, 0x11, 0x11, 0x99)
+            k_col = wx.Colour(0x11, 0x11, 0x11)
             gc.SetBrush(gc.CreateBrush(wx.Brush(k_col)))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(k_col).Width(0)))
             gc.DrawPath(sp)
@@ -5001,14 +4977,16 @@ class BreadboardCanvas(wx.Panel):
 
         if comp_def.type_id == 'C_POL':
             r = 13.0
-            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88), 3))
             dc.DrawLine(int(x1), int(y1), int(mx - ux * r), int(my - uy * r))
             dc.DrawLine(int(mx + ux * r), int(my + uy * r), int(x2), int(y2))
-            gc = wx.GraphicsContext.Create(dc)
+            gc = _make_gc(dc)
+            if gc is None:
+                return
             gc.Translate(mx, my)
             gc.Rotate(angle)
             gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
-            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ghost_color).Width(0)))
+            gc.SetPen(gc.CreatePen(border_pen))
             gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
             # Negative stripe on pin-2 (+x) side
             stripe_x = r * 0.55
@@ -5019,7 +4997,7 @@ class BreadboardCanvas(wx.Panel):
             sp.AddArc(0, 0, r, -theta, theta, True)
             sp.AddLineToPoint(stripe_x, -y_isect)
             sp.CloseSubpath()
-            stripe = wx.Colour(0x11, 0x11, 0x11, 0x99)
+            stripe = wx.Colour(0x11, 0x11, 0x11)
             gc.SetBrush(gc.CreateBrush(wx.Brush(stripe)))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(stripe).Width(0)))
             gc.DrawPath(sp)
@@ -5028,7 +5006,7 @@ class BreadboardCanvas(wx.Panel):
             gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
             font = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_BOLD)
-            gc.SetFont(gc.CreateFont(font, wx.Colour(0xff, 0xff, 0xff, 0xaa)))
+            gc.SetFont(gc.CreateFont(font, wx.Colour(0xff, 0xff, 0xff)))
             tw, th = gc.GetTextExtent('+')
             gc.DrawText('+', -r + 3, -th / 2)
             return
@@ -5042,17 +5020,19 @@ class BreadboardCanvas(wx.Panel):
             by1_pb = my - uy * body_half_pb
             bx2_pb = mx + ux * body_half_pb
             by2_pb = my + uy * body_half_pb
-            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+            dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88), 3))
             dc.DrawLine(int(x1), int(y1), int(bx1_pb), int(by1_pb))
             dc.DrawLine(int(bx2_pb), int(by2_pb), int(x2), int(y2))
-            gc = wx.GraphicsContext.Create(dc)
+            gc = _make_gc(dc)
+            if gc is None:
+                return
             gc.Translate(mx, my)
             gc.Rotate(angle)
             gc.SetBrush(gc.CreateBrush(wx.Brush(ghost_color)))
             gc.SetPen(gc.CreatePen(border_pen))
             gc.DrawRoundedRectangle(-body_half_pb, -body_h_pb / 2,
                                     body_half_pb * 2, body_h_pb, 3.0)
-            btn_col = wx.Colour(0x22, 0x22, 0x22, 0x88)
+            btn_col = wx.Colour(0x22, 0x22, 0x22)
             gc.SetBrush(gc.CreateBrush(wx.Brush(btn_col)))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(btn_col).Width(1)))
             gc.DrawEllipse(-button_r_pb, -button_r_pb, button_r_pb * 2, button_r_pb * 2)
@@ -5063,11 +5043,13 @@ class BreadboardCanvas(wx.Panel):
         bx1, by1 = mx - ux * body_half, my - uy * body_half
         bx2, by2 = mx + ux * body_half, my + uy * body_half
 
-        dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88, 0x88), 3))
+        dc.SetPen(wx.Pen(wx.Colour(0x88, 0x88, 0x88), 3))
         dc.DrawLine(int(x1), int(y1), int(bx1), int(by1))
         dc.DrawLine(int(bx2), int(by2), int(x2), int(y2))
 
-        gc = wx.GraphicsContext.Create(dc)
+        gc = _make_gc(dc)
+        if gc is None:
+            return
         gc.Translate(mx, my)
         gc.Rotate(angle)
         body_w = body_half * 2
@@ -5077,17 +5059,10 @@ class BreadboardCanvas(wx.Panel):
         if comp_def.type_id == 'C':
             gc.DrawRectangle(-body_half, -body_h / 2, body_w, body_h)
         elif comp_def.type_id == 'R':
-            _grp = gc.CreatePath()
-            _grp.MoveToPoint(-body_half, -_R_END_HH)
-            _grp.AddCurveToPoint(-body_half, -_R_CP_HH,
-                                  body_half, -_R_CP_HH,
-                                  body_half, -_R_END_HH)
-            _grp.AddLineToPoint(body_half, _R_END_HH)
-            _grp.AddCurveToPoint(body_half,  _R_CP_HH,
-                                 -body_half,  _R_CP_HH,
-                                 -body_half,  _R_END_HH)
-            _grp.CloseSubpath()
-            gc.DrawPath(_grp)
+            gc.DrawRoundedRectangle(-body_half, -_R_END_HH, _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
+            gc.DrawRectangle(-body_half + _R_CAP_W, -_R_MID_HH,
+                             2 * (body_half - _R_CAP_W), 2 * _R_MID_HH)
+            gc.DrawRoundedRectangle(body_half - _R_CAP_W, -_R_END_HH, _R_CAP_W, 2 * _R_END_HH, _R_CAP_R)
         else:
             gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
@@ -5101,13 +5076,14 @@ class BreadboardCanvas(wx.Panel):
             # wx.PENSTYLE_DOT on a scaled wx.DC does not render on GTK/Linux,
             # so use a GraphicsContext (Cairo) which handles dash patterns correctly.
             mx, my = self._ghost_pos
-            gc = wx.GraphicsContext.Create(dc)
-            gc.SetPen(gc.CreatePen(
-                wx.GraphicsPenInfo(wx.Colour(0xff, 0xcc, 0x00))
-                .Width(2)
-                .Style(wx.PENSTYLE_SHORT_DASH)
-            ))
-            gc.StrokeLine(xy[0], xy[1], mx, my)
+            gc = _make_gc(dc)
+            if gc is not None:
+                gc.SetPen(gc.CreatePen(
+                    wx.GraphicsPenInfo(wx.Colour(0xff, 0xcc, 0x00))
+                    .Width(2)
+                    .Style(wx.PENSTYLE_SHORT_DASH)
+                ))
+                gc.StrokeLine(xy[0], xy[1], mx, my)
 
     def _draw_annotations(self, dc: wx.DC) -> None:
         """Draw user annotation shapes (lines, rectangles, circles, text) on the canvas."""
