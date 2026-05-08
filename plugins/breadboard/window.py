@@ -2012,7 +2012,7 @@ class SimPane(wx.Panel):
                     ch_grid.Add(net_lbl, 1, wx.ALIGN_CENTRE_VERTICAL | wx.EXPAND)
                 body.Add(ch_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
-                tran_btn = wx.Button(self, label='▶  Run Transient')
+                tran_btn = wx.Button(self, label='▶  Open KiScope')
                 tran_btn.Bind(wx.EVT_BUTTON, self._on_run_transient)
                 body.Add(tran_btn, 0, wx.EXPAND | wx.ALL, 8)
 
