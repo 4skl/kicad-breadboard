@@ -161,6 +161,7 @@ class BreadboardWindow(wx.Frame):
         self._netlist_path: Optional[str] = None   # last successfully loaded .net file
         self._refreshing_choices: bool = False     # suppress EVT_CHOICE during SetItems
         self._sim_pane: Optional['SimPane'] = None
+        self._waveform_frame: Optional['WaveformFrame'] = None
 
         self._build_ui()
         self._init_canvas_from_prefs()
@@ -1453,6 +1454,10 @@ class BreadboardWindow(wx.Frame):
         if self._sim_pane:
             self._sim_pane.Destroy()
             self._sim_pane = None
+        if self._waveform_frame:
+            self._waveform_frame.Destroy()
+            self._waveform_frame = None
+        self.canvas.end_net_probe()
         self.canvas.clear_simulation()
         self.canvas.Refresh()
         self.SetStatusText('', 0)
@@ -1506,19 +1511,37 @@ class BreadboardWindow(wx.Frame):
             status += f', {w} warning(s)'
         self.SetStatusText(status, 0)
 
-    def _on_transient_thumb_dclick(self, ch_name: str) -> None:
-        """Double-click on a waveform thumbnail — open the full waveform viewer."""
-        result = self.canvas._sim_result
-        if result is None or not result.transient_traces:
-            return
-        net_name = self.board.get_probe_net(ch_name)
-        if not net_name or net_name not in result.transient_traces:
-            return
-        # Show only this channel's trace
-        traces = {net_name: result.transient_traces[net_name]}
-        probe_nets = {ch_name: net_name}
+        # Open (or replace) the waveform viewer
+        if self._waveform_frame:
+            self._waveform_frame.Destroy()
         from .waveform import WaveformFrame
-        WaveformFrame(self, traces, probe_nets, PROBE_META).Show()
+        self._waveform_frame = WaveformFrame(
+            self, result.transient_traces,
+            on_probe_toggle=self._on_waveform_probe_toggle,
+        )
+        self._waveform_frame.Show()
+
+    def _on_transient_thumb_dclick(self, ch_name: str) -> None:
+        """Double-click on a waveform thumbnail — show that net in the waveform viewer."""
+        if self._waveform_frame and self._waveform_frame.IsShown():
+            net_name = self.board.get_probe_net(ch_name)
+            if net_name:
+                self._waveform_frame.toggle_net(net_name)
+                self._waveform_frame.Raise()
+
+    def _on_waveform_probe_toggle(self, active: bool) -> None:
+        """Called by WaveformFrame when the Probe button is toggled."""
+        if active:
+            self.canvas.begin_net_probe(self._on_net_probed)
+            self.SetStatusText('Probe mode — click a net on the breadboard', 0)
+        else:
+            self.canvas.end_net_probe()
+            self.SetStatusText('', 0)
+
+    def _on_net_probed(self, net_name: str) -> None:
+        """Called by canvas when a net is clicked in probe mode."""
+        if self._waveform_frame and self._waveform_frame.IsShown():
+            self._waveform_frame.toggle_net(net_name)
 
     def _on_volt_labels_toggle(self, show: bool) -> None:
         self.canvas.show_voltage_labels = show

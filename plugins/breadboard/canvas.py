@@ -150,6 +150,7 @@ MODE_WIRE          = 'wire'
 MODE_DELETE        = 'delete'
 MODE_PROBE         = 'probe'
 MODE_NET_HIGHLIGHT = 'net_highlight'
+MODE_NET_PROBE     = 'net_probe'
 MODE_DRAW_LINE     = 'draw_line'
 MODE_DRAW_RECT     = 'draw_rect'
 MODE_DRAW_TEXT     = 'draw_text'
@@ -981,8 +982,9 @@ class BreadboardCanvas(wx.Panel):
 
         self._highlighted_holes: Set[Hole] = set()   # from validation
         self._highlight_kind: Optional[IssueKind] = None
-        self._net_hl_holes: Set[Hole] = set()        # from net-highlight mode
+        self._net_hl_holes: Set[Hole] = set()        # from net-highlight / net-probe mode
         self._net_hl_name:  str       = ''           # net name currently highlighted
+        self._net_probe_cb: Optional[callable] = None  # callback for MODE_NET_PROBE
         self._net_label_rows: List[Tuple[int, int, int, int, str]] = []  # screen-space hit boxes
 
         self._annotations: List = []                 # DrawLine / DrawRect / DrawText / DrawCircle
@@ -1283,9 +1285,11 @@ class BreadboardCanvas(wx.Panel):
             self._probe_hover = None
         if mode != MODE_DELETE:
             self._hover_probe_name = None
-        if mode != MODE_NET_HIGHLIGHT:
+        if mode not in (MODE_NET_HIGHLIGHT, MODE_NET_PROBE):
             self._net_hl_holes = set()
             self._net_hl_name  = ''
+        if mode != MODE_NET_PROBE:
+            self._net_probe_cb = None
         if mode not in _DRAW_MODES:
             self._draw_start = None
             self._draw_preview = None
@@ -1299,6 +1303,21 @@ class BreadboardCanvas(wx.Panel):
         self._placing_probe = probe_name
         self._probe_drag = False
         self.SetFocus()
+
+    def begin_net_probe(self, callback) -> None:
+        """Enter net-probe mode; callback(net_name) is called on each hole click."""
+        self._net_probe_cb = callback
+        self.set_mode(MODE_NET_PROBE)
+        self.SetCursor(wx.Cursor(wx.CURSOR_CROSS))
+        self.SetFocus()
+
+    def end_net_probe(self) -> None:
+        if self.mode == MODE_NET_PROBE:
+            self.set_mode(MODE_SELECT)
+            self._net_hl_holes = set()
+            self._net_hl_name = ''
+            self.SetCursor(wx.NullCursor)
+            self.Refresh()
 
     def begin_probe_drag(self, probe_name: str) -> None:
         """Start probe placement via drag — release over a hole to place."""
@@ -1667,6 +1686,18 @@ class BreadboardCanvas(wx.Panel):
             else:
                 self._net_hl_holes = set()
                 self._net_hl_name  = ''
+            self.Refresh()
+            return
+
+        if self.mode == MODE_NET_PROBE:
+            hole = self.layout.nearest_hole(px, py)
+            if hole is not None:
+                uf = self.board.build_connectivity()
+                root = uf.find(hole)
+                self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
+                self._net_hl_name  = self._hl_net_name_from_holes()
+                if self._net_hl_name and self._net_probe_cb:
+                    self._net_probe_cb(self._net_hl_name)
             self.Refresh()
             return
 
@@ -2244,6 +2275,16 @@ class BreadboardCanvas(wx.Panel):
                     self._ghost.anchor = anchor if isinstance(anchor, TieHole) else None
         if self.mode == MODE_PROBE:
             self._probe_hover = self.layout.nearest_probe_hole(px, py)
+        if self.mode == MODE_NET_PROBE:
+            hole = self.layout.nearest_hole(px, py)
+            if hole is not None:
+                uf = self.board.build_connectivity()
+                root = uf.find(hole)
+                self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
+                self._net_hl_name  = self._hl_net_name_from_holes()
+            else:
+                self._net_hl_holes = set()
+                self._net_hl_name  = ''
         if self.mode in _DRAW_MODES and self._draw_start is not None:
             self._draw_preview = (px, py)
         if self.mode == MODE_DELETE:

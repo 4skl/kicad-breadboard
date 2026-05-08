@@ -1,17 +1,16 @@
 """
-WaveformFrame — standalone wx.Frame that displays transient analysis traces.
+WaveformFrame — persistent wx.Frame showing transient analysis traces.
 
 Usage:
-    WaveformFrame(parent, traces, probe_nets, probe_meta).Show()
-
-    traces:     Dict[str, TransientTrace]   net_name → trace data
-    probe_nets: Dict[str, str]              probe_name (e.g. 'CH1') → net_name
-    probe_meta: Dict[str, dict]             from PROBE_META; each dict has 'color', 'label'
+    frame = WaveformFrame(parent, traces, on_probe_toggle=cb)
+    frame.Show()
+    # later:
+    frame.toggle_net('VCC')   # called when canvas probe-clicks a net
 """
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import wx
 
@@ -28,12 +27,13 @@ def _hex_to_rgb(h: str) -> Tuple[int, int, int]:
     return r, g, b
 
 
-_FALLBACK_COLORS = [
+_TRACE_COLORS = [
     '#e8c020', '#20b060', '#4080e0', '#e04040',
     '#c040c0', '#40c0c0', '#e08020', '#80a080',
+    '#a0e040', '#e060a0', '#60a0e0', '#e0a060',
 ]
 
-# How to scale the time axis
+
 def _time_scale(t_max: float) -> Tuple[float, str]:
     if t_max == 0:
         return 1.0, 's'
@@ -47,7 +47,6 @@ def _time_scale(t_max: float) -> Tuple[float, str]:
 
 
 def _nice_ticks(lo: float, hi: float, n: int = 5) -> List[float]:
-    """Return ~n evenly spaced 'nice' tick values between lo and hi."""
     span = hi - lo
     if span == 0:
         return [lo]
@@ -72,8 +71,6 @@ def _nice_ticks(lo: float, hi: float, n: int = 5) -> List[float]:
 # ---------------------------------------------------------------------------
 
 class WaveformPanel(wx.Panel):
-    """Custom-drawn panel showing voltage-vs-time traces."""
-
     _MARGIN = (55, 16, 36, 52)   # top, right, bottom, left
 
     def __init__(self, parent,
@@ -82,9 +79,9 @@ class WaveformPanel(wx.Panel):
                  visible: Dict[str, bool]):
         super().__init__(parent)
         self.SetBackgroundColour(wx.Colour(18, 18, 28))
-        self._traces   = traces
-        self._colors   = net_colors
-        self._visible  = visible    # net_name → bool (updated by legend panel)
+        self._traces  = traces
+        self._colors  = net_colors   # shared ref — updated by WaveformFrame
+        self._visible = visible       # shared ref — updated by WaveformFrame
         self.Bind(wx.EVT_PAINT, self._on_paint)
         self.Bind(wx.EVT_SIZE,  lambda _: self.Refresh())
 
@@ -92,24 +89,27 @@ class WaveformPanel(wx.Panel):
         self._visible[net] = on
         self.Refresh()
 
-    # ------------------------------------------------------------------
-
     def _on_paint(self, _evt) -> None:
         dc = wx.BufferedPaintDC(self)
         w, h = self.GetClientSize()
         mt, mr, mb, ml = self._MARGIN
         pw, ph = w - ml - mr, h - mt - mb
 
-        # Background
         dc.SetBackground(wx.Brush(wx.Colour(18, 18, 28)))
         dc.Clear()
 
         if pw < 40 or ph < 30 or not self._traces:
             return
 
-        # --- Data range ---
-        active = {n: t for n, t in self._traces.items() if self._visible.get(n, True) and t.times}
+        active = {n: t for n, t in self._traces.items()
+                  if self._visible.get(n) and t.times}
         if not active:
+            dc.SetTextForeground(wx.Colour(80, 80, 100))
+            dc.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                               wx.FONTWEIGHT_NORMAL))
+            msg = 'Click the Probe button, then click a net on the breadboard'
+            tw, th2 = dc.GetTextExtent(msg)
+            dc.DrawText(msg, (w - tw) // 2, (h - th2) // 2)
             return
 
         t_max = max(max(tr.times) for tr in active.values())
@@ -130,14 +130,14 @@ class WaveformPanel(wx.Panel):
         def tx(t: float) -> int:
             if t_max <= t_min:
                 return ml
-            return ml + int((t * t_scale - 0.0) / t_max_s * pw)
+            return ml + int((t * t_scale) / t_max_s * pw)
 
         def ty(v: float) -> int:
             if v_max == v_min:
                 return mt + ph // 2
             return mt + ph - int((v - v_min) / (v_max - v_min) * ph)
 
-        # --- Grid ---
+        # Grid
         dc.SetPen(wx.Pen(wx.Colour(45, 45, 62), 1))
         t_ticks = _nice_ticks(0, t_max_s, 6)
         v_ticks = _nice_ticks(v_min, v_max, 5)
@@ -148,40 +148,35 @@ class WaveformPanel(wx.Panel):
             y = ty(vt)
             dc.DrawLine(ml, y, ml + pw, y)
 
-        # --- Axes ---
+        # Axes
         dc.SetPen(wx.Pen(wx.Colour(100, 100, 120), 1))
         dc.DrawLine(ml, mt, ml, mt + ph)
         dc.DrawLine(ml, mt + ph, ml + pw, mt + ph)
 
-        # --- Axis labels ---
+        # Axis labels
         dc.SetTextForeground(wx.Colour(160, 160, 180))
         font = wx.Font(7, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
         dc.SetFont(font)
 
-        # Time axis ticks
         for tt in t_ticks:
             x = ml + int(tt / t_max_s * pw) if t_max_s else ml
             label = f'{tt:.4g}'
             tw2 = dc.GetTextExtent(label)[0] // 2
             dc.DrawText(label, x - tw2, mt + ph + 4)
 
-        # Time axis unit label
         unit_lbl = f'time ({t_unit})'
         uw = dc.GetTextExtent(unit_lbl)[0]
         dc.DrawText(unit_lbl, ml + pw // 2 - uw // 2, mt + ph + 18)
 
-        # Voltage axis ticks
         for vt in v_ticks:
             y = ty(vt)
             label = f'{vt:.4g}'
             tw = dc.GetTextExtent(label)[0]
             dc.DrawText(label, ml - tw - 4, y - 7)
 
-        # Y-axis label (rotated)
-        vlbl = 'V'
-        dc.DrawRotatedText(vlbl, 10, mt + ph // 2 + 5, 90)
+        dc.DrawRotatedText('V', 10, mt + ph // 2 + 5, 90)
 
-        # --- Traces ---
+        # Traces
         for net_name, trace in active.items():
             if not trace.times:
                 continue
@@ -198,15 +193,15 @@ class WaveformPanel(wx.Panel):
 # ---------------------------------------------------------------------------
 
 class TraceSelectorPanel(wx.ScrolledWindow):
-    """Checkbox list for toggling individual traces."""
-
-    def __init__(self, parent, net_names: List[str],
+    def __init__(self, parent,
+                 net_names: List[str],
                  net_colors: Dict[str, str],
-                 net_labels: Dict[str, str],
-                 on_toggle):
+                 visible: Dict[str, bool],
+                 on_toggle: Callable):
         super().__init__(parent, style=wx.VSCROLL)
         self.SetBackgroundColour(wx.Colour(28, 28, 40))
         self.SetScrollRate(0, 10)
+        self._checkboxes: Dict[str, wx.CheckBox] = {}
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         lbl = wx.StaticText(self, label='Traces')
@@ -215,17 +210,23 @@ class TraceSelectorPanel(wx.ScrolledWindow):
         sizer.Add(lbl, 0, wx.ALL, 6)
 
         for net in net_names:
-            cb = wx.CheckBox(self, label=net_labels.get(net, net))
-            cb.SetValue(True)
+            cb = wx.CheckBox(self, label=net)
+            cb.SetValue(visible.get(net, False))
             cb.SetForegroundColour(wx.Colour(*_hex_to_rgb(net_colors.get(net, '#888888'))))
             cb.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
             cb.SetBackgroundColour(wx.Colour(28, 28, 40))
             cb.Bind(wx.EVT_CHECKBOX, lambda e, n=net: on_toggle(n, e.IsChecked()))
             sizer.Add(cb, 0, wx.LEFT | wx.BOTTOM, 6)
+            self._checkboxes[net] = cb
 
         self.SetSizer(sizer)
         self.FitInside()
-        self.SetMinSize(wx.Size(140, -1))
+        self.SetMinSize(wx.Size(160, -1))
+
+    def set_checked(self, net_name: str, value: bool) -> None:
+        cb = self._checkboxes.get(net_name)
+        if cb:
+            cb.SetValue(value)
 
 
 # ---------------------------------------------------------------------------
@@ -233,76 +234,127 @@ class TraceSelectorPanel(wx.ScrolledWindow):
 # ---------------------------------------------------------------------------
 
 class WaveformFrame(wx.Frame):
-    """Standalone frame showing transient analysis results."""
+    """Persistent waveform viewer. Call toggle_net() to add/remove traces."""
 
     def __init__(self, parent,
                  traces: Dict[str, TransientTrace],
-                 probe_nets: Dict[str, str],
-                 probe_meta: Dict[str, dict]):
+                 on_probe_toggle: Optional[Callable[[bool], None]] = None):
         super().__init__(parent, title='Transient Analysis',
-                         size=(820, 500),
+                         size=(900, 520),
                          style=wx.DEFAULT_FRAME_STYLE)
+        self._traces          = traces
+        self._on_probe_toggle = on_probe_toggle
+        self._probe_active    = False
 
-        # Build net → color and net → label maps
-        net_colors: Dict[str, str] = {}
-        net_labels: Dict[str, str] = {}
+        # Assign a fixed color to every net upfront
+        self._net_colors: Dict[str, str] = {}
+        for i, name in enumerate(sorted(traces)):
+            self._net_colors[name] = _TRACE_COLORS[i % len(_TRACE_COLORS)]
 
-        # Map probe assignments to colors
-        net_to_probe: Dict[str, str] = {net: name for name, net in probe_nets.items() if net}
-        color_idx = 0
-        for net_name in traces:
-            probe_name = net_to_probe.get(net_name)
-            if probe_name and probe_name in probe_meta:
-                net_colors[net_name] = probe_meta[probe_name]['color']
-                net_labels[net_name] = f'{probe_meta[probe_name]["label"]}: {net_name}'
-            else:
-                net_colors[net_name] = _FALLBACK_COLORS[color_idx % len(_FALLBACK_COLORS)]
-                net_labels[net_name] = net_name
-                color_idx += 1
+        # All traces start hidden
+        self._visible: Dict[str, bool] = {n: False for n in traces}
 
-        net_names = list(traces.keys())
-        visible = {n: True for n in net_names}
+        self._build()
+        self.SetIcon(wx.NullIcon)
+        self.Bind(wx.EVT_CLOSE, self._on_close)
+
+    # ------------------------------------------------------------------
+    # Public API
+
+    def toggle_net(self, net_name: str) -> None:
+        """Show this net's trace if hidden, hide it if shown."""
+        if net_name not in self._traces:
+            return
+        new_state = not self._visible.get(net_name, False)
+        self._visible[net_name] = new_state
+        self._wave_panel.set_visibility(net_name, new_state)
+        self._selector.set_checked(net_name, new_state)
+
+    # ------------------------------------------------------------------
+
+    def _build(self) -> None:
+        net_names = sorted(self._traces)
 
         panel = wx.Panel(self)
         panel.SetBackgroundColour(wx.Colour(18, 18, 28))
 
+        # Toolbar row
+        toolbar = wx.Panel(panel)
+        toolbar.SetBackgroundColour(wx.Colour(28, 28, 40))
+        tb_sz = wx.BoxSizer(wx.HORIZONTAL)
+
+        self._probe_btn = wx.ToggleButton(toolbar, label='⦿  Probe')
+        self._probe_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                        wx.FONTWEIGHT_BOLD))
+        self._probe_btn.SetToolTip(
+            'Click nets on the breadboard to add their traces here')
+        self._probe_btn.Bind(wx.EVT_TOGGLEBUTTON, self._on_probe_btn)
+
+        clear_btn = wx.Button(toolbar, label='Clear all')
+        clear_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                                   wx.FONTWEIGHT_NORMAL))
+        clear_btn.Bind(wx.EVT_BUTTON, self._on_clear_all)
+
+        info = wx.StaticText(toolbar, label='')
+        self._info_lbl = info
+        info.SetForegroundColour(wx.Colour(120, 120, 140))
+        info.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
+                             wx.FONTWEIGHT_NORMAL))
+
+        if self._traces:
+            t_total = max(max(tr.times) for tr in self._traces.values() if tr.times)
+            t_scale, t_unit = _time_scale(t_total)
+            info.SetLabel(f'{len(self._traces)} nets  ·  {t_total * t_scale:.4g} {t_unit}')
+
+        tb_sz.Add(self._probe_btn, 0, wx.ALIGN_CENTRE_VERTICAL | wx.ALL, 6)
+        tb_sz.Add(clear_btn,      0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        tb_sz.Add(info,           0, wx.ALIGN_CENTRE_VERTICAL)
+        toolbar.SetSizer(tb_sz)
+
+        # Splitter
         splitter = wx.SplitterWindow(panel, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
         splitter.SetMinimumPaneSize(80)
 
-        self._wave_panel = WaveformPanel(splitter, traces, net_colors, visible)
-        selector = TraceSelectorPanel(
-            splitter, net_names, net_colors, net_labels,
-            on_toggle=self._wave_panel.set_visibility,
+        self._wave_panel = WaveformPanel(splitter, self._traces,
+                                         self._net_colors, self._visible)
+        self._selector   = TraceSelectorPanel(
+            splitter, net_names, self._net_colors, self._visible,
+            on_toggle=self._on_checkbox_toggle,
         )
-
-        splitter.SplitVertically(selector, self._wave_panel, 150)
+        splitter.SplitVertically(self._selector, self._wave_panel, 170)
 
         outer = wx.BoxSizer(wx.VERTICAL)
-
-        # Info bar: show VSIN frequency for each source
-        freqs = sorted({t.times[-1] - t.times[0] for t in traces.values() if t.times},
-                       reverse=True)
-        if freqs:
-            t_total = max(t.times[-1] for t in traces.values() if t.times)
-            _, t_unit = _time_scale(t_total)
-            t_scale, _ = _time_scale(t_total)
-            info_str = f'Simulation span: {t_total * t_scale:.4g} {t_unit}'
-            info = wx.StaticText(panel, label=info_str)
-            info.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-            info.SetForegroundColour(wx.Colour(140, 140, 160))
-            info.SetBackgroundColour(wx.Colour(18, 18, 28))
-            outer.Add(info, 0, wx.LEFT | wx.TOP, 6)
-
-        outer.Add(splitter, 1, wx.EXPAND | wx.ALL, 4)
+        outer.Add(toolbar,  0, wx.EXPAND)
+        outer.Add(splitter, 1, wx.EXPAND | wx.ALL, 2)
         panel.SetSizer(outer)
 
-        frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(panel, 1, wx.EXPAND)
-        self.SetSizer(frame_sizer)
-
-        self.SetIcon(wx.NullIcon)
-        self.Bind(wx.EVT_CLOSE, self._on_close)
+        frame_sz = wx.BoxSizer(wx.VERTICAL)
+        frame_sz.Add(panel, 1, wx.EXPAND)
+        self.SetSizer(frame_sz)
         self.Layout()
 
+    def _on_checkbox_toggle(self, net_name: str, checked: bool) -> None:
+        self._visible[net_name] = checked
+        self._wave_panel.set_visibility(net_name, checked)
+
+    def _on_probe_btn(self, _evt) -> None:
+        self._probe_active = self._probe_btn.GetValue()
+        if self._on_probe_toggle:
+            self._on_probe_toggle(self._probe_active)
+
+    def _on_clear_all(self, _evt) -> None:
+        for net in self._visible:
+            self._visible[net] = False
+        self._wave_panel.Refresh()
+        for net, cb in self._selector._checkboxes.items():
+            cb.SetValue(False)
+
+    def deactivate_probe(self) -> None:
+        """Called by window when probe mode is ended externally (e.g. Escape)."""
+        self._probe_active = False
+        self._probe_btn.SetValue(False)
+
     def _on_close(self, evt) -> None:
+        if self._probe_active and self._on_probe_toggle:
+            self._on_probe_toggle(False)
         evt.Skip()
