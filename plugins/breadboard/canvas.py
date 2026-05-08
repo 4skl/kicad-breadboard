@@ -2994,8 +2994,55 @@ class BreadboardCanvas(wx.Panel):
 
     def _draw_wire_polyline(self, dc: wx.DC, pts, pen: wx.Pen) -> None:
         dc.SetPen(pen)
-        for i in range(len(pts) - 1):
-            dc.DrawLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+        if len(pts) == 3:
+            self._draw_wire_rounded_corner(dc, pts[0], pts[1], pts[2])
+        else:
+            for i in range(len(pts) - 1):
+                dc.DrawLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+
+    _WIRE_CORNER_R = 10  # corner radius in pixels for bent wires
+
+    def _draw_wire_rounded_corner(self, dc: wx.DC, A, B, C) -> None:
+        """Draw a 3-point wire path with a smooth quadratic-Bezier corner at B."""
+        dx1, dy1 = A[0] - B[0], A[1] - B[1]
+        dx2, dy2 = C[0] - B[0], C[1] - B[1]
+        len1 = math.hypot(dx1, dy1)
+        len2 = math.hypot(dx2, dy2)
+        if len1 < 1 or len2 < 1:
+            dc.DrawLine(A[0], A[1], B[0], B[1])
+            dc.DrawLine(B[0], B[1], C[0], C[1])
+            return
+        r = min(self._WIRE_CORNER_R, len1 * 0.9, len2 * 0.9)
+        t1x = B[0] + r * dx1 / len1
+        t1y = B[1] + r * dy1 / len1
+        t2x = B[0] + r * dx2 / len2
+        t2y = B[1] + r * dy2 / len2
+        gc = _make_gc(dc)
+        if gc is not None:
+            pen = dc.GetPen()
+            gc.SetPen(gc.CreatePen(
+                wx.GraphicsPenInfo(pen.GetColour()).Width(pen.GetWidth())
+                .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)
+            ))
+            gc.SetBrush(wx.TRANSPARENT_BRUSH)
+            path = gc.CreatePath()
+            path.MoveToPoint(A[0], A[1])
+            path.AddLineToPoint(t1x, t1y)
+            path.AddQuadCurveToPoint(B[0], B[1], t2x, t2y)
+            path.AddLineToPoint(C[0], C[1])
+            gc.StrokePath(path)
+        else:
+            N = 12
+            pts = [wx.Point(A[0], A[1])]
+            for i in range(N + 1):
+                t = i / N
+                mt = 1.0 - t
+                pts.append(wx.Point(
+                    round(mt * mt * t1x + 2.0 * mt * t * B[0] + t * t * t2x),
+                    round(mt * mt * t1y + 2.0 * mt * t * B[1] + t * t * t2y),
+                ))
+            pts.append(wx.Point(C[0], C[1]))
+            dc.DrawLines(pts)
 
     def _draw_wires(self, dc: wx.DC) -> None:
         lay = self.layout
