@@ -543,6 +543,8 @@ class WaveformFrame(wx.Frame):
         self._init_v_idx = _best_idx(_V_DIVS, v_needed)
 
         self._build()
+        # Override the sizer-propagated minimum so tiling WMs allow float-resize.
+        self.SetMinSize(wx.Size(640, 420))
         self.SetIcon(wx.NullIcon)
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
