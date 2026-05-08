@@ -422,7 +422,10 @@ class CanvasLayout:
         n = len(_active_terminals)
         if _is_horiz:
             v_margin = int(self.total_height * 0.18)
-            spacing  = (self.total_height - 2 * v_margin) // max(1, n - 1)
+            # Fixed denominator keeps the gap between adjacent terminals identical
+            # regardless of how many are shown — adding/removing terminals appends
+            # or removes from the bottom without shifting the others.
+            spacing  = (self.total_height - 2 * v_margin) // (len(TERMINAL_NAMES) - 1)
             self._term_pos = {
                 name: (term_cx, v_margin + i * spacing)
                 for i, name in enumerate(_active_terminals)
