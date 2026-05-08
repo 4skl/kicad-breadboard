@@ -5520,13 +5520,18 @@ class BreadboardCanvas(wx.Panel):
             name = net.name
             if name.startswith('Net-(') or name.startswith('unconnected-(') or name == '0':
                 continue
-            placed_pins = []
+            placed_refs: List[str] = []
             for pn in net.pins:
                 h = self.board.hole_for_pin(pn.ref, pn.pin)
-                if h is not None:
-                    placed_pins.append(pn.ref)
-            if len(placed_pins) == 1:
-                entries.append((name, placed_pins[0]))
+                if h is not None and pn.ref not in placed_refs:
+                    placed_refs.append(pn.ref)
+            if not placed_refs:
+                continue
+            if len(placed_refs) == 1:
+                summary = placed_refs[0]
+            else:
+                summary = placed_refs[0] + ' +' + str(len(placed_refs) - 1)
+            entries.append((name, summary))
 
         if not entries:
             self._net_label_rows = []
