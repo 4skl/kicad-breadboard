@@ -985,6 +985,7 @@ class BreadboardCanvas(wx.Panel):
         self._net_hl_holes: Set[Hole] = set()        # from net-highlight / net-probe mode
         self._net_hl_name:  str       = ''           # net name currently highlighted
         self._net_probe_cb: Optional[callable] = None  # callback for MODE_NET_PROBE
+        self._scope_probes: Dict[int, tuple] = {}      # ch_idx → (hole, color_hex, label)
         self._net_label_rows: List[Tuple[int, int, int, int, str]] = []  # screen-space hit boxes
 
         self._annotations: List = []                 # DrawLine / DrawRect / DrawText / DrawCircle
@@ -1304,8 +1305,20 @@ class BreadboardCanvas(wx.Panel):
         self._probe_drag = False
         self.SetFocus()
 
+    def set_scope_probe(self, ch_idx: int, color_hex: str, label: str, hole) -> None:
+        self._scope_probes[ch_idx] = (hole, color_hex, label)
+        self.Refresh()
+
+    def clear_scope_probe(self, ch_idx: int) -> None:
+        self._scope_probes.pop(ch_idx, None)
+        self.Refresh()
+
+    def clear_all_scope_probes(self) -> None:
+        self._scope_probes.clear()
+        self.Refresh()
+
     def begin_net_probe(self, callback) -> None:
-        """Enter net-probe mode; callback(net_name) is called on each hole click."""
+        """Enter net-probe mode; callback(net_name, hole) is called on each hole click."""
         self._net_probe_cb = callback
         self.set_mode(MODE_NET_PROBE)
         self.SetCursor(wx.Cursor(wx.CURSOR_CROSS))
@@ -1697,7 +1710,7 @@ class BreadboardCanvas(wx.Panel):
                 self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
                 self._net_hl_name  = self._hl_net_name_from_holes()
                 if self._net_hl_name and self._net_probe_cb:
-                    self._net_probe_cb(self._net_hl_name)
+                    self._net_probe_cb(self._net_hl_name, hole)
             self.Refresh()
             return
 
@@ -2592,6 +2605,7 @@ class BreadboardCanvas(wx.Panel):
         if self.show_binding_posts:
             self._draw_terminals(dc)
         self._draw_probes(dc)
+        self._draw_scope_probes(dc)
 
         if self._ghost:
             self._draw_ghost(dc)
@@ -4856,6 +4870,14 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetBrush(wx.Brush(wx.Colour(c.Red(), c.Green(), c.Blue(), 140)))
                 dc.SetPen(wx.Pen('#444444', 1, wx.PENSTYLE_DOT))
                 dc.DrawRoundedRectangle(hx - 12, fy, 24, flag_h, 3)
+
+    def _draw_scope_probes(self, dc: wx.DC) -> None:
+        for ch_idx, (hole, color_hex, label) in self._scope_probes.items():
+            xy = self.layout.hole_xy(hole)
+            if xy is None:
+                continue
+            hx, hy = int(xy[0]), int(xy[1])
+            self._draw_probe_flag(dc, hx, hy, hx, hy - 20, label, color_hex)
 
     def _baseboard_bg_is_dark(self) -> bool:
         """Return True if the area behind binding-post labels is perceptually dark."""

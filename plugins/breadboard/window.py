@@ -1458,6 +1458,7 @@ class BreadboardWindow(wx.Frame):
             self._waveform_frame.Destroy()
             self._waveform_frame = None
         self.canvas.end_net_probe()
+        self.canvas.clear_all_scope_probes()
         self.canvas.clear_simulation()
         self.canvas.Refresh()
         self.SetStatusText('', 0)
@@ -1514,12 +1515,24 @@ class BreadboardWindow(wx.Frame):
         # Open (or replace) the waveform viewer
         if self._waveform_frame:
             self._waveform_frame.Destroy()
-        from .waveform import WaveformFrame
+        self.canvas.clear_all_scope_probes()
+        from .waveform import WaveformFrame, _CH_COLORS
         self._waveform_frame = WaveformFrame(
             self, result.transient_traces,
             on_probe_toggle=self._on_waveform_probe_toggle,
         )
         self._waveform_frame.Show()
+
+        # Pre-place scope probe markers for auto-assigned channels
+        for i, net_name in enumerate(self._waveform_frame.channel_net_names):
+            if net_name:
+                hole = self._find_probe_hole_for_net(net_name)
+                if hole is not None:
+                    self.canvas.set_scope_probe(
+                        i, _CH_COLORS[i % len(_CH_COLORS)],
+                        f'CH{i + 1}', hole,
+                    )
+        self.canvas.Refresh()
 
     def _on_transient_thumb_dclick(self, ch_name: str) -> None:
         """Double-click on a waveform thumbnail — show that net in the waveform viewer."""
@@ -1538,10 +1551,34 @@ class BreadboardWindow(wx.Frame):
             self.canvas.end_net_probe()
             self.SetStatusText('', 0)
 
-    def _on_net_probed(self, net_name: str) -> None:
+    def _on_net_probed(self, net_name: str, hole=None) -> None:
         """Called by canvas when a net is clicked in probe mode."""
-        if self._waveform_frame and self._waveform_frame.IsShown():
-            self._waveform_frame.toggle_net(net_name)
+        if not (self._waveform_frame and self._waveform_frame.IsShown()):
+            return
+        ch_idx = self._waveform_frame.probing_channel
+        self._waveform_frame.toggle_net(net_name)
+        if ch_idx is not None and hole is not None:
+            from .waveform import _CH_COLORS
+            self.canvas.set_scope_probe(
+                ch_idx, _CH_COLORS[ch_idx % len(_CH_COLORS)],
+                f'CH{ch_idx + 1}', hole,
+            )
+
+    def _find_probe_hole_for_net(self, net_name: str):
+        """Return any placed-component hole connected to net_name."""
+        if not self.board or not self.netlist:
+            return None
+        for ref, pc in self.board.components.items():
+            comp = self.netlist.components.get(ref)
+            if not comp:
+                continue
+            for pin in comp.pins:
+                if pin.net != net_name:
+                    continue
+                for pin_num, hole in pc.pin_holes.items():
+                    if str(pin_num) == str(pin.number):
+                        return hole
+        return None
 
     def _on_volt_labels_toggle(self, show: bool) -> None:
         self.canvas.show_voltage_labels = show

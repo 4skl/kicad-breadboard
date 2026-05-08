@@ -286,9 +286,14 @@ class KnobWidget(wx.Panel):
         self._unit      = unit
         self._idx       = len(divs) // 2
         self._on_change = on_change
-        self._compact   = compact
+        self._compact        = compact
+        self._drag_start_xy: Optional[Tuple[int, int]] = None
+        self._drag_start_idx: int = 0
         self.Bind(wx.EVT_PAINT,      self._on_paint)
         self.Bind(wx.EVT_MOUSEWHEEL, self._on_wheel)
+        self.Bind(wx.EVT_LEFT_DOWN,  self._on_mouse_down)
+        self.Bind(wx.EVT_LEFT_UP,    self._on_mouse_up)
+        self.Bind(wx.EVT_MOTION,     self._on_motion)
 
     @property
     def value(self) -> float:
@@ -299,10 +304,36 @@ class KnobWidget(wx.Panel):
         self.Refresh()
 
     def _on_wheel(self, evt: wx.MouseEvent) -> None:
-        self._idx = max(0, min(
-            self._idx + (1 if evt.GetWheelRotation() > 0 else -1),
-            len(self._divs) - 1,
-        ))
+        self._step(1 if evt.GetWheelRotation() > 0 else -1)
+
+    def _on_mouse_down(self, evt: wx.MouseEvent) -> None:
+        self._drag_start_xy  = (evt.GetX(), evt.GetY())
+        self._drag_start_idx = self._idx
+        self.CaptureMouse()
+        evt.Skip()
+
+    def _on_mouse_up(self, evt: wx.MouseEvent) -> None:
+        if self.HasCapture():
+            self.ReleaseMouse()
+        self._drag_start_xy = None
+        evt.Skip()
+
+    def _on_motion(self, evt: wx.MouseEvent) -> None:
+        if self._drag_start_xy is None or not evt.LeftIsDown():
+            return
+        dx =  evt.GetX() - self._drag_start_xy[0]
+        dy = -(evt.GetY() - self._drag_start_xy[1])   # up = positive
+        delta = dx if abs(dx) >= abs(dy) else dy
+        new_idx = self._drag_start_idx + int(delta / 8)
+        new_idx = max(0, min(new_idx, len(self._divs) - 1))
+        if new_idx != self._idx:
+            self._idx = new_idx
+            self.Refresh()
+            if self._on_change:
+                self._on_change(self._divs[self._idx])
+
+    def _step(self, direction: int) -> None:
+        self._idx = max(0, min(self._idx + direction, len(self._divs) - 1))
         self.Refresh()
         if self._on_change:
             self._on_change(self._divs[self._idx])
@@ -615,38 +646,60 @@ class _LedDot(wx.Panel):
 # ---------------------------------------------------------------------------
 
 class _BncConnector(wx.Panel):
-    def __init__(self, parent: wx.Panel, label: str, color_hex: str):
-        super().__init__(parent, size=wx.Size(44, 44))
-        self.SetMinSize(wx.Size(44, 44))
+    def __init__(self, parent: wx.Panel, label: str, color_hex: str,
+                 net_name: Optional[str] = None):
+        super().__init__(parent, size=wx.Size(74, 86))
+        self.SetMinSize(wx.Size(74, 86))
         self.SetBackgroundColour(parent.GetBackgroundColour())
-        self._label = label
-        self._color = color_hex
+        self._label    = label
+        self._color    = color_hex
+        self._net_name = net_name
         self.Bind(wx.EVT_PAINT, self._on_paint)
+
+    def set_net(self, net_name: Optional[str]) -> None:
+        self._net_name = net_name
+        self.Refresh()
 
     def _on_paint(self, _evt) -> None:
         dc = wx.PaintDC(self)
         W, H = self.GetClientSize()
         dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
         dc.Clear()
-        cx, cy = W // 2, H // 2 - 4
+        cx, cy = W // 2, 30    # BNC centre
         r, g, b = _hex_to_rgb(self._color)
+
+        # Outer shell
         dc.SetPen(wx.Pen(wx.Colour(24, 24, 26), 1))
         dc.SetBrush(wx.Brush(wx.Colour(44, 44, 48)))
-        dc.DrawCircle(cx, cy, 15)
-        dc.SetPen(wx.Pen(wx.Colour(r // 2, g // 2, b // 2), 3))
+        dc.DrawCircle(cx, cy, 22)
+        # Coloured ring
+        dc.SetPen(wx.Pen(wx.Colour(r // 2, g // 2, b // 2), 4))
         dc.SetBrush(wx.TRANSPARENT_BRUSH)
-        dc.DrawCircle(cx, cy, 11)
+        dc.DrawCircle(cx, cy, 17)
+        # Insulator
         dc.SetPen(wx.Pen(wx.Colour(175, 170, 162), 1))
         dc.SetBrush(wx.Brush(wx.Colour(205, 200, 190)))
-        dc.DrawCircle(cx, cy, 7)
+        dc.DrawCircle(cx, cy, 11)
+        # Centre pin
         dc.SetPen(wx.Pen(wx.Colour(175, 172, 165), 1))
         dc.SetBrush(wx.Brush(wx.Colour(195, 192, 185)))
-        dc.DrawCircle(cx, cy, 3)
-        dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+        dc.DrawCircle(cx, cy, 4)
+
+        # Channel label in channel colour
+        dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         dc.SetTextForeground(wx.Colour(r, g, b))
         lw = dc.GetTextExtent(self._label)[0]
-        dc.DrawText(self._label, (W - lw) // 2, H - 11)
+        dc.DrawText(self._label, (W - lw) // 2, cy + 24)
+
+        # Net name (or "---") in small dim text
+        net_lbl = (self._net_name[:10] if self._net_name and len(self._net_name) > 10
+                   else (self._net_name or '---'))
+        dc.SetFont(wx.Font(6, wx.FONTFAMILY_TELETYPE,
+                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        dc.SetTextForeground(_TEXT_DIM)
+        nw = dc.GetTextExtent(net_lbl)[0]
+        dc.DrawText(net_lbl, (W - nw) // 2, cy + 36)
 
 
 # ---------------------------------------------------------------------------
@@ -683,8 +736,9 @@ class WaveformFrame(wx.Frame):
                          style=wx.DEFAULT_FRAME_STYLE)
         self._traces          = traces
         self._on_probe_toggle = on_probe_toggle
-        self._probing_channel: Optional[int] = None
-        self._channel_sections: List[ChannelSection] = []
+        self._probing_channel:   Optional[int]          = None
+        self._channel_sections: List[ChannelSection]   = []
+        self._bnc_connectors:   List[_BncConnector]    = []
 
         # Compute a sensible default V/DIV from all data
         all_vals = [v for tr in traces.values() for v in (tr.values or [])]
@@ -714,32 +768,42 @@ class WaveformFrame(wx.Frame):
     # ------------------------------------------------------------------
     # Public API
 
+    @property
+    def probing_channel(self) -> Optional[int]:
+        return self._probing_channel
+
+    @property
+    def channel_net_names(self) -> List[Optional[str]]:
+        return [ch.net_name for ch in self._channels]
+
     def toggle_net(self, net_name: str) -> None:
         """Assign net_name to the probing channel, or cycle through empty slots."""
         if net_name not in self._traces:
             return
         if self._probing_channel is not None:
-            ch   = self._channels[self._probing_channel]
+            ch = self._channels[self._probing_channel]
             ch.net_name = net_name
             self._channel_sections[self._probing_channel].set_net(net_name)
-            self._screen.Refresh()
-            return
-        # No active probe — assign to the first empty channel
-        for i, ch in enumerate(self._channels):
-            if ch.net_name is None:
-                ch.net_name = net_name
-                self._channel_sections[i].set_net(net_name)
-                self._screen.Refresh()
-                return
-        # All channels occupied — overwrite CH1
-        self._channels[0].net_name = net_name
-        self._channel_sections[0].set_net(net_name)
+        else:
+            for i, ch in enumerate(self._channels):
+                if ch.net_name is None:
+                    ch.net_name = net_name
+                    self._channel_sections[i].set_net(net_name)
+                    break
+            else:
+                self._channels[0].net_name = net_name
+                self._channel_sections[0].set_net(net_name)
         self._screen.Refresh()
+        self._update_bnc_labels()
 
     def deactivate_probe(self) -> None:
         self._probing_channel = None
         for sect in self._channel_sections:
             sect.set_probe_active(False)
+
+    def _update_bnc_labels(self) -> None:
+        for i, bnc in enumerate(self._bnc_connectors):
+            bnc.set_net(self._channels[i].net_name)
 
     # ------------------------------------------------------------------
 
@@ -886,11 +950,14 @@ class WaveformFrame(wx.Frame):
     def _make_bottom_strip(self, parent: wx.Panel) -> wx.Panel:
         strip = wx.Panel(parent)
         strip.SetBackgroundColour(_SECT_BG)
-        strip.SetMinSize(wx.Size(-1, 50))
+        strip.SetMinSize(wx.Size(-1, 90))
         sz = wx.BoxSizer(wx.HORIZONTAL)
-        for i, col in enumerate(_CH_COLORS):
-            sz.Add(_BncConnector(strip, f'CH {i + 1}', col),
-                   0, wx.LEFT | wx.TOP | wx.BOTTOM, 5 if i else 8)
+        for i in range(_NUM_CH):
+            bnc = _BncConnector(strip, f'CH {i + 1}',
+                                _CH_COLORS[i % len(_CH_COLORS)],
+                                self._channels[i].net_name)
+            self._bnc_connectors.append(bnc)
+            sz.Add(bnc, 0, wx.LEFT | wx.TOP | wx.BOTTOM, 5 if i else 8)
         sz.AddStretchSpacer()
         lbl = wx.StaticText(strip, label='KiScope DSO BB-1')
         lbl.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
