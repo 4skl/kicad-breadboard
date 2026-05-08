@@ -2305,36 +2305,46 @@ class PreferencesDialog(wx.Dialog):
         # ---- Board ----
         sizer.Add(section('Board'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        layout_idx = _layout_map.index(prefs.board_layout) if prefs.board_layout in _layout_map else 2
-        layout_row, self._rb_layout = radio_row(
-            'Layout:', ['Mini', 'Half', 'Full', 'Double', 'Triple', 'Double+rails'], layout_idx)
-        sizer.Add(layout_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        layout_row = wx.BoxSizer(wx.HORIZONTAL)
+        layout_row.Add(wx.StaticText(self, label='Layout:'), 0,
+                       wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._ch_layout = wx.Choice(self, choices=[
+            'Mini (170 holes, no rails)', 'Half (400 holes)', 'Full (830 holes)',
+            'Double (2× full, stacked)', 'Triple (3× full + vertical rails)',
+            'Double + side rails (2× full, left & right rails)',
+        ])
+        self._ch_layout.SetSelection(
+            _layout_map.index(prefs.board_layout) if prefs.board_layout in _layout_map else 2)
+        layout_row.Add(self._ch_layout, 1, wx.EXPAND)
+        sizer.Add(layout_row, 0, wx.EXPAND | wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
         self._cb_rail_split = wx.CheckBox(
             self, label='Power rails split in the middle (electrically disconnected)')
         self._cb_rail_split.SetValue(prefs.rail_split)
         sizer.Add(self._cb_rail_split, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
+        post_row = wx.BoxSizer(wx.HORIZONTAL)
+        post_row.Add(wx.StaticText(self, label='Binding posts side:'), 0,
+                     wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        self._ch_post_side = wx.Choice(self, choices=[
+            'Left', 'Right',
+            'Top Left', 'Top Center', 'Top Right',
+            'Bottom Left', 'Bottom Center', 'Bottom Right',
+        ])
         _ps = prefs.binding_post_side
         if _ps == 'top':    _ps = 'top_right'
         if _ps == 'bottom': _ps = 'bottom_right'
-        side_idx = _side_map.index(_ps) if _ps in _side_map else 0
-        side_row, self._rb_post_side = radio_row(
-            'Binding posts side:',
-            ['Left', 'Right', 'Top-L', 'Top-C', 'Top-R', 'Bot-L', 'Bot-C', 'Bot-R'],
-            side_idx)
-        sizer.Add(side_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        self._ch_post_side.SetSelection(_side_map.index(_ps) if _ps in _side_map else 0)
+        post_row.Add(self._ch_post_side, 0)
+        sizer.Add(post_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
         term_row, self._rb_num_terminals = radio_row(
             'Number of binding posts:', ['2', '3', '4'], prefs.num_terminals - 2)
         sizer.Add(term_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        def _sel(buttons) -> int:
-            return next(i for i, b in enumerate(buttons) if b.GetValue())
-
         def _update_terminal_choices(_evt=None):
-            layout  = _layout_map[_sel(self._rb_layout)]
-            side    = _side_map[_sel(self._rb_post_side)]
+            layout  = _layout_map[self._ch_layout.GetSelection()]
+            side    = _side_map[self._ch_post_side.GetSelection()]
             allow_4 = side not in ('left', 'right') or layout in ('double', 'triple', 'double_rails')
             btn4 = self._rb_num_terminals[2]
             if not allow_4:
@@ -2344,8 +2354,8 @@ class PreferencesDialog(wx.Dialog):
             else:
                 btn4.Enable(True)
 
-        for rb in self._rb_layout + self._rb_post_side:
-            rb.Bind(wx.EVT_RADIOBUTTON, _update_terminal_choices)
+        self._ch_layout.Bind(wx.EVT_CHOICE, _update_terminal_choices)
+        self._ch_post_side.Bind(wx.EVT_CHOICE, _update_terminal_choices)
         _update_terminal_choices()
 
         self._cb_baseboard = wx.CheckBox(self, label='Show baseboard')
@@ -2428,8 +2438,8 @@ class PreferencesDialog(wx.Dialog):
             show_binding_posts=self._cb_binding.IsChecked(),
             num_terminals=_sel(self._rb_num_terminals) + 2,
             export_format='svg' if self._rb_fmt[1].GetValue() else 'png',
-            board_layout=_layout_map[_sel(self._rb_layout)],
-            binding_post_side=_side_map[_sel(self._rb_post_side)],
+            board_layout=_layout_map[self._ch_layout.GetSelection()],
+            binding_post_side=_side_map[self._ch_post_side.GetSelection()],
             show_baseboard=self._cb_baseboard.IsChecked(),
             baseboard_color=self._cp_base.GetColour().GetAsString(wx.C2S_HTML_SYNTAX),
             show_branding=self._cb_branding.IsChecked(),
