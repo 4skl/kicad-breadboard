@@ -2244,6 +2244,24 @@ class PreferencesDialog(wx.Dialog):
                               wx.FONTWEIGHT_BOLD))
             return t
 
+        def radio_row(label: str, choices, selected: int):
+            """Return (sizer, list[RadioButton]) for a labelled inline radio group."""
+            row = wx.BoxSizer(wx.HORIZONTAL)
+            row.Add(wx.StaticText(self, label=label), 0,
+                    wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+            buttons = []
+            for i, ch in enumerate(choices):
+                rb = wx.RadioButton(self, label=ch,
+                                    style=wx.RB_GROUP if i == 0 else 0)
+                rb.SetValue(i == selected)
+                row.Add(rb, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 10)
+                buttons.append(rb)
+            return row, buttons
+
+        _layout_map = ['mini', 'half', 'full', 'double', 'triple', 'double_rails']
+        _side_map   = ['left', 'right', 'top_left', 'top_center', 'top_right',
+                       'bottom_left', 'bottom_center', 'bottom_right']
+
         # ---- Instruments ----
         sizer.Add(section('Instruments'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
         self._cb_instr = wx.CheckBox(self, label='Enable instruments panel')
@@ -2255,20 +2273,12 @@ class PreferencesDialog(wx.Dialog):
         self._cb_auto_gnd.SetValue(prefs.auto_gnd)
         sizer.Add(self._cb_auto_gnd, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        scope_row = wx.BoxSizer(wx.HORIZONTAL)
-        scope_row.Add(wx.StaticText(self, label='Oscilloscope channels:'), 0,
-                      wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
-        self._sc_scope = wx.SpinCtrl(self, min=1, max=4,
-                                     initial=prefs.scope_channels, size=(50, -1))
-        scope_row.Add(self._sc_scope, 0)
+        scope_row, self._rb_scope = radio_row(
+            'Oscilloscope channels:', ['1', '2', '3', '4'], prefs.scope_channels - 1)
         sizer.Add(scope_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        psu_row = wx.BoxSizer(wx.HORIZONTAL)
-        psu_row.Add(wx.StaticText(self, label='PSU channels:'), 0,
-                    wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
-        self._sc_psu = wx.SpinCtrl(self, min=1, max=3,
-                                   initial=prefs.psu_channels, size=(50, -1))
-        psu_row.Add(self._sc_psu, 0)
+        psu_row, self._rb_psu = radio_row(
+            'PSU channels:', ['1', '2', '3'], prefs.psu_channels - 1)
         sizer.Add(psu_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
@@ -2286,15 +2296,8 @@ class PreferencesDialog(wx.Dialog):
 
         # ---- Export ----
         sizer.Add(section('Export'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
-        fmt_row = wx.BoxSizer(wx.HORIZONTAL)
-        fmt_row.Add(wx.StaticText(self, label='Format:'), 0,
-                    wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
-        self._rb_png = wx.RadioButton(self, label='PNG', style=wx.RB_GROUP)
-        self._rb_svg = wx.RadioButton(self, label='SVG')
-        self._rb_png.SetValue(prefs.export_format == 'png')
-        self._rb_svg.SetValue(prefs.export_format == 'svg')
-        fmt_row.Add(self._rb_png, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
-        fmt_row.Add(self._rb_svg, 0, wx.ALIGN_CENTRE_VERTICAL)
+        fmt_row, self._rb_fmt = radio_row(
+            'Format:', ['PNG', 'SVG'], 1 if prefs.export_format == 'svg' else 0)
         sizer.Add(fmt_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
@@ -2302,63 +2305,48 @@ class PreferencesDialog(wx.Dialog):
         # ---- Board ----
         sizer.Add(section('Board'), 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        layout_row = wx.BoxSizer(wx.HORIZONTAL)
-        layout_row.Add(wx.StaticText(self, label='Size / layout:'), 0,
-                       wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
-        self._ch_layout = wx.Choice(self, choices=[
-            'Mini (170 holes, no rails)',
-            'Half (400 holes)', 'Full (830 holes)',
-            'Double (2× full, stacked)', 'Triple (3× full + vertical rails)',
-            'Double + side rails (2× full, left & right rails)',
-        ])
-        _layout_map = ['mini', 'half', 'full', 'double', 'triple', 'double_rails']
-        self._ch_layout.SetSelection(
-            _layout_map.index(prefs.board_layout) if prefs.board_layout in _layout_map else 2)
-        layout_row.Add(self._ch_layout, 1, wx.EXPAND)
-        sizer.Add(layout_row, 0, wx.EXPAND | wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        layout_idx = _layout_map.index(prefs.board_layout) if prefs.board_layout in _layout_map else 2
+        layout_row, self._rb_layout = radio_row(
+            'Layout:', ['Mini', 'Half', 'Full', 'Double', 'Triple', 'Double+rails'], layout_idx)
+        sizer.Add(layout_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        self._cb_rail_split = wx.CheckBox(self, label='Power rails split in the middle (electrically disconnected)')
+        self._cb_rail_split = wx.CheckBox(
+            self, label='Power rails split in the middle (electrically disconnected)')
         self._cb_rail_split.SetValue(prefs.rail_split)
         sizer.Add(self._cb_rail_split, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        post_row = wx.BoxSizer(wx.HORIZONTAL)
-        post_row.Add(wx.StaticText(self, label='Binding posts side:'), 0,
-                     wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
-        self._ch_post_side = wx.Choice(self, choices=[
-            'Left', 'Right',
-            'Top Left', 'Top Center', 'Top Right',
-            'Bottom Left', 'Bottom Center', 'Bottom Right',
-        ])
-        _side_map = ['left', 'right', 'top_left', 'top_center', 'top_right',
-                     'bottom_left', 'bottom_center', 'bottom_right']
-        # Normalize legacy values that may be stored in prefs
         _ps = prefs.binding_post_side
         if _ps == 'top':    _ps = 'top_right'
         if _ps == 'bottom': _ps = 'bottom_right'
-        self._ch_post_side.SetSelection(
-            _side_map.index(_ps) if _ps in _side_map else 0)
-        post_row.Add(self._ch_post_side, 0)
-        sizer.Add(post_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+        side_idx = _side_map.index(_ps) if _ps in _side_map else 0
+        side_row, self._rb_post_side = radio_row(
+            'Binding posts side:',
+            ['Left', 'Right', 'Top-L', 'Top-C', 'Top-R', 'Bot-L', 'Bot-C', 'Bot-R'],
+            side_idx)
+        sizer.Add(side_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
-        _term_row = wx.BoxSizer(wx.HORIZONTAL)
-        _term_row.Add(wx.StaticText(self, label='Number of binding posts:'),
-                      0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 6)
-        self._ch_num_terminals = wx.Choice(self, choices=['2', '3', '4'])
-        self._ch_num_terminals.SetSelection(max(0, min(prefs.num_terminals - 2, 2)))
-        _term_row.Add(self._ch_num_terminals, 0)
-        sizer.Add(_term_row, 0, wx.LEFT | wx.TOP, 10)
+        term_row, self._rb_num_terminals = radio_row(
+            'Number of binding posts:', ['2', '3', '4'], prefs.num_terminals - 2)
+        sizer.Add(term_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
+        def _sel(buttons) -> int:
+            return next(i for i, b in enumerate(buttons) if b.GetValue())
 
         def _update_terminal_choices(_evt=None):
-            layout = _layout_map[self._ch_layout.GetSelection()]
-            side   = _side_map[self._ch_post_side.GetSelection()]
+            layout  = _layout_map[_sel(self._rb_layout)]
+            side    = _side_map[_sel(self._rb_post_side)]
             allow_4 = side not in ('left', 'right') or layout in ('double', 'triple', 'double_rails')
-            cur = self._ch_num_terminals.GetSelection() + 2
-            self._ch_num_terminals.Set(['2', '3', '4'] if allow_4 else ['2', '3'])
-            self._ch_num_terminals.SetSelection(max(0, min(cur - 2, 2 if allow_4 else 1)))
+            btn4 = self._rb_num_terminals[2]
+            if not allow_4:
+                if btn4.GetValue():
+                    self._rb_num_terminals[1].SetValue(True)
+                btn4.Enable(False)
+            else:
+                btn4.Enable(True)
 
-        self._ch_layout.Bind(wx.EVT_CHOICE, _update_terminal_choices)
-        self._ch_post_side.Bind(wx.EVT_CHOICE, _update_terminal_choices)
-        _update_terminal_choices()  # set initial state
+        for rb in self._rb_layout + self._rb_post_side:
+            rb.Bind(wx.EVT_RADIOBUTTON, _update_terminal_choices)
+        _update_terminal_choices()
 
         self._cb_baseboard = wx.CheckBox(self, label='Show baseboard')
         self._cb_baseboard.SetValue(prefs.show_baseboard)
@@ -2386,9 +2374,10 @@ class PreferencesDialog(wx.Dialog):
         sizer.Add(img_row, 0, wx.EXPAND | wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
         def _on_browse(evt):
-            dlg = wx.FileDialog(self, 'Choose branding image',
-                                wildcard='Images (*.png;*.jpg;*.bmp;*.svg)|*.png;*.jpg;*.jpeg;*.bmp;*.svg|All files (*.*)|*.*',
-                                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+            dlg = wx.FileDialog(
+                self, 'Choose branding image',
+                wildcard='Images (*.png;*.jpg;*.bmp;*.svg)|*.png;*.jpg;*.jpeg;*.bmp;*.svg|All files (*.*)|*.*',
+                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
             if dlg.ShowModal() == wx.ID_OK:
                 self._tc_brand_img.SetValue(dlg.GetPath())
             dlg.Destroy()
@@ -2397,8 +2386,6 @@ class PreferencesDialog(wx.Dialog):
         self._cb_binding = wx.CheckBox(self, label='Show binding posts on board')
         self._cb_binding.SetValue(prefs.show_binding_posts)
         sizer.Add(self._cb_binding, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
-
-        sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
@@ -2427,18 +2414,22 @@ class PreferencesDialog(wx.Dialog):
         _layout_map = ['mini', 'half', 'full', 'double', 'triple', 'double_rails']
         _side_map   = ['left', 'right', 'top_left', 'top_center', 'top_right',
                        'bottom_left', 'bottom_center', 'bottom_right']
+
+        def _sel(buttons) -> int:
+            return next(i for i, b in enumerate(buttons) if b.GetValue())
+
         return Preferences(
             instruments_enabled=self._cb_instr.IsChecked(),
             auto_gnd=self._cb_auto_gnd.IsChecked(),
-            scope_channels=self._sc_scope.GetValue(),
-            psu_channels=self._sc_psu.GetValue(),
+            scope_channels=_sel(self._rb_scope) + 1,
+            psu_channels=_sel(self._rb_psu) + 1,
             show_net_labels=self._cb_labels.IsChecked(),
             show_hotkeys=self._cb_hotkeys.IsChecked(),
             show_binding_posts=self._cb_binding.IsChecked(),
-            num_terminals=self._ch_num_terminals.GetSelection() + 2,
-            export_format='svg' if self._rb_svg.GetValue() else 'png',
-            board_layout=_layout_map[self._ch_layout.GetSelection()],
-            binding_post_side=_side_map[self._ch_post_side.GetSelection()],
+            num_terminals=_sel(self._rb_num_terminals) + 2,
+            export_format='svg' if self._rb_fmt[1].GetValue() else 'png',
+            board_layout=_layout_map[_sel(self._rb_layout)],
+            binding_post_side=_side_map[_sel(self._rb_post_side)],
             show_baseboard=self._cb_baseboard.IsChecked(),
             baseboard_color=self._cp_base.GetColour().GetAsString(wx.C2S_HTML_SYNTAX),
             show_branding=self._cb_branding.IsChecked(),
