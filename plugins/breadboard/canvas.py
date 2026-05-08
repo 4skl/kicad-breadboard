@@ -2509,6 +2509,11 @@ class BreadboardCanvas(wx.Panel):
                 tw = len(ann.text) * char_w
                 if ann.x <= px <= ann.x + tw and ann.y <= py <= ann.y + line_h:
                     return i
+            elif isinstance(ann, DrawTextBox):
+                x1, y1 = min(ann.x1, ann.x2), min(ann.y1, ann.y2)
+                x2, y2 = max(ann.x1, ann.x2), max(ann.y1, ann.y2)
+                if x1 <= px <= x2 and y1 <= py <= y2:
+                    return i
         return None
 
     def _try_delete(self, px: int, py: int) -> None:
