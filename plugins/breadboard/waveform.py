@@ -17,31 +17,32 @@ import wx
 from .model.simulation import TransientTrace
 
 # ---------------------------------------------------------------------------
-# Colour palette
+# Colour palette — Tektronix 2430A inspired
 # ---------------------------------------------------------------------------
 
-_BODY     = wx.Colour(24, 24, 26)        # main front-panel metal
-_BEZEL    = wx.Colour(10, 14, 11)        # bezel around CRT
-_SCREEN   = wx.Colour(3, 14, 5)          # phosphor screen background
-_GRID_MAJ = wx.Colour(12, 36, 15)        # major graticule lines
-_GRID_CTR = wx.Colour(18, 54, 22)        # centre crosshair (brighter)
-_BRAND    = wx.Colour(0, 218, 100)       # KiScope logo green
-_AMBER    = wx.Colour(255, 175, 30)      # knob indicator / warm accent
-_LED_GRN  = wx.Colour(0, 235, 80)        # green indicator LED
-_DIM      = wx.Colour(85, 90, 85)        # engraved-label colour
-_MED      = wx.Colour(155, 158, 155)     # secondary text
-_KNOB_BD  = wx.Colour(44, 44, 47)        # knob body
-_KNOB_HI  = wx.Colour(72, 72, 76)        # knob highlight (top-left glint)
-_STRIP_BG = wx.Colour(18, 18, 20)        # channel strip + controls background
+_BODY      = wx.Colour(175, 172, 166)   # main front-panel warm light gray
+_HDR_DARK  = wx.Colour(32, 32, 35)      # dark top header + section header bars
+_BEZEL     = wx.Colour(16, 16, 18)      # screen bezel (very dark)
+_SCREEN    = wx.Colour(3, 14, 5)        # phosphor screen background
+_GRID_MAJ  = wx.Colour(12, 36, 15)     # major graticule lines
+_GRID_CTR  = wx.Colour(18, 54, 22)     # centre crosshair (brighter)
+_SECT_BG   = wx.Colour(150, 147, 142)  # section panel background
+_SECT_LBL  = wx.Colour(215, 213, 208)  # section header label (on dark bar)
+_TEXT      = wx.Colour(22, 22, 22)     # primary text on light panel
+_TEXT_DIM  = wx.Colour(86, 84, 80)    # secondary / dim text
+_KNOB_RING = wx.Colour(36, 36, 40)    # outer serrated ring
+_KNOB_FACE = wx.Colour(80, 78, 74)    # concave knob face
+_KNOB_SHAD = wx.Colour(20, 20, 22)    # drop shadow under knob
+_IND_LINE  = wx.Colour(244, 243, 236) # white indicator line
+_LED_GRN   = wx.Colour(0, 225, 65)   # power LED green
 
-# Classic DSO channel colours (yellow first, like Tektronix)
+# Classic DSO channel colours
 _CH_COLORS = [
     '#f0e020', '#00ccff', '#ff7700', '#ff44ff',
     '#44ff88', '#ff4444', '#44ffdd', '#ffcc44',
     '#8844ff', '#ff88cc', '#88ff44', '#ff4488',
 ]
 
-# TIME/DIV steps (seconds per division)
 _T_DIVS: List[float] = [
     1e-9, 2e-9, 5e-9, 1e-8, 2e-8, 5e-8,
     1e-7, 2e-7, 5e-7, 1e-6, 2e-6, 5e-6,
@@ -49,15 +50,13 @@ _T_DIVS: List[float] = [
     1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2,
     0.1, 0.2, 0.5, 1.0, 2.0, 5.0,
 ]
-
-# VOLTS/DIV steps
 _V_DIVS: List[float] = [
     1e-3, 2e-3, 5e-3, 0.01, 0.02, 0.05,
     0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0,
 ]
 
-_NH = 10   # horizontal (time) divisions
-_NV = 8    # vertical   (volt) divisions
+_NH = 10
+_NV = 8
 
 
 # ---------------------------------------------------------------------------
@@ -70,14 +69,13 @@ def _hex_to_rgb(h: str) -> Tuple[int, int, int]:
 
 
 def _fmt_eng(val: float, unit: str) -> str:
-    """Format a value in engineering notation with SI prefix."""
     if val == 0:
         return f'0 {unit}'
     a = abs(val)
-    if a < 1e-6:   return f'{val * 1e9:.3g} n{unit}'
-    if a < 1e-3:   return f'{val * 1e6:.3g} µ{unit}'
-    if a < 1.0:    return f'{val * 1e3:.3g} m{unit}'
-    if a < 1000:   return f'{val:.3g} {unit}'
+    if a < 1e-6:  return f'{val * 1e9:.3g} n{unit}'
+    if a < 1e-3:  return f'{val * 1e6:.3g} µ{unit}'
+    if a < 1.0:   return f'{val * 1e3:.3g} m{unit}'
+    if a < 1000:  return f'{val:.3g} {unit}'
     return f'{val / 1e3:.3g} k{unit}'
 
 
@@ -89,13 +87,11 @@ def _best_idx(table: List[float], needed: float) -> int:
 
 
 # ---------------------------------------------------------------------------
-# OscopeScreen — phosphor CRT display panel
+# OscopeScreen — phosphor CRT display
 # ---------------------------------------------------------------------------
 
 class OscopeScreen(wx.Panel):
-    """Custom-painted oscilloscope screen with phosphor glow and graticule."""
-
-    _PAD = 10   # pixels between panel edge and graticule
+    _PAD = 10
 
     def __init__(self, parent,
                  traces:     Dict[str, TransientTrace],
@@ -104,10 +100,10 @@ class OscopeScreen(wx.Panel):
         super().__init__(parent)
         self.SetBackgroundColour(_SCREEN)
         self.SetMinSize(wx.Size(420, 280))
-        self._traces   = traces
-        self._colors   = net_colors   # shared ref
-        self._visible  = visible      # shared ref
-        self._t_div: Optional[float] = None   # None = auto
+        self._traces  = traces
+        self._colors  = net_colors
+        self._visible = visible
+        self._t_div: Optional[float] = None
         self._v_div: Optional[float] = None
         self.Bind(wx.EVT_PAINT, self._on_paint)
         self.Bind(wx.EVT_SIZE,  lambda _: self.Refresh())
@@ -124,13 +120,11 @@ class OscopeScreen(wx.Panel):
         self._v_div = v
         self.Refresh()
 
-    # ------------------------------------------------------------------
-
     def _on_paint(self, _evt) -> None:
         dc = wx.BufferedPaintDC(self)
         W, H = self.GetClientSize()
         p = self._PAD
-        pw, ph = W - 2 * p, H - 2 * p   # plot area size
+        pw, ph = W - 2 * p, H - 2 * p
 
         dc.SetBackground(wx.Brush(_SCREEN))
         dc.Clear()
@@ -143,7 +137,7 @@ class OscopeScreen(wx.Panel):
                   if self._visible.get(n) and t.times}
 
         if not active:
-            dc.SetTextForeground(wx.Colour(0, 55, 18))
+            dc.SetTextForeground(wx.Colour(0, 52, 18))
             dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
                                wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
             msg = 'Click  ⦿ PROBE  then click any net on the breadboard'
@@ -151,7 +145,7 @@ class OscopeScreen(wx.Panel):
             dc.DrawText(msg, (W - tw) // 2, (H - th) // 2)
             return
 
-        t_max = max(max(tr.times) for tr in active.values())
+        t_max  = max(max(tr.times) for tr in active.values())
         all_v  = [v for tr in active.values() for v in tr.values]
         v_min0, v_max0 = min(all_v), max(all_v)
         v_span = v_max0 - v_min0 or 1.0
@@ -159,7 +153,7 @@ class OscopeScreen(wx.Panel):
         t_window = self._t_div * _NH if self._t_div else (t_max or 1e-3)
 
         if self._v_div:
-            vc   = (v_max0 + v_min0) / 2
+            vc    = (v_max0 + v_min0) / 2
             vhalf = self._v_div * _NV / 2
             v_lo, v_hi = vc - vhalf, vc + vhalf
         else:
@@ -189,7 +183,6 @@ class OscopeScreen(wx.Panel):
             r, g, b = _hex_to_rgb(self._colors.get(net, '#f0e020'))
             self._draw_phosphor(dc, gc, pts, r, g, b)
 
-        # Corner readouts
         t_div_lbl = _fmt_eng(self._t_div or t_window / _NH, 's') + '/div'
         v_div_lbl = _fmt_eng(self._v_div or (v_hi - v_lo) / _NV, 'V') + '/div'
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_TELETYPE,
@@ -200,7 +193,6 @@ class OscopeScreen(wx.Panel):
         dc.DrawText(v_div_lbl, p + pw - tw - 4, p + ph - 14)
 
     def _draw_graticule(self, dc: wx.DC, ox: int, oy: int, pw: int, ph: int) -> None:
-        # Major grid lines
         dc.SetPen(wx.Pen(_GRID_MAJ, 1))
         for i in range(_NH + 1):
             x = ox + round(i * pw / _NH)
@@ -209,14 +201,12 @@ class OscopeScreen(wx.Panel):
             y = oy + round(i * ph / _NV)
             dc.DrawLine(ox, y, ox + pw, y)
 
-        # Centre crosshair (brighter)
         dc.SetPen(wx.Pen(_GRID_CTR, 1))
         cx = ox + pw // 2
         cy = oy + ph // 2
         dc.DrawLine(cx, oy, cx, oy + ph)
         dc.DrawLine(ox, cy, ox + pw, cy)
 
-        # Minor subdivision ticks along centre axes (5 per major div)
         tk = 4
         for i in range(_NH * 5 + 1):
             x = ox + round(i * pw / (_NH * 5))
@@ -225,19 +215,17 @@ class OscopeScreen(wx.Panel):
             y = oy + round(i * ph / (_NV * 5))
             dc.DrawLine(cx - tk, y, cx + tk, y)
 
-        # Border
         dc.SetPen(wx.Pen(_GRID_CTR, 1))
         dc.SetBrush(wx.TRANSPARENT_BRUSH)
         dc.DrawRectangle(ox, oy, pw, ph)
 
     def _draw_phosphor(self, dc: wx.DC, gc, pts: list,
                        r: int, g: int, b: int) -> None:
-        """Three-pass phosphor glow: wide/dim → medium → bright core."""
         if gc is not None:
             layers = [
-                (8.0,  wx.Colour(r // 8,  g // 8,  b // 8)),
-                (3.5,  wx.Colour(r // 3,  g // 3,  b // 3)),
-                (1.5,  wx.Colour(r,        g,        b)),
+                (8.0, wx.Colour(r // 8,  g // 8,  b // 8)),
+                (3.5, wx.Colour(r // 3,  g // 3,  b // 3)),
+                (1.5, wx.Colour(r,        g,        b)),
             ]
             for width, col in layers:
                 gc.SetPen(gc.CreatePen(
@@ -255,19 +243,20 @@ class OscopeScreen(wx.Panel):
 
 
 # ---------------------------------------------------------------------------
-# KnobWidget — painted rotary knob, scroll-wheel adjustable
+# KnobWidget — Tektronix-style rotary knob
 # ---------------------------------------------------------------------------
 
 class KnobWidget(wx.Panel):
-    """Oscilloscope-style rotary knob with amber indicator and engraved label."""
+    """Tektronix-style knob: dark outer serrated ring, concave face, white indicator."""
 
-    _R = 22   # knob radius in px
+    _R_RING = 26   # outer ring radius
+    _R_FACE = 19   # concave face radius
 
     def __init__(self, parent, label: str, divs: List[float], unit: str,
                  on_change: Optional[Callable] = None):
-        super().__init__(parent, size=wx.Size(72, 82))
-        self.SetMinSize(wx.Size(72, 82))
-        self.SetBackgroundColour(_STRIP_BG)
+        super().__init__(parent, size=wx.Size(76, 90))
+        self.SetMinSize(wx.Size(76, 90))
+        self.SetBackgroundColour(_SECT_BG)
         self._label     = label
         self._divs      = divs
         self._unit      = unit
@@ -296,81 +285,90 @@ class KnobWidget(wx.Panel):
     def _on_paint(self, _evt) -> None:
         dc = wx.PaintDC(self)
         W, H = self.GetClientSize()
-        dc.SetBackground(wx.Brush(_STRIP_BG))
+        dc.SetBackground(wx.Brush(_SECT_BG))
         dc.Clear()
 
-        R  = self._R
+        Rr = self._R_RING
+        Rf = self._R_FACE
         cx = W // 2
-        cy = R + 8   # knob centre y
+        cy = Rr + 10
 
-        # Shadow ring
-        dc.SetPen(wx.Pen(wx.Colour(8, 8, 9), 2))
-        dc.SetBrush(wx.Brush(wx.Colour(12, 12, 13)))
-        dc.DrawCircle(cx, cy, R + 5)
+        # Drop shadow
+        dc.SetPen(wx.Pen(_KNOB_SHAD, 1))
+        dc.SetBrush(wx.Brush(_KNOB_SHAD))
+        dc.DrawCircle(cx + 2, cy + 2, Rr + 2)
 
-        # Knob body
-        dc.SetPen(wx.Pen(wx.Colour(55, 55, 58), 1))
-        dc.SetBrush(wx.Brush(_KNOB_BD))
-        dc.DrawCircle(cx, cy, R)
+        # Outer serrated ring
+        dc.SetPen(wx.Pen(wx.Colour(52, 52, 56), 1))
+        dc.SetBrush(wx.Brush(_KNOB_RING))
+        dc.DrawCircle(cx, cy, Rr)
 
-        # Top-left specular glint
-        dc.SetPen(wx.Pen(_KNOB_HI, 1))
-        dc.SetBrush(wx.Brush(_KNOB_HI))
-        dc.DrawCircle(cx - R // 3, cy - R // 3, R // 4)
-
-        # Amber indicator line
-        n     = max(len(self._divs) - 1, 1)
-        angle = math.radians(-135 + (self._idx / n) * 270 - 90)
-        ix    = cx + int((R - 7) * math.cos(angle))
-        iy    = cy + int((R - 7) * math.sin(angle))
-        dc.SetPen(wx.Pen(_AMBER, 3, wx.PENSTYLE_SOLID))
-        dc.DrawLine(cx, cy, ix, iy)
-
-        # Axle centre dot
-        dc.SetPen(wx.Pen(wx.Colour(8, 8, 8), 1))
-        dc.SetBrush(wx.Brush(wx.Colour(8, 8, 8)))
-        dc.DrawCircle(cx, cy, 4)
-
-        # Tick marks around the knob arc (9 marks, −135° to +135°)
-        dc.SetPen(wx.Pen(_DIM, 1))
-        for k in range(9):
-            a = math.radians(-135 + k * 270 / 8 - 90)
-            x1 = cx + int((R + 2) * math.cos(a))
-            y1 = cy + int((R + 2) * math.sin(a))
-            x2 = cx + int((R + 5) * math.cos(a))
-            y2 = cy + int((R + 5) * math.sin(a))
+        # Serration notches (subtle radial marks on the outer rim)
+        dc.SetPen(wx.Pen(wx.Colour(48, 48, 52), 1))
+        for k in range(20):
+            a = math.radians(k * 360 / 20)
+            x1 = cx + int((Rr - 4) * math.cos(a))
+            y1 = cy + int((Rr - 4) * math.sin(a))
+            x2 = cx + int(Rr * math.cos(a))
+            y2 = cy + int(Rr * math.sin(a))
             dc.DrawLine(x1, y1, x2, y2)
 
-        # Engraved label
+        # Concave face
+        dc.SetPen(wx.Pen(wx.Colour(96, 94, 90), 1))
+        dc.SetBrush(wx.Brush(_KNOB_FACE))
+        dc.DrawCircle(cx, cy, Rf)
+
+        # White indicator line
+        n     = max(len(self._divs) - 1, 1)
+        angle = math.radians(-135 + (self._idx / n) * 270 - 90)
+        ix    = cx + int((Rf - 4) * math.cos(angle))
+        iy    = cy + int((Rf - 4) * math.sin(angle))
+        dc.SetPen(wx.Pen(_IND_LINE, 2, wx.PENSTYLE_SOLID))
+        dc.DrawLine(cx, cy, ix, iy)
+
+        # Centre rivet
+        dc.SetPen(wx.Pen(wx.Colour(50, 50, 48), 1))
+        dc.SetBrush(wx.Brush(wx.Colour(62, 60, 58)))
+        dc.DrawCircle(cx, cy, 3)
+
+        # Scale marks outside the ring (9 ticks, −135° to +135°)
+        dc.SetPen(wx.Pen(_TEXT_DIM, 1))
+        for k in range(9):
+            a  = math.radians(-135 + k * 270 / 8 - 90)
+            x1 = cx + int((Rr + 3) * math.cos(a))
+            y1 = cy + int((Rr + 3) * math.sin(a))
+            x2 = cx + int((Rr + 7) * math.cos(a))
+            y2 = cy + int((Rr + 7) * math.sin(a))
+            dc.DrawLine(x1, y1, x2, y2)
+
+        # Label
         dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        dc.SetTextForeground(_DIM)
+        dc.SetTextForeground(_TEXT_DIM)
         lw = dc.GetTextExtent(self._label)[0]
-        dc.DrawText(self._label, (W - lw) // 2, cy + R + 7)
+        dc.DrawText(self._label, (W - lw) // 2, cy + Rr + 7)
 
-        # Green LED-style value readout
+        # Value readout
         val_str = _fmt_eng(self._divs[self._idx], self._unit) + '/div'
         dc.SetFont(wx.Font(6, wx.FONTFAMILY_TELETYPE,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        dc.SetTextForeground(wx.Colour(0, 185, 72))
+        dc.SetTextForeground(_TEXT)
         vw = dc.GetTextExtent(val_str)[0]
-        dc.DrawText(val_str, (W - vw) // 2, cy + R + 18)
+        dc.DrawText(val_str, (W - vw) // 2, cy + Rr + 18)
 
 
 # ---------------------------------------------------------------------------
-# ChannelButton — per-net LED toggle in the channel strip
+# ChannelButton — per-net LED toggle on the light panel
 # ---------------------------------------------------------------------------
 
 class ChannelButton(wx.Panel):
-    """A clickable channel row: coloured LED + net name."""
-
-    _H = 30
+    _H = 26
 
     def __init__(self, parent, idx: int, net_name: str,
                  color_hex: str, active: bool, on_click: Callable):
         super().__init__(parent, size=wx.Size(-1, self._H))
         self.SetMinSize(wx.Size(-1, self._H))
-        self.SetBackgroundColour(_STRIP_BG)
+        self.SetBackgroundColour(_SECT_BG)
         self._idx      = idx
         self._net      = net_name
         self._color    = color_hex
@@ -400,40 +398,116 @@ class ChannelButton(wx.Panel):
     def _on_paint(self, _evt) -> None:
         dc = wx.PaintDC(self)
         W, H = self.GetClientSize()
-        bg = wx.Colour(34, 36, 34) if self._hover else _STRIP_BG
+        bg = wx.Colour(188, 185, 180) if self._hover else _SECT_BG
         dc.SetBackground(wx.Brush(bg))
         dc.Clear()
 
         r, g, b = _hex_to_rgb(self._color)
-        led_r = 6
-        led_cx, led_cy = 14, H // 2
+        led_cx, led_cy, led_r = 11, H // 2, 5
 
-        # LED circle
         if self._active:
-            # bright filled
             dc.SetPen(wx.Pen(wx.Colour(r, g, b), 1))
             dc.SetBrush(wx.Brush(wx.Colour(r, g, b)))
         else:
-            # dim / unlit
-            dc.SetPen(wx.Pen(wx.Colour(r // 6, g // 6, b // 6), 1))
-            dc.SetBrush(wx.Brush(wx.Colour(r // 8, g // 8, b // 8)))
+            dc.SetPen(wx.Pen(wx.Colour(r // 5, g // 5, b // 5), 1))
+            dc.SetBrush(wx.Brush(wx.Colour(r // 6, g // 6, b // 6)))
         dc.DrawCircle(led_cx, led_cy, led_r)
 
-        # Channel index label (e.g. "1")
-        dc.SetFont(wx.Font(6, wx.FONTFAMILY_TELETYPE,
+        dc.SetFont(wx.Font(5, wx.FONTFAMILY_TELETYPE,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        num_lbl = str(self._idx + 1)
-        nw, nh = dc.GetTextExtent(num_lbl)
-        dc.SetTextForeground(wx.Colour(r // 2, g // 2, b // 2) if not self._active
-                             else wx.Colour(r, g, b))
-        dc.DrawText(num_lbl, led_cx - nw // 2, led_cy - nh // 2)
+        num = str(self._idx + 1)
+        nw, nh = dc.GetTextExtent(num)
+        dc.SetTextForeground(wx.Colour(r, g, b) if self._active else _TEXT_DIM)
+        dc.DrawText(num, led_cx - nw // 2, led_cy - nh // 2)
 
-        # Net name
-        short = self._net[:18]
+        short = self._net[:20]
         dc.SetFont(wx.Font(7, wx.FONTFAMILY_TELETYPE,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        dc.SetTextForeground(wx.Colour(r, g, b) if self._active else _DIM)
-        dc.DrawText(short, 26, (H - dc.GetTextExtent(short)[1]) // 2)
+        dc.SetTextForeground(_TEXT if self._active else _TEXT_DIM)
+        dc.DrawText(short, 22, (H - dc.GetTextExtent(short)[1]) // 2)
+
+
+# ---------------------------------------------------------------------------
+# _LedDot — small painted LED used in the dark header
+# ---------------------------------------------------------------------------
+
+class _LedDot(wx.Panel):
+    def __init__(self, parent: wx.Panel, color: wx.Colour, label: str):
+        super().__init__(parent, size=wx.Size(30, 42))
+        self.SetMinSize(wx.Size(30, 42))
+        self.SetBackgroundColour(parent.GetBackgroundColour())
+        self._color = color
+        self._label = label
+        self.Bind(wx.EVT_PAINT, self._on_paint)
+
+    def _on_paint(self, _evt) -> None:
+        dc = wx.PaintDC(self)
+        W, H = self.GetClientSize()
+        dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+        dc.Clear()
+        r, g, b = self._color.Red(), self._color.Green(), self._color.Blue()
+        cx, cy, rad = W // 2, 8, 6
+        dc.SetPen(wx.Pen(wx.Colour(r // 4, g // 4, b // 4), 1))
+        dc.SetBrush(wx.Brush(wx.Colour(r // 4, g // 4, b // 4)))
+        dc.DrawCircle(cx, cy, rad + 3)
+        dc.SetPen(wx.Pen(self._color, 1))
+        dc.SetBrush(wx.Brush(self._color))
+        dc.DrawCircle(cx, cy, rad)
+        dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT,
+                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        dc.SetTextForeground(_SECT_LBL)
+        lw = dc.GetTextExtent(self._label)[0]
+        dc.DrawText(self._label, (W - lw) // 2, cy + rad + 4)
+
+
+# ---------------------------------------------------------------------------
+# _BncConnector — decorative BNC input on the bottom strip
+# ---------------------------------------------------------------------------
+
+class _BncConnector(wx.Panel):
+    def __init__(self, parent: wx.Panel, label: str, color_hex: str):
+        super().__init__(parent, size=wx.Size(44, 44))
+        self.SetMinSize(wx.Size(44, 44))
+        self.SetBackgroundColour(parent.GetBackgroundColour())
+        self._label = label
+        self._color = color_hex
+        self.Bind(wx.EVT_PAINT, self._on_paint)
+
+    def _on_paint(self, _evt) -> None:
+        dc = wx.PaintDC(self)
+        W, H = self.GetClientSize()
+        dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+        dc.Clear()
+
+        cx, cy = W // 2, H // 2 - 4
+        r, g, b = _hex_to_rgb(self._color)
+
+        # Outer shell
+        dc.SetPen(wx.Pen(wx.Colour(24, 24, 26), 1))
+        dc.SetBrush(wx.Brush(wx.Colour(44, 44, 48)))
+        dc.DrawCircle(cx, cy, 15)
+
+        # Colored channel ring
+        dc.SetPen(wx.Pen(wx.Colour(r // 2, g // 2, b // 2), 3))
+        dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        dc.DrawCircle(cx, cy, 11)
+
+        # Insulator
+        dc.SetPen(wx.Pen(wx.Colour(175, 170, 162), 1))
+        dc.SetBrush(wx.Brush(wx.Colour(205, 200, 190)))
+        dc.DrawCircle(cx, cy, 7)
+
+        # Centre pin
+        dc.SetPen(wx.Pen(wx.Colour(175, 172, 165), 1))
+        dc.SetBrush(wx.Brush(wx.Colour(195, 192, 185)))
+        dc.DrawCircle(cx, cy, 3)
+
+        # Label
+        dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        dc.SetTextForeground(wx.Colour(r, g, b))
+        lw = dc.GetTextExtent(self._label)[0]
+        dc.DrawText(self._label, (W - lw) // 2, H - 11)
 
 
 # ---------------------------------------------------------------------------
@@ -441,13 +515,13 @@ class ChannelButton(wx.Panel):
 # ---------------------------------------------------------------------------
 
 class WaveformFrame(wx.Frame):
-    """KiScope oscilloscope-style waveform viewer."""
+    """KiScope oscilloscope-style waveform viewer, Tektronix 2430A inspired."""
 
     def __init__(self, parent,
                  traces: Dict[str, TransientTrace],
                  on_probe_toggle: Optional[Callable[[bool], None]] = None):
         super().__init__(parent, title='KiScope',
-                         size=(1060, 660),
+                         size=(1080, 660),
                          style=wx.DEFAULT_FRAME_STYLE)
         self._traces          = traces
         self._on_probe_toggle = on_probe_toggle
@@ -455,14 +529,12 @@ class WaveformFrame(wx.Frame):
         self._ch_buttons:  Dict[str, ChannelButton] = {}
         self._probe_btn:   Optional[wx.ToggleButton] = None
 
-        # Assign a fixed colour to every net (sorted for determinism)
         self._net_colors: Dict[str, str] = {
             name: _CH_COLORS[i % len(_CH_COLORS)]
             for i, name in enumerate(sorted(traces))
         }
         self._visible: Dict[str, bool] = {n: False for n in traces}
 
-        # Pick initial knob positions from data
         all_times = [t for tr in traces.values() for t in (tr.times or [])]
         all_vals  = [v for tr in traces.values() for v in (tr.values or [])]
         t_needed  = (max(all_times) / _NH) if all_times else 1e-3
@@ -499,70 +571,65 @@ class WaveformFrame(wx.Frame):
         body = wx.Panel(self)
         body.SetBackgroundColour(_BODY)
         outer = wx.BoxSizer(wx.VERTICAL)
-
-        outer.Add(self._make_header(body), 0, wx.EXPAND)
-        outer.Add(self._make_main(body),   1, wx.EXPAND | wx.ALL, 5)
-        outer.Add(self._make_controls(body), 0, wx.EXPAND)
-
+        outer.Add(self._make_header(body),      0, wx.EXPAND)
+        outer.Add(self._make_main_row(body),    1, wx.EXPAND | wx.ALL, 5)
+        outer.Add(self._make_bottom_strip(body), 0, wx.EXPAND)
         body.SetSizer(outer)
         fsz = wx.BoxSizer(wx.VERTICAL)
         fsz.Add(body, 1, wx.EXPAND)
         self.SetSizer(fsz)
         self.Layout()
 
-    # ── Header ──────────────────────────────────────────────────────────
+    # ── Header ─ dark top band ──────────────────────────────────────────
 
     def _make_header(self, parent: wx.Panel) -> wx.Panel:
         hdr = wx.Panel(parent)
-        hdr.SetBackgroundColour(wx.Colour(14, 16, 14))
-        hdr.SetMinSize(wx.Size(-1, 50))
+        hdr.SetBackgroundColour(_HDR_DARK)
+        hdr.SetMinSize(wx.Size(-1, 52))
         sz = wx.BoxSizer(wx.HORIZONTAL)
 
-        # Logo: "KiScope"
         logo = wx.StaticText(hdr, label='KiScope')
-        logo.SetFont(wx.Font(22, wx.FONTFAMILY_DEFAULT,
+        logo.SetFont(wx.Font(20, wx.FONTFAMILY_DEFAULT,
                              wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        logo.SetForegroundColour(_BRAND)
+        logo.SetForegroundColour(wx.Colour(255, 255, 255))
+        logo.SetBackgroundColour(_HDR_DARK)
 
-        # Sub-label
         sub = wx.StaticText(hdr, label='DIGITAL STORAGE OSCILLOSCOPE  ·  DSO BB-1')
         sub.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                             wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        sub.SetForegroundColour(_DIM)
+        sub.SetForegroundColour(wx.Colour(155, 153, 148))
+        sub.SetBackgroundColour(_HDR_DARK)
 
-        logo_col = wx.BoxSizer(wx.VERTICAL)
-        logo_col.Add(logo, 0)
-        logo_col.Add(sub,  0, wx.TOP, 2)
-
-        sz.Add(logo_col, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 14)
+        col = wx.BoxSizer(wx.VERTICAL)
+        col.Add(logo, 0)
+        col.Add(sub, 0, wx.TOP, 3)
+        sz.Add(col, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 14)
         sz.AddStretchSpacer()
 
-        # Simulation info
         if self._traces:
             all_t = [t for tr in self._traces.values() for t in (tr.times or [])]
             if all_t:
-                t_tot = max(all_t)
+                t_tot    = max(all_t)
                 info_txt = (f'{len(self._traces)} nets captured  ·  '
                             f'span {_fmt_eng(t_tot, "s")}')
                 info = wx.StaticText(hdr, label=info_txt)
                 info.SetFont(wx.Font(7, wx.FONTFAMILY_TELETYPE,
                                      wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-                info.SetForegroundColour(wx.Colour(0, 130, 55))
-                sz.Add(info, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 16)
+                info.SetForegroundColour(wx.Colour(0, 180, 65))
+                info.SetBackgroundColour(_HDR_DARK)
+                sz.Add(info, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 20)
 
-        # Power LED indicator (painted)
         pwr = _LedDot(hdr, _LED_GRN, 'PWR')
-        sz.Add(pwr, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 12)
+        sz.Add(pwr, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 14)
 
         hdr.SetSizer(sz)
         return hdr
 
-    # ── Main area: screen + channel strip ───────────────────────────────
+    # ── Main row: screen + right-side sections ─────────────────────────
 
-    def _make_main(self, parent: wx.Panel) -> wx.BoxSizer:
+    def _make_main_row(self, parent: wx.Panel) -> wx.BoxSizer:
         row = wx.BoxSizer(wx.HORIZONTAL)
 
-        # Bezel (dark frame around the CRT)
         bezel = wx.Panel(parent)
         bezel.SetBackgroundColour(_BEZEL)
         b_sz = wx.BoxSizer(wx.VERTICAL)
@@ -570,125 +637,163 @@ class WaveformFrame(wx.Frame):
                                     self._net_colors, self._visible)
         self._screen.set_t_div(_T_DIVS[self._init_t_idx])
         self._screen.set_v_div(_V_DIVS[self._init_v_idx])
-        b_sz.Add(self._screen, 1, wx.EXPAND | wx.ALL, 7)
+        b_sz.Add(self._screen, 1, wx.EXPAND | wx.ALL, 8)
         bezel.SetSizer(b_sz)
 
         row.Add(bezel, 1, wx.EXPAND)
-        row.Add(self._make_channel_strip(parent), 0, wx.EXPAND | wx.LEFT, 5)
+        row.Add(self._make_right_panel(parent), 0, wx.EXPAND | wx.LEFT, 5)
         return row
 
-    def _make_channel_strip(self, parent: wx.Panel) -> wx.Panel:
-        strip = wx.Panel(parent)
-        strip.SetBackgroundColour(_STRIP_BG)
-        strip.SetMinSize(wx.Size(148, -1))
+    # ── Right panel — stacked VERTICAL / HORIZONTAL / TRIGGER sections ──
+
+    def _make_right_panel(self, parent: wx.Panel) -> wx.Panel:
+        rp = wx.Panel(parent)
+        rp.SetBackgroundColour(_BODY)
+        rp.SetMinSize(wx.Size(216, -1))
+        sz = wx.BoxSizer(wx.VERTICAL)
+        sz.Add(self._make_vertical_section(rp),   1, wx.EXPAND)
+        sz.Add(self._make_horizontal_section(rp), 0, wx.EXPAND | wx.TOP, 4)
+        sz.Add(self._make_trigger_section(rp),    0, wx.EXPAND | wx.TOP, 4)
+        rp.SetSizer(sz)
+        return rp
+
+    def _make_vertical_section(self, parent: wx.Panel) -> wx.Panel:
+        sect = wx.Panel(parent)
+        sect.SetBackgroundColour(_SECT_BG)
         sz = wx.BoxSizer(wx.VERTICAL)
 
-        # "CHANNELS" label
-        lbl = wx.StaticText(strip, label='CHANNELS')
-        lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
-                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        lbl.SetForegroundColour(_DIM)
-        lbl.SetBackgroundColour(_STRIP_BG)
-        sz.Add(lbl, 0, wx.LEFT | wx.TOP, 8)
+        sz.Add(_SectionHeader(sect, 'VERTICAL'), 0, wx.EXPAND)
 
-        # Separator
-        sz.Add(wx.StaticLine(strip), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
+        self._v_knob = KnobWidget(sect, 'VOLTS/DIV', _V_DIVS, 'V',
+                                   on_change=self._screen.set_v_div)
+        self._v_knob.set_index(self._init_v_idx)
+        sz.Add(self._v_knob, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.TOP, 5)
 
-        # Scrolled channel list
-        scr = wx.ScrolledWindow(strip, style=wx.VSCROLL)
+        sz.Add(wx.StaticLine(sect), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+
+        ch_lbl = wx.StaticText(sect, label='CHANNELS')
+        ch_lbl.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                               wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        ch_lbl.SetForegroundColour(_TEXT_DIM)
+        ch_lbl.SetBackgroundColour(_SECT_BG)
+        sz.Add(ch_lbl, 0, wx.LEFT | wx.TOP, 8)
+
+        scr = wx.ScrolledWindow(sect, style=wx.VSCROLL)
         scr.SetScrollRate(0, 10)
-        scr.SetBackgroundColour(_STRIP_BG)
+        scr.SetBackgroundColour(_SECT_BG)
         scr_sz = wx.BoxSizer(wx.VERTICAL)
-
         for i, net in enumerate(sorted(self._traces)):
-            color = self._net_colors[net]
-            btn = ChannelButton(scr, i, net, color,
-                                active=False,
-                                on_click=self._on_channel_click)
-            scr_sz.Add(btn, 0, wx.EXPAND | wx.TOP, 2)
+            btn = ChannelButton(scr, i, net, self._net_colors[net],
+                                active=False, on_click=self._on_channel_click)
+            scr_sz.Add(btn, 0, wx.EXPAND | wx.TOP, 1)
             self._ch_buttons[net] = btn
-
         scr.SetSizer(scr_sz)
         scr.FitInside()
         sz.Add(scr, 1, wx.EXPAND | wx.TOP, 4)
 
-        sz.Add(wx.StaticLine(strip), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+        sz.Add(wx.StaticLine(sect), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
 
-        # Probe toggle button
-        self._probe_btn = wx.ToggleButton(strip, label='⦿  PROBE')
+        self._probe_btn = wx.ToggleButton(sect, label='⦿  PROBE')
         self._probe_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                                         wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        self._probe_btn.SetToolTip('Activate probe mode — click any net on the breadboard')
+        self._probe_btn.SetToolTip(
+            'Activate probe mode — click any net on the breadboard')
         self._probe_btn.Bind(wx.EVT_TOGGLEBUTTON, self._on_probe_btn)
         self._style_probe_btn(False)
         sz.Add(self._probe_btn, 0, wx.EXPAND | wx.ALL, 8)
 
-        # "CLEAR ALL" link
-        clr = wx.Button(strip, label='Clear all', style=wx.BORDER_NONE)
+        clr = wx.Button(sect, label='Clear all', style=wx.BORDER_NONE)
         clr.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
                             wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        clr.SetForegroundColour(_DIM)
-        clr.SetBackgroundColour(_STRIP_BG)
+        clr.SetForegroundColour(_TEXT_DIM)
+        clr.SetBackgroundColour(_SECT_BG)
         clr.Bind(wx.EVT_BUTTON, self._on_clear_all)
         sz.Add(clr, 0, wx.ALIGN_CENTRE | wx.BOTTOM, 6)
 
-        strip.SetSizer(sz)
-        return strip
+        sect.SetSizer(sz)
+        return sect
 
-    # ── Controls strip (knobs + decorative buttons) ──────────────────────
+    def _make_horizontal_section(self, parent: wx.Panel) -> wx.Panel:
+        sect = wx.Panel(parent)
+        sect.SetBackgroundColour(_SECT_BG)
+        sz = wx.BoxSizer(wx.VERTICAL)
 
-    def _make_controls(self, parent: wx.Panel) -> wx.Panel:
-        ctrl = wx.Panel(parent)
-        ctrl.SetBackgroundColour(_STRIP_BG)
-        ctrl.SetMinSize(wx.Size(-1, 88))
-        sz = wx.BoxSizer(wx.HORIZONTAL)
+        sz.Add(_SectionHeader(sect, 'HORIZONTAL'), 0, wx.EXPAND)
 
-        # V/DIV knob
-        self._v_knob = KnobWidget(ctrl, 'VOLTS/DIV', _V_DIVS, 'V',
-                                   on_change=self._screen.set_v_div)
-        self._v_knob.set_index(self._init_v_idx)
-
-        # TIME/DIV knob
-        self._t_knob = KnobWidget(ctrl, 'TIME/DIV', _T_DIVS, 's',
+        knob_row = wx.BoxSizer(wx.HORIZONTAL)
+        self._t_knob = KnobWidget(sect, 'TIME/DIV', _T_DIVS, 's',
                                    on_change=self._screen.set_t_div)
         self._t_knob.set_index(self._init_t_idx)
-
-        # TRIG LVL knob (decorative — controls nothing yet)
-        trig_knob = KnobWidget(ctrl, 'TRIG LVL', _V_DIVS, 'V')
-        trig_knob.set_index(len(_V_DIVS) // 2)
-
-        # POSITION knob (decorative)
-        pos_knob = KnobWidget(ctrl, 'POSITION', [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0], 'div')
+        pos_knob = KnobWidget(sect, 'POSITION',
+                              [-4.0, -3.0, -2.0, -1.0, 0.0,
+                               1.0, 2.0, 3.0, 4.0], 'div')
         pos_knob.set_index(4)
+        knob_row.Add(self._t_knob, 0, wx.LEFT | wx.BOTTOM, 5)
+        knob_row.Add(pos_knob,    0, wx.LEFT | wx.BOTTOM, 3)
+        sz.Add(knob_row, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.TOP, 4)
 
-        sz.Add(self._v_knob,  0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT,  16)
-        sz.Add(self._t_knob,  0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT,  12)
-        sz.Add(trig_knob,     0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT,  12)
-        sz.Add(pos_knob,      0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT,  12)
+        sect.SetSizer(sz)
+        return sect
 
-        # Separator
-        sep = wx.StaticLine(ctrl, style=wx.LI_VERTICAL)
-        sz.Add(sep, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP | wx.BOTTOM, 14)
+    def _make_trigger_section(self, parent: wx.Panel) -> wx.Panel:
+        sect = wx.Panel(parent)
+        sect.SetBackgroundColour(_SECT_BG)
+        sz = wx.BoxSizer(wx.VERTICAL)
 
-        # RUN/STOP button (decorative green)
-        run_btn = wx.Button(ctrl, label='▶  RUN')
-        run_btn.SetBackgroundColour(wx.Colour(0, 80, 30))
-        run_btn.SetForegroundColour(wx.Colour(0, 230, 80))
-        run_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
-                                wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        run_btn.SetToolTip('Simulation already complete')
-        sz.Add(run_btn, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        sz.Add(_SectionHeader(sect, 'TRIGGER'), 0, wx.EXPAND)
 
-        # AUTO button (decorative)
-        auto_btn = wx.Button(ctrl, label='AUTO')
+        inner = wx.BoxSizer(wx.HORIZONTAL)
+
+        trig_knob = KnobWidget(sect, 'TRIG LVL', _V_DIVS, 'V')
+        trig_knob.set_index(len(_V_DIVS) // 2)
+        inner.Add(trig_knob, 0, wx.LEFT | wx.BOTTOM, 5)
+
+        btn_col = wx.BoxSizer(wx.VERTICAL)
+
+        auto_btn = wx.Button(sect, label='AUTO', size=wx.Size(58, 24))
         auto_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
                                  wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         auto_btn.Bind(wx.EVT_BUTTON, self._on_auto)
         auto_btn.SetToolTip('Auto-fit all visible traces')
-        sz.Add(auto_btn, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
 
-        ctrl.SetSizer(sz)
-        return ctrl
+        run_btn = wx.Button(sect, label='▶ RUN', size=wx.Size(58, 24))
+        run_btn.SetBackgroundColour(wx.Colour(0, 72, 24))
+        run_btn.SetForegroundColour(wx.Colour(0, 215, 72))
+        run_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                                wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        run_btn.SetToolTip('Simulation already complete')
+
+        btn_col.Add(auto_btn, 0, wx.LEFT | wx.TOP, 6)
+        btn_col.Add(run_btn,  0, wx.LEFT | wx.TOP, 4)
+        inner.Add(btn_col, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 2)
+
+        sz.Add(inner, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.TOP, 4)
+        sect.SetSizer(sz)
+        return sect
+
+    # ── Bottom strip — BNC connectors ───────────────────────────────────
+
+    def _make_bottom_strip(self, parent: wx.Panel) -> wx.Panel:
+        strip = wx.Panel(parent)
+        strip.SetBackgroundColour(_SECT_BG)
+        strip.SetMinSize(wx.Size(-1, 50))
+        sz = wx.BoxSizer(wx.HORIZONTAL)
+
+        sz.Add(_BncConnector(strip, 'CH 1', _CH_COLORS[0]),
+               0, wx.LEFT | wx.TOP | wx.BOTTOM, 6)
+        sz.Add(_BncConnector(strip, 'CH 2', _CH_COLORS[1]),
+               0, wx.LEFT | wx.TOP | wx.BOTTOM, 4)
+        sz.AddStretchSpacer()
+
+        model_lbl = wx.StaticText(strip, label='KiScope DSO BB-1')
+        model_lbl.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                                  wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        model_lbl.SetForegroundColour(_TEXT_DIM)
+        model_lbl.SetBackgroundColour(_SECT_BG)
+        sz.Add(model_lbl, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 16)
+
+        strip.SetSizer(sz)
+        return strip
 
     # ── Event handlers ────────────────────────────────────────────────────
 
@@ -703,8 +808,8 @@ class WaveformFrame(wx.Frame):
 
     def _style_probe_btn(self, active: bool) -> None:
         if active:
-            self._probe_btn.SetBackgroundColour(wx.Colour(80, 50, 0))
-            self._probe_btn.SetForegroundColour(_AMBER)
+            self._probe_btn.SetBackgroundColour(wx.Colour(80, 52, 0))
+            self._probe_btn.SetForegroundColour(wx.Colour(255, 198, 55))
         else:
             self._probe_btn.SetBackgroundColour(wx.NullColour)
             self._probe_btn.SetForegroundColour(wx.NullColour)
@@ -717,7 +822,6 @@ class WaveformFrame(wx.Frame):
             btn.set_active(False)
 
     def _on_auto(self, _evt) -> None:
-        """Reset knobs to auto-fit the current active traces."""
         self._screen.set_t_div(None)
         self._screen.set_v_div(None)
         self._t_knob.set_index(self._init_t_idx)
@@ -730,44 +834,19 @@ class WaveformFrame(wx.Frame):
 
 
 # ---------------------------------------------------------------------------
-# _LedDot — small painted LED indicator used in the header
+# _SectionHeader — dark horizontal label bar between sections
 # ---------------------------------------------------------------------------
 
-class _LedDot(wx.Panel):
-    def __init__(self, parent: wx.Panel, color: wx.Colour, label: str):
-        super().__init__(parent, size=wx.Size(32, 44))
-        self.SetMinSize(wx.Size(32, 44))
-        self.SetBackgroundColour(parent.GetBackgroundColour())
-        self._color = color
-        self._label = label
-        self.Bind(wx.EVT_PAINT, self._on_paint)
-
-    def _on_paint(self, _evt) -> None:
-        dc = wx.PaintDC(self)
-        W, H = self.GetClientSize()
-        dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
-        dc.Clear()
-        r = 7
-        cx = W // 2
-        # Glow ring
-        dc.SetPen(wx.Pen(wx.Colour(
-            self._color.Red() // 4,
-            self._color.Green() // 4,
-            self._color.Blue() // 4,
-        ), 1))
-        dc.SetBrush(wx.Brush(wx.Colour(
-            self._color.Red() // 4,
-            self._color.Green() // 4,
-            self._color.Blue() // 4,
-        )))
-        dc.DrawCircle(cx, r + 4, r + 3)
-        # Core
-        dc.SetPen(wx.Pen(self._color, 1))
-        dc.SetBrush(wx.Brush(self._color))
-        dc.DrawCircle(cx, r + 4, r)
-        # Label
-        dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT,
-                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        dc.SetTextForeground(_DIM)
-        lw = dc.GetTextExtent(self._label)[0]
-        dc.DrawText(self._label, (W - lw) // 2, r * 2 + 8)
+class _SectionHeader(wx.Panel):
+    def __init__(self, parent: wx.Panel, label: str):
+        super().__init__(parent)
+        self.SetBackgroundColour(_HDR_DARK)
+        self.SetMinSize(wx.Size(-1, 18))
+        sz = wx.BoxSizer(wx.HORIZONTAL)
+        lbl = wx.StaticText(self, label=label)
+        lbl.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        lbl.SetForegroundColour(_SECT_LBL)
+        lbl.SetBackgroundColour(_HDR_DARK)
+        sz.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 8)
+        self.SetSizer(sz)
