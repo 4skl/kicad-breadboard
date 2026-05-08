@@ -5630,11 +5630,13 @@ class BreadboardCanvas(wx.Panel):
             return
 
         # Collect: net_name → ref of the sole placed component pin
-        entries: List[Tuple[str, str]] = []   # (net_name, ref)
+        entries: List[Tuple[str, str]] = []   # (display_name, ref_summary)
         for net in self.netlist.nets:
             name = net.name
-            if name.startswith('Net-(') or name.startswith('unconnected-(') or name == '0':
+            if name.startswith('Net-(') or name.startswith('unconnected-('):
                 continue
+            # Net named '0' is the SPICE ground node — show it as 'GND'
+            display_name = 'GND' if name == '0' else name
             placed_refs: List[str] = []
             for pn in net.pins:
                 h = self.board.hole_for_pin(pn.ref, pn.pin)
@@ -5646,7 +5648,7 @@ class BreadboardCanvas(wx.Panel):
                 summary = placed_refs[0]
             else:
                 summary = placed_refs[0] + ' +' + str(len(placed_refs) - 1)
-            entries.append((name, summary))
+            entries.append((display_name, summary))
 
         if not entries:
             self._net_label_rows = []
@@ -5656,11 +5658,19 @@ class BreadboardCanvas(wx.Panel):
         FG      = wx.Colour(0xff, 0xff, 0xff)
         HDR     = wx.Colour(0x00, 0x50, 0x50, 220)
         HL_ROW  = wx.Colour(0xff, 0xcc, 0x00, 200)   # amber highlight for active row
-        PAD     = 9
-        ROW_GAP = 4
 
-        font_hdr  = wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        font_body = wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        # Larger, more prominent overlay when the user is actively in highlight mode
+        if in_hl_mode:
+            PAD     = 12
+            ROW_GAP = 6
+            _FSZ    = 11
+        else:
+            PAD     = 9
+            ROW_GAP = 4
+            _FSZ    = 9
+
+        font_hdr  = wx.Font(_FSZ, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        font_body = wx.Font(_FSZ, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
 
         dc.SetFont(font_body)
         _, row_h = dc.GetTextExtent('Ag')

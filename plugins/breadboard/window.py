@@ -113,8 +113,8 @@ def _local_icon(name: str, size: int = 24) -> 'wx.Bitmap':
         return wx.NullBitmap
 
 
-def _kicad_icon(name: str) -> 'wx.Bitmap':
-    """Load a 24×24 PNG from the KiCad icon archive.
+def _kicad_icon(name: str, size: int = 20) -> 'wx.Bitmap':
+    """Load a PNG from the KiCad icon archive, scaled to size×size.
 
     In dark mode, automatically tries the _dark_ variant first
     (e.g. save_24.png → save_dark_24.png).
@@ -125,22 +125,25 @@ def _kicad_icon(name: str) -> 'wx.Bitmap':
         dark_name = _re.sub(r'_(\d+\.png)$', r'_dark_\1', name)
         if dark_name != name:
             name = dark_name
-    if name in _icon_cache:
-        return _icon_cache[name]
+    cache_key = (name, size)
+    if cache_key in _icon_cache:
+        return _icon_cache[cache_key]
     import io, tarfile
     try:
         with tarfile.open(_KICAD_ICON_ARCHIVE) as tf:
             member = tf.extractfile(f'./{name}')
             if member is None:
-                _icon_cache[name] = wx.NullBitmap
+                _icon_cache[cache_key] = wx.NullBitmap
                 return wx.NullBitmap
             data = member.read()
         img = wx.Image(io.BytesIO(data), wx.BITMAP_TYPE_PNG)
+        if img.GetWidth() != size or img.GetHeight() != size:
+            img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
         bmp = wx.Bitmap(img)
-        _icon_cache[name] = bmp
+        _icon_cache[cache_key] = bmp
         return bmp
     except Exception:
-        _icon_cache[name] = wx.NullBitmap
+        _icon_cache[cache_key] = wx.NullBitmap
         return wx.NullBitmap
 
 
@@ -487,7 +490,7 @@ class BreadboardWindow(wx.Frame):
     def _build_vtoolbar(self, parent: wx.Window) -> wx.ToolBar:
         """Right-side vertical tool palette, mirroring Eeschema's right toolbar."""
         vt = wx.ToolBar(parent, style=wx.TB_VERTICAL | wx.TB_NODIVIDER)
-        vt.SetToolBitmapSize((24, 24))
+        vt.SetToolBitmapSize((20, 20))
 
         # --- Pointer / view tools ---
         vt.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png'),
@@ -559,7 +562,7 @@ class BreadboardWindow(wx.Frame):
         self.SetMenuBar(menu_bar)
 
     def _build_toolbar(self) -> None:
-        tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_TEXT)
+        tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_NODIVIDER)
         tb.SetBackgroundColour(_panel_bg())
         tb.SetToolBitmapSize((20, 20))
 
@@ -572,7 +575,7 @@ class BreadboardWindow(wx.Frame):
                         else 'export_png_24.png')
         tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon),
                    shortHelp='Save the breadboard as an image')
-        tb.AddTool(ID_PREFS, 'Preferences', _local_icon('preficon.png'),
+        tb.AddTool(ID_PREFS, 'Preferences', _local_icon('preficon.png', 20),
                    shortHelp='Open preferences')
         tb.AddSeparator()
 
@@ -604,7 +607,7 @@ class BreadboardWindow(wx.Frame):
         # Schematic sync
         _update_icon_name = ('update_bbrd_from_sch_dark_64.png' if _is_dark_mode()
                              else 'update_bbrd_from_sch_64.png')
-        tb.AddTool(ID_UPDATE, 'Update', _local_icon(_update_icon_name),
+        tb.AddTool(ID_UPDATE, 'Update', _local_icon(_update_icon_name, 20),
                    shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
         tb.AddTool(ID_EESCHEMA, 'Schematic', _kicad_icon('icon_eeschema_24_24.png'),
                    shortHelp='Open schematic in Eeschema')
@@ -1923,7 +1926,7 @@ class SimPane(wx.Panel):
         body = wx.BoxSizer(wx.VERTICAL)
 
         # Sources
-        src_lbl = wx.StaticText(self, label='Sources')
+        src_lbl = wx.StaticText(self, label='Operating Point Analysis')
         src_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                 wx.FONTWEIGHT_BOLD))
         src_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
@@ -1960,8 +1963,6 @@ class SimPane(wx.Panel):
                 self._volt_ctrls[term] = sp
         body.Add(grid, 0, wx.EXPAND | wx.ALL, 8)
 
-        body.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
-
         # Run / Clear buttons
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         run_btn = wx.Button(self, label='▶  Run')
@@ -1991,63 +1992,6 @@ class SimPane(wx.Panel):
                                          wx.FONTWEIGHT_BOLD))
                 tran_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
                 body.Add(tran_lbl, 0, wx.LEFT | wx.TOP, 8)
-
-                for src in vsin_list:
-                    freq = src.freq
-                    if freq >= 1e6:
-                        freq_str = f'{freq/1e6:.4g} MHz'
-                    elif freq >= 1e3:
-                        freq_str = f'{freq/1e3:.4g} kHz'
-                    else:
-                        freq_str = f'{freq:.4g} Hz'
-                    info_lbl = wx.StaticText(
-                        self,
-                        label=f'  {src.ref}: {freq_str}, {src.vampl:.4g} V ampl'
-                              + (f' + {src.voff:.4g} V dc' if src.voff else ''),
-                    )
-                    info_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
-                                             wx.FONTWEIGHT_NORMAL))
-                    info_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
-                    body.Add(info_lbl, 0, wx.LEFT, 4)
-
-                # Oscilloscope channel status
-                ch_lbl = wx.StaticText(self, label='Channels')
-                ch_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                       wx.FONTWEIGHT_BOLD))
-                ch_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
-                body.Add(ch_lbl, 0, wx.LEFT | wx.TOP, 8)
-
-                ch_grid = wx.FlexGridSizer(cols=2, vgap=2, hgap=6)
-                ch_grid.AddGrowableCol(1)
-                all_channels = ('CH1', 'CH2', 'CH3', 'CH4')
-                for ch_name in all_channels[:self._scope_channels]:
-                    meta = PROBE_META[ch_name]
-                    ch_dot = wx.StaticText(self, label=meta['label'])
-                    ch_dot.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                                           wx.FONTWEIGHT_BOLD))
-                    net_name = board.get_probe_net(ch_name)
-                    hole = board.get_probe_hole(ch_name)
-                    if net_name:
-                        ch_dot.SetForegroundColour(wx.Colour(meta['color']))
-                        net_lbl = wx.StaticText(self, label=net_name)
-                        net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL,
-                                                wx.FONTWEIGHT_NORMAL))
-                        net_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT))
-                    elif hole is not None:
-                        ch_dot.SetForegroundColour(wx.Colour(meta['color']))
-                        net_lbl = wx.StaticText(self, label='(no net)')
-                        net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
-                                                wx.FONTWEIGHT_NORMAL))
-                        net_lbl.SetForegroundColour(wx.Colour(160, 120, 40))
-                    else:
-                        ch_dot.SetForegroundColour(wx.Colour(180, 180, 180))
-                        net_lbl = wx.StaticText(self, label='not placed')
-                        net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC,
-                                                wx.FONTWEIGHT_NORMAL))
-                        net_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
-                    ch_grid.Add(ch_dot,  0, wx.ALIGN_CENTRE_VERTICAL)
-                    ch_grid.Add(net_lbl, 1, wx.ALIGN_CENTRE_VERTICAL | wx.EXPAND)
-                body.Add(ch_grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
                 tran_btn = wx.Button(self, label='▶  Open KiScope')
                 tran_btn.Bind(wx.EVT_BUTTON, self._on_run_transient)
