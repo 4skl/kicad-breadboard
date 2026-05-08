@@ -982,6 +982,8 @@ class BreadboardCanvas(wx.Panel):
         self._highlighted_holes: Set[Hole] = set()   # from validation
         self._highlight_kind: Optional[IssueKind] = None
         self._net_hl_holes: Set[Hole] = set()        # from net-highlight mode
+        self._net_hl_name:  str       = ''           # net name currently highlighted
+        self._net_label_rows: List[Tuple[int, int, int, int, str]] = []  # screen-space hit boxes
 
         self._annotations: List = []                 # DrawLine / DrawRect / DrawText / DrawCircle
         self._draw_start: Optional[Tuple[float, float]] = None   # in-progress shape first point
@@ -1283,6 +1285,7 @@ class BreadboardCanvas(wx.Panel):
             self._hover_probe_name = None
         if mode != MODE_NET_HIGHLIGHT:
             self._net_hl_holes = set()
+            self._net_hl_name  = ''
         if mode not in _DRAW_MODES:
             self._draw_start = None
             self._draw_preview = None
@@ -1411,6 +1414,39 @@ class BreadboardCanvas(wx.Panel):
             self.on_placed(ref)
         self.Refresh()
         return True
+
+    def _highlight_net_by_name(self, net_name: str) -> None:
+        """Highlight all board holes belonging to the named schematic net."""
+        if not self.netlist:
+            return
+        seed_holes: Set[Hole] = set()
+        for net in self.netlist.nets:
+            if net.name == net_name:
+                for pn in net.pins:
+                    h = self.board.hole_for_pin(pn.ref, pn.pin)
+                    if h is not None:
+                        seed_holes.add(h)
+        if seed_holes:
+            uf = self.board.build_connectivity()
+            connected: Set[Hole] = set()
+            for h in seed_holes:
+                root = uf.find(h)
+                connected.update(x for x in uf._parent if uf.find(x) == root)
+            self._net_hl_holes = connected
+        else:
+            self._net_hl_holes = set()
+        self._net_hl_name = net_name
+
+    def _hl_net_name_from_holes(self) -> str:
+        """Return the schematic net name for the currently highlighted holes."""
+        if not self.netlist or not self._net_hl_holes:
+            return ''
+        for net in self.netlist.nets:
+            for pn in net.pins:
+                h = self.board.hole_for_pin(pn.ref, pn.pin)
+                if h in self._net_hl_holes:
+                    return net.name
+        return ''
 
     def set_highlighted(self, holes: Set[Hole], kind: Optional[IssueKind] = None) -> None:
         self._highlighted_holes = holes
@@ -1614,13 +1650,23 @@ class BreadboardCanvas(wx.Panel):
             return
 
         if self.mode == MODE_NET_HIGHLIGHT:
+            # Hit-test the net-labels overlay (screen space) before board coords
+            sx, sy = evt.GetPosition()
+            for rx, ry, rw, rh, row_net in self._net_label_rows:
+                if rx <= sx <= rx + rw and ry <= sy <= ry + rh:
+                    self._highlight_net_by_name(row_net)
+                    self.Refresh()
+                    return
+            # Fall back to hole proximity (board space)
             hole = self.layout.nearest_hole(px, py)
             if hole is not None:
                 uf = self.board.build_connectivity()
                 root = uf.find(hole)
                 self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
+                self._net_hl_name  = self._hl_net_name_from_holes()
             else:
                 self._net_hl_holes = set()
+                self._net_hl_name  = ''
             self.Refresh()
             return
 
@@ -5463,7 +5509,9 @@ class BreadboardCanvas(wx.Panel):
         Called after the zoom/pan transform is reset, so coordinates are
         plain screen pixels.
         """
-        if not self.netlist or not self.show_net_labels:
+        in_hl_mode = self.mode == MODE_NET_HIGHLIGHT
+        if not self.netlist or (not self.show_net_labels and not in_hl_mode):
+            self._net_label_rows = []
             return
 
         # Collect: net_name → ref of the sole placed component pin
@@ -5481,11 +5529,13 @@ class BreadboardCanvas(wx.Panel):
                 entries.append((name, placed_pins[0]))
 
         if not entries:
+            self._net_label_rows = []
             return
 
         BG      = wx.Colour(0x00, 0x70, 0x70, 200)   # semi-transparent teal
         FG      = wx.Colour(0xff, 0xff, 0xff)
         HDR     = wx.Colour(0x00, 0x50, 0x50, 220)
+        HL_ROW  = wx.Colour(0xff, 0xcc, 0x00, 200)   # amber highlight for active row
         PAD     = 6
         ROW_GAP = 2
 
@@ -5538,10 +5588,20 @@ class BreadboardCanvas(wx.Panel):
         y += row_h + ROW_GAP
 
         dc.SetFont(font_body)
+        self._net_label_rows = []
         for net_name, ref in entries:
+            rh = row_h + ROW_GAP
+            self._net_label_rows.append((bx, y - 1, box_w, rh, net_name))
+            if in_hl_mode and net_name == self._net_hl_name:
+                dc.SetBrush(wx.Brush(HL_ROW))
+                dc.SetPen(wx.TRANSPARENT_PEN)
+                dc.DrawRectangle(bx + 1, y - 1, box_w - 2, rh)
+                dc.SetTextForeground(wx.Colour(0x22, 0x22, 0x22))
+            else:
+                dc.SetTextForeground(FG)
             dc.DrawText(net_name, bx + PAD, y)
             dc.DrawText(ref,      bx + PAD + col1_w + col_gap, y)
-            y += row_h + ROW_GAP
+            y += rh
 
     def _draw_column_labels(self, dc: wx.DC) -> None:
         lay = self.layout
