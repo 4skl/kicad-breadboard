@@ -5541,11 +5541,11 @@ class BreadboardCanvas(wx.Panel):
         FG      = wx.Colour(0xff, 0xff, 0xff)
         HDR     = wx.Colour(0x00, 0x50, 0x50, 220)
         HL_ROW  = wx.Colour(0xff, 0xcc, 0x00, 200)   # amber highlight for active row
-        PAD     = 6
-        ROW_GAP = 2
+        PAD     = 9
+        ROW_GAP = 4
 
-        font_hdr  = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        font_body = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        font_hdr  = wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        font_body = wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
 
         dc.SetFont(font_body)
         _, row_h = dc.GetTextExtent('Ag')
@@ -5563,7 +5563,7 @@ class BreadboardCanvas(wx.Panel):
             col1_w = max(col1_w, w1)
             col2_w = max(col2_w, w2)
 
-        col_gap = 12
+        col_gap = 16
         box_w = PAD + col1_w + col_gap + col2_w + PAD
         n_rows = 1 + len(entries)   # header + data rows
         box_h = PAD + n_rows * (row_h + ROW_GAP) + PAD
@@ -5571,7 +5571,7 @@ class BreadboardCanvas(wx.Panel):
         cw, ch = self.GetClientSize()
         MARGIN = 8
         bx = cw - box_w - MARGIN
-        by = ch - box_h - MARGIN
+        by = MARGIN
 
         # Background
         dc.SetBrush(wx.Brush(BG))
