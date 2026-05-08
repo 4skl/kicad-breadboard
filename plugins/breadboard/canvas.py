@@ -418,7 +418,9 @@ class CanvasLayout:
             term_cx = board_right + TERM_R + _POST_BOARD_GAP
 
         # --- Binding post positions ---
-        _active_terminals = TERMINAL_NAMES[:max(2, min(num_terminals, len(TERMINAL_NAMES)))]
+        _large_board = board_layout in ('double', 'triple', 'double_rails')
+        _max_terms = 4 if (not _is_horiz or _large_board) else 3
+        _active_terminals = TERMINAL_NAMES[:max(2, min(num_terminals, _max_terms))]
         n = len(_active_terminals)
         if _is_horiz:
             v_margin = int(self.total_height * 0.18)

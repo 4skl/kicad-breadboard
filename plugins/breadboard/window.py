@@ -2386,6 +2386,18 @@ class PreferencesDialog(wx.Dialog):
         _term_row.Add(self._ch_num_terminals, 0)
         sizer.Add(_term_row, 0, wx.LEFT | wx.TOP, 10)
 
+        def _update_terminal_choices(_evt=None):
+            layout = _layout_map[self._ch_layout.GetSelection()]
+            side   = _side_map[self._ch_post_side.GetSelection()]
+            allow_4 = side not in ('left', 'right') or layout in ('double', 'triple', 'double_rails')
+            cur = self._ch_num_terminals.GetSelection() + 2
+            self._ch_num_terminals.Set(['2', '3', '4'] if allow_4 else ['2', '3'])
+            self._ch_num_terminals.SetSelection(max(0, min(cur - 2, 2 if allow_4 else 1)))
+
+        self._ch_layout.Bind(wx.EVT_CHOICE, _update_terminal_choices)
+        self._ch_post_side.Bind(wx.EVT_CHOICE, _update_terminal_choices)
+        _update_terminal_choices()  # set initial state
+
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
