@@ -2323,6 +2323,10 @@ class PreferencesDialog(wx.Dialog):
         self._cb_rail_split.SetValue(prefs.rail_split)
         sizer.Add(self._cb_rail_split, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
+        self._cb_binding = wx.CheckBox(self, label='Show binding posts on board')
+        self._cb_binding.SetValue(prefs.show_binding_posts)
+        sizer.Add(self._cb_binding, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
         post_row = wx.BoxSizer(wx.HORIZONTAL)
         post_row.Add(wx.StaticText(self, label='Binding posts side:'), 0,
                      wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
@@ -2392,10 +2396,6 @@ class PreferencesDialog(wx.Dialog):
                 self._tc_brand_img.SetValue(dlg.GetPath())
             dlg.Destroy()
         browse_btn.Bind(wx.EVT_BUTTON, _on_browse)
-
-        self._cb_binding = wx.CheckBox(self, label='Show binding posts on board')
-        self._cb_binding.SetValue(prefs.show_binding_posts)
-        sizer.Add(self._cb_binding, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
         sizer.Add(wx.StaticLine(self), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
 
