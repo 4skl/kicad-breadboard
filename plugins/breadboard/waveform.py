@@ -514,21 +514,15 @@ class _BncConnector(wx.Panel):
 # WaveformFrame — the full KiScope oscilloscope window
 # ---------------------------------------------------------------------------
 
-class WaveformFrame(wx.Dialog):
-    """KiScope oscilloscope-style waveform viewer, Tektronix 2430A inspired.
-
-    Implemented as a Dialog so tiling WMs (Hyprland, i3, etc.) treat it as a
-    transient daughter window and float it automatically.
-    """
+class WaveformFrame(wx.Frame):
+    """KiScope oscilloscope-style waveform viewer, Tektronix 2430A inspired."""
 
     def __init__(self, parent,
                  traces: Dict[str, TransientTrace],
                  on_probe_toggle: Optional[Callable[[bool], None]] = None):
         super().__init__(parent, title='KiScope',
                          size=(1080, 660),
-                         style=(wx.DEFAULT_DIALOG_STYLE
-                                | wx.RESIZE_BORDER
-                                | wx.MAXIMIZE_BOX))
+                         style=wx.DEFAULT_FRAME_STYLE)
         self._traces          = traces
         self._on_probe_toggle = on_probe_toggle
         self._probe_active    = False
