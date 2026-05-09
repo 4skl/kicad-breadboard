@@ -436,23 +436,17 @@ def _build_netlist(board: Breadboard, netlist: Netlist,
 
     lines: List[str] = ['* Breadboard SPICE netlist', ''] + comp_lines + ['']
 
-    vsin_sources = find_vsin_sources(netlist)
-    net_to_vsin: Dict[str, VsinSource] = {src.net_pos: src for src in vsin_sources}
-
+    # For DC .op, binding posts are always GND-referenced DC sources at the
+    # user-specified voltage.  VSIN source parameters are irrelevant here —
+    # using src.voff caused 0 V output, and src.net_neg caused a floating node.
     for term in ('V1', 'V2', 'V3'):
         net_name = board.terminal_nets.get(term, '')
         if not net_name:
             continue
         spice_node = _node_for_net(net_name, node_map)
-        src = net_to_vsin.get(net_name)
-        if src:
-            # VSIN source: reference its actual negative terminal and use dc as operating point
-            neg_node = _node_for_net(src.net_neg, node_map)
-            lines.append(f'V_bb_{term}  {spice_node}  {neg_node}  DC {src.voff:.6g}')
-        else:
-            voltage = terminal_voltages.get(term)
-            if voltage is not None:
-                lines.append(f'V_bb_{term}  {spice_node}  0  DC {voltage}')
+        voltage = terminal_voltages.get(term)
+        if voltage is not None:
+            lines.append(f'V_bb_{term}  {spice_node}  0  DC {voltage}')
 
     lines += ['', _MODELS, '.op', '.end', '']
     return '\n'.join(lines), None, warnings
@@ -507,9 +501,12 @@ def _build_transient_netlist(
         spice_node = _node_for_net(net_name, node_map)
         src = net_to_vsin.get(net_name)
         if src:
-            neg_node = _node_for_net(src.net_neg, node_map)
+            # Breadboard binding posts are always GND-referenced.  Use the VSIN
+            # waveform parameters but force the negative node to 0 (GND).  Using
+            # src.net_neg caused a floating node when the VSIN V− pin goes to a
+            # net other than the assigned GND net (e.g. /Vdc).
             lines.append(
-                f'V_bb_{term}  {spice_node}  {neg_node}'
+                f'V_bb_{term}  {spice_node}  0'
                 f'  SIN({src.voff:.6g} {src.vampl:.6g} {src.freq:.6g})'
             )
         else:
