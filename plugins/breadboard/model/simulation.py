@@ -532,6 +532,10 @@ def _build_transient_netlist(
 
     lines: List[str] = ['* Breadboard SPICE transient netlist', ''] + comp_lines + ['']
 
+    # Binding-post sources — only emitted when the user has wired a terminal
+    # to a breadboard net.  Track which VSIN net_pos values get covered here
+    # so we don't duplicate them in the fallback pass below.
+    driven_nets: set = set()
     for term in ('V1', 'V2', 'V3'):
         net_name = board.terminal_nets.get(term, '')
         if not net_name:
@@ -548,10 +552,27 @@ def _build_transient_netlist(
                 f'V_bb_{term}  {spice_node}  0'
                 f'  SIN({dc_bias:.6g} {src.vampl:.6g} {src.freq:.6g})'
             )
+            driven_nets.add(net_name)
         else:
             voltage = terminal_voltages.get(term)
             if voltage is not None:
                 lines.append(f'V_bb_{term}  {spice_node}  0  DC {voltage}')
+
+    # Schematic-direct sources — emit any VSIN source whose positive net is
+    # reachable in node_map but not already driven by a binding post above.
+    # This covers the common case where the student hasn't connected a binding
+    # post at all; the VSIN still lives in the schematic and must be emitted.
+    for i, src in enumerate(vsin_sources):
+        if src.net_pos in driven_nets:
+            continue
+        spice_node = _node_for_net(src.net_pos, node_map)
+        if spice_node == '0':
+            continue
+        dc_bias = _vdc_offset_for_net(netlist, src.net_neg) + src.voff
+        lines.append(
+            f'V_src_{i}  {spice_node}  0'
+            f'  SIN({dc_bias:.6g} {src.vampl:.6g} {src.freq:.6g})'
+        )
 
     lines.append('')
     lines.append(_MODELS)

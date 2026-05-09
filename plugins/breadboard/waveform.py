@@ -590,12 +590,108 @@ class OscopeScreen(wx.Panel):
 
 
 # ---------------------------------------------------------------------------
+# _PushButton — vintage illuminated momentary push-button
+# ---------------------------------------------------------------------------
+
+class _PushButton(wx.Panel):
+    """Backlit illuminated push-button, vintage test-equipment style."""
+
+    def __init__(self, parent, label: str, color: wx.Colour,
+                 size: Tuple[int, int] = (60, 58),
+                 on_click: Optional[Callable] = None):
+        super().__init__(parent, size=wx.Size(*size))
+        self.SetMinSize(wx.Size(*size))
+        self.SetBackgroundColour(_BODY)
+        self._label   = label
+        self._color   = color
+        self._cb      = on_click
+        self._pressed = False
+        self.Bind(wx.EVT_PAINT,     self._on_paint)
+        self.Bind(wx.EVT_LEFT_DOWN, self._on_down)
+        self.Bind(wx.EVT_LEFT_UP,   self._on_up)
+        self.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+
+    def _on_down(self, _evt) -> None:
+        self._pressed = True
+        self.Refresh()
+
+    def _on_up(self, _evt) -> None:
+        self._pressed = False
+        self.Refresh()
+        if self._cb:
+            self._cb()
+
+    def _on_paint(self, _evt) -> None:
+        dc = wx.PaintDC(self)
+        W, H = self.GetClientSize()
+        dc.SetBackground(wx.Brush(_BODY))
+        dc.Clear()
+
+        r, g, b = self._color.Red(), self._color.Green(), self._color.Blue()
+
+        # LED dot at top centre
+        lcy = 7
+        if self._pressed:
+            dc.SetPen(wx.Pen(wx.Colour(r // 2, g // 2, b // 2), 1))
+            dc.SetBrush(wx.Brush(self._color))
+        else:
+            dc.SetPen(wx.Pen(wx.Colour(r // 5, g // 5, b // 5), 1))
+            dc.SetBrush(wx.Brush(wx.Colour(r // 5, g // 5, b // 5)))
+        dc.DrawCircle(W // 2, lcy, 4)
+
+        # Button body
+        bx, by = 3, 16
+        bw, bh = W - 6, H - 20
+
+        face      = wx.Colour(26, 24, 22) if self._pressed else wx.Colour(46, 44, 40)
+        highlight = wx.Colour(18, 16, 14) if self._pressed else wx.Colour(68, 66, 60)
+        shadow    = wx.Colour(16, 14, 12)
+
+        # Drop shadow
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(wx.Brush(wx.Colour(8, 8, 10)))
+        dc.DrawRoundedRectangle(bx + 2, by + 2, bw, bh, 5)
+
+        # Body
+        dc.SetPen(wx.Pen(shadow, 1))
+        dc.SetBrush(wx.Brush(face))
+        dc.DrawRoundedRectangle(bx, by, bw, bh, 5)
+
+        # Highlight streak (top edge)
+        dc.SetPen(wx.Pen(highlight, 1))
+        dc.DrawLine(bx + 5, by + 1, bx + bw - 6, by + 1)
+
+        # Translucent legend plate (inner rectangle, slightly lighter)
+        px, py = bx + 4, by + 4
+        pw, ph = bw - 8, bh - 8
+        plate_col = wx.Colour(r // 6, g // 6, b // 6) if not self._pressed \
+                    else wx.Colour(r // 4, g // 4, b // 4)
+        dc.SetPen(wx.Pen(plate_col, 1))
+        dc.SetBrush(wx.Brush(plate_col))
+        dc.DrawRoundedRectangle(px, py, pw, ph, 3)
+
+        # Label text on the legend plate
+        lines = self._label.split('\n')
+        lbl_col = wx.Colour(min(r + 80, 255), min(g + 80, 255), min(b + 80, 255)) \
+                  if self._pressed else self._color
+        dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        total_h = len(lines) * 12
+        ty = py + (ph - total_h) // 2
+        for line in lines:
+            dc.SetTextForeground(lbl_col)
+            tw = dc.GetTextExtent(line)[0]
+            dc.DrawText(line, px + (pw - tw) // 2, ty)
+            ty += 12
+
+
+# ---------------------------------------------------------------------------
 # _ToggleSwitchWidget — vintage lever toggle switch
 # ---------------------------------------------------------------------------
 
 class _ToggleSwitchWidget(wx.Panel):
-    """Physical lever-style toggle switch, vintage test-equipment look."""
-    _W, _H = 36, 68
+    """Physical lever-style toggle switch, horizontal orientation."""
+    _W, _H = 72, 48
 
     def __init__(self, parent, label: str = '',
                  on_change: Optional[Callable[[bool], None]] = None):
@@ -628,30 +724,30 @@ class _ToggleSwitchWidget(wx.Panel):
         dc.SetBackground(wx.Brush(_SECT_BG))
         dc.Clear()
 
-        hw, hh = 20, 44
+        hw, hh = 48, 20   # housing: wide slot
         hx = (W - hw) // 2
-        hy = (H - hh) // 2 - 6   # leave room for label below
+        hy = (H - hh) // 2 - 6   # shifted up slightly to leave room for label below
 
         # Outer housing — dark recessed slot
         dc.SetPen(wx.Pen(wx.Colour(10, 10, 12), 2))
         dc.SetBrush(wx.Brush(wx.Colour(16, 16, 18)))
         dc.DrawRoundedRectangle(hx, hy, hw, hh, 4)
 
-        # Centre ridge / slot divider
+        # Centre ridge — vertical divider line
         dc.SetPen(wx.Pen(wx.Colour(8, 8, 10), 1))
-        dc.DrawLine(hx + 3, hy + hh // 2, hx + hw - 3, hy + hh // 2)
+        dc.DrawLine(hx + hw // 2, hy + 3, hx + hw // 2, hy + hh - 3)
 
-        # Lever
-        lw, lh = 14, 20
-        lx = hx + (hw - lw) // 2
+        # Lever slides left (OFF) / right (ON)
+        lw, lh = 22, 14
+        ly = hy + (hh - lh) // 2
         if self._state:
-            ly        = hy + 3
+            lx        = hx + hw - lw - 3   # right = ON
             face      = wx.Colour(205, 200, 190)
             highlight = wx.Colour(245, 242, 236)
             shadow    = wx.Colour(120, 118, 112)
             txt_col   = wx.Colour(35, 32, 28)
         else:
-            ly        = hy + hh - lh - 3
+            lx        = hx + 3              # left = OFF
             face      = wx.Colour(80, 78, 74)
             highlight = wx.Colour(108, 106, 100)
             shadow    = wx.Colour(40, 38, 35)
@@ -1273,11 +1369,13 @@ class WaveformFrame(wx.Frame):
             on_change=self._screen.set_intensity, compact=True)
         self._inten_knob.set_index(len(_INTENSITY_DIVS) - 1)
         ck_sz.Add(self._inten_knob, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 16)
-        _autoset_btn = wx.Button(crt_knobs, label='AUTO\nSET', size=(54, 36))
-        _autoset_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
-                                     wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        _autoset_btn = _PushButton(
+            crt_knobs, 'AUTO\nSET',
+            color=wx.Colour(220, 140, 0),
+            size=(60, 58),
+            on_click=self._on_autoset,
+        )
         _autoset_btn.SetToolTip('Auto-scale all channels to fit the waveforms on screen')
-        _autoset_btn.Bind(wx.EVT_BUTTON, self._on_autoset)
         ck_sz.Add(_autoset_btn, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 12)
         ck_sz.AddStretchSpacer()
         crt_knobs.SetSizer(ck_sz)
@@ -1443,38 +1541,35 @@ class WaveformFrame(wx.Frame):
         hdr.SetSizer(h_sz)
         outer_sz.Add(hdr, 0, wx.EXPAND)
 
-        # Row 1: MEAS toggle
-        btn_sz = wx.BoxSizer(wx.HORIZONTAL)
-        self._meas_btn = wx.ToggleButton(ctrl, label='MEAS', size=(68, 28))
-        self._meas_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
-                                       wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        self._meas_btn.Bind(wx.EVT_TOGGLEBUTTON, self._on_meas_toggle)
-        btn_sz.Add(self._meas_btn, 0, wx.LEFT | wx.TOP, 6)
-        outer_sz.Add(btn_sz, 0, wx.LEFT, 2)
+        # Single row: MEAS switch · CUR switch · CUR1 knob · CUR2 knob
+        row_sz = wx.BoxSizer(wx.HORIZONTAL)
 
-        # Row 2: cursor lever switch + two cursor knobs
-        cur_sz = wx.BoxSizer(wx.HORIZONTAL)
+        self._meas_toggle = _ToggleSwitchWidget(
+            ctrl, label='MEAS',
+            on_change=self._screen.set_measurements_enabled)
+        self._meas_toggle.SetToolTip('Enable / disable measurement overlay')
+        row_sz.Add(self._meas_toggle, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 6)
 
         self._cur_toggle = _ToggleSwitchWidget(
             ctrl, label='CUR',
             on_change=self._screen.set_cursors_enabled)
         self._cur_toggle.SetToolTip('Enable / disable time cursors')
-        cur_sz.Add(self._cur_toggle, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 6)
+        row_sz.Add(self._cur_toggle, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 6)
 
         _cur_fmt = lambda v: f'{v:.2f} div'
         self._c1_knob = KnobWidget(ctrl, 'CUR 1', _CURSOR_POS, '',
                                     val_fmt=_cur_fmt, compact=True,
                                     on_change=lambda v: self._on_cursor_move(1, v))
         self._c1_knob.set_index(12)   # 3.0 div
-        cur_sz.Add(self._c1_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 6)
+        row_sz.Add(self._c1_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 6)
 
         self._c2_knob = KnobWidget(ctrl, 'CUR 2', _CURSOR_POS, '',
                                     val_fmt=_cur_fmt, compact=True,
                                     on_change=lambda v: self._on_cursor_move(2, v))
         self._c2_knob.set_index(28)   # 7.0 div
-        cur_sz.Add(self._c2_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 4)
+        row_sz.Add(self._c2_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 4)
 
-        outer_sz.Add(cur_sz, 0)
+        outer_sz.Add(row_sz, 0)
         ctrl.SetSizer(outer_sz)
         return ctrl
 
@@ -1525,13 +1620,10 @@ class WaveformFrame(wx.Frame):
 
     # ── event handlers ─────────────────────────────────────────────────
 
-    def _on_meas_toggle(self, evt) -> None:
-        self._screen.set_measurements_enabled(self._meas_btn.GetValue())
-
     def _on_cursor_move(self, which: int, div_pos: float) -> None:
         self._screen.set_cursor_pos(which, div_pos)
 
-    def _on_autoset(self, _evt) -> None:
+    def _on_autoset(self, _evt=None) -> None:
         """Stack each active channel in its own vertical band; show ~3 periods."""
         active_chs = [ch for ch in self._channels
                       if ch.net_name and ch.net_name in self._traces

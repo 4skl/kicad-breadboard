@@ -363,11 +363,13 @@ class BreadboardWindow(wx.Frame):
             elif group_label.startswith('Power'):
                 self._psu_grid = grid
 
-        # Apply initial visibility based on default prefs
+        # Apply initial visibility from loaded prefs
+        for w in self._ch2_widgets:
+            self._scope_grid.Show(w, self.prefs.scope_channels >= 2)
         for w in self._ch3_widgets:
-            self._scope_grid.Show(w, False)
+            self._scope_grid.Show(w, self.prefs.scope_channels >= 3)
         for w in self._ch4_widgets:
-            self._scope_grid.Show(w, False)
+            self._scope_grid.Show(w, self.prefs.scope_channels >= 4)
 
         self._instr_panel.SetSizer(instr_sizer)
         tray_sizer.Add(self._instr_panel, 0, wx.EXPAND)
