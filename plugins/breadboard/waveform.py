@@ -1097,52 +1097,59 @@ class WaveformFrame(wx.Frame):
     def _make_top_controls(self, parent: wx.Panel) -> wx.Panel:
         ctrl = wx.Panel(parent)
         ctrl.SetBackgroundColour(_SECT_BG)
-        sz = wx.BoxSizer(wx.HORIZONTAL)
+        outer_sz = wx.BoxSizer(wx.VERTICAL)
 
-        # Dark label
+        # Full-width HORIZONTAL banner
         hdr_lbl = wx.Panel(ctrl)
         hdr_lbl.SetBackgroundColour(_HDR_DARK)
-        hdr_lbl.SetMinSize(wx.Size(80, -1))
-        hl_sz = wx.BoxSizer(wx.VERTICAL)
+        hl_sz = wx.BoxSizer(wx.HORIZONTAL)
         hl_txt = wx.StaticText(hdr_lbl, label='HORIZONTAL')
         hl_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT,
                                wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         hl_txt.SetForegroundColour(_SECT_LBL)
         hl_txt.SetBackgroundColour(_HDR_DARK)
-        hl_sz.Add(hl_txt, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.TOP, 6)
+        hl_sz.Add(hl_txt, 0, wx.ALIGN_CENTRE_VERTICAL | wx.ALL, 5)
         hdr_lbl.SetSizer(hl_sz)
-        sz.Add(hdr_lbl, 0, wx.EXPAND)
+        outer_sz.Add(hdr_lbl, 0, wx.EXPAND)
+
+        # Dials row: large TIME/DIV + compact POSITION
+        dials_sz = wx.BoxSizer(wx.HORIZONTAL)
 
         self._t_knob = KnobWidget(ctrl, 'TIME/DIV', _T_DIVS, 's',
                                    on_change=self._screen.set_t_div,
                                    compact=False, size_factor=2.0)
         self._t_knob.set_index(self._init_t_idx)
-        sz.Add(self._t_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 8)
+        dials_sz.Add(self._t_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.ALL, 6)
 
         def _h_pos_changed(val):
             self._screen.set_h_pos(val)
 
         self._h_knob = KnobWidget(ctrl, 'POSITION', _POS_DIVS, 'div',
-                                   on_change=_h_pos_changed, compact=False)
+                                   on_change=_h_pos_changed, compact=True)
         self._h_knob.set_index(len(_POS_DIVS) // 2)
-        sz.Add(self._h_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 8)
+        dials_sz.Add(self._h_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 6)
 
-        sz.AddStretchSpacer()
+        outer_sz.Add(dials_sz, 0)
+
+        # Buttons row: AUTOSET + MEAS side by side
+        btn_sz = wx.BoxSizer(wx.HORIZONTAL)
 
         autoset_btn = wx.Button(ctrl, label='AUTOSET', size=(68, 28))
         autoset_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                                     wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         autoset_btn.SetToolTip('Auto-scale all channels to fit the waveforms on screen')
         autoset_btn.Bind(wx.EVT_BUTTON, self._on_autoset)
-        sz.Add(autoset_btn, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 12)
+        btn_sz.Add(autoset_btn, 0, wx.LEFT | wx.BOTTOM, 8)
 
-        self._meas_btn = wx.ToggleButton(ctrl, label='MEAS', size=(52, 28))
+        self._meas_btn = wx.ToggleButton(ctrl, label='MEAS', size=(68, 28))
         self._meas_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                                        wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         self._meas_btn.Bind(wx.EVT_TOGGLEBUTTON, self._on_meas_toggle)
-        sz.Add(self._meas_btn, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 6 | wx.RIGHT, 14)
+        btn_sz.Add(self._meas_btn, 0, wx.LEFT | wx.BOTTOM, 6)
 
-        ctrl.SetSizer(sz)
+        outer_sz.Add(btn_sz, 0, wx.LEFT, 2)
+
+        ctrl.SetSizer(outer_sz)
         return ctrl
 
     # ── bottom: 4 channel columns side by side ──────────────────────────
