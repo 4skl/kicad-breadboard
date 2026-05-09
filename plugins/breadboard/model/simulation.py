@@ -179,6 +179,44 @@ def _parse_sim_params(raw: str) -> Dict[str, str]:
     return result
 
 
+def _vdc_offset_for_net(netlist: 'Netlist', net_name: str) -> float:
+    """Sum VDC source values on the path from GND to net_name.
+
+    Walks backward through VDC (Sim.Device=V, Sim.Type=DC) sources whose
+    positive terminal lands on the current net, accumulating their voltages
+    until GND ('0') is reached.  Handles the common VDC‑in‑series‑with‑VSIN
+    pattern where the VSIN's negative pin is not directly at GND.
+    """
+    total   = 0.0
+    visited: set = set()
+    current = net_name
+    while current and current != '0':
+        if current in visited:
+            break
+        visited.add(current)
+        found = False
+        for ref, comp in netlist.components.items():
+            if (comp.properties.get('Sim.Device', '').upper() != 'V' or
+                    comp.properties.get('Sim.Type', '').upper() != 'DC'):
+                continue
+            pins    = netlist.nets_for_ref(ref)
+            pos_net = pins.get(1)
+            neg_net = pins.get(2)
+            if pos_net is None or neg_net is None:
+                continue
+            if pos_net.name == current:
+                try:
+                    total += _parse_spice_float(comp.value)
+                except (ValueError, OverflowError):
+                    pass
+                current = neg_net.name
+                found = True
+                break
+        if not found:
+            break
+    return total
+
+
 def find_vsin_sources(netlist: 'Netlist') -> List[VsinSource]:
     """Return all VSIN sources found in the netlist with their AC parameters."""
     sources: List[VsinSource] = []
@@ -501,10 +539,11 @@ def _build_transient_netlist(
         spice_node = _node_for_net(net_name, node_map)
         src = net_to_vsin.get(net_name)
         if src:
-            # VDC and VSIN are in series in the schematic: the net sees
-            # terminal_voltage + VSIN(t).  Combine the PSU DC level with the
-            # VSIN symbol's own offset so the SIN source captures both.
-            dc_bias = (terminal_voltages.get(term) or 0.0) + src.voff
+            # The VSIN's negative pin is often NOT GND — a VDC source sits
+            # between it and GND (series DC bias).  Trace back through any
+            # VDC chain to recover the total DC offset, then combine with
+            # the VSIN symbol's own dc= offset.
+            dc_bias = _vdc_offset_for_net(netlist, src.net_neg) + src.voff
             lines.append(
                 f'V_bb_{term}  {spice_node}  0'
                 f'  SIN({dc_bias:.6g} {src.vampl:.6g} {src.freq:.6g})'
