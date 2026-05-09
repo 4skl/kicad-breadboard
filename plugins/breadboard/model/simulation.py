@@ -501,13 +501,13 @@ def _build_transient_netlist(
         spice_node = _node_for_net(net_name, node_map)
         src = net_to_vsin.get(net_name)
         if src:
-            # Breadboard binding posts are always GND-referenced.  Use the VSIN
-            # waveform parameters but force the negative node to 0 (GND).  Using
-            # src.net_neg caused a floating node when the VSIN V− pin goes to a
-            # net other than the assigned GND net (e.g. /Vdc).
+            # VDC and VSIN are in series in the schematic: the net sees
+            # terminal_voltage + VSIN(t).  Combine the PSU DC level with the
+            # VSIN symbol's own offset so the SIN source captures both.
+            dc_bias = (terminal_voltages.get(term) or 0.0) + src.voff
             lines.append(
                 f'V_bb_{term}  {spice_node}  0'
-                f'  SIN({src.voff:.6g} {src.vampl:.6g} {src.freq:.6g})'
+                f'  SIN({dc_bias:.6g} {src.vampl:.6g} {src.freq:.6g})'
             )
         else:
             voltage = terminal_voltages.get(term)
