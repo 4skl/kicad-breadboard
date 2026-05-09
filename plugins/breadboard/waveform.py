@@ -249,21 +249,21 @@ class OscopeScreen(wx.Panel):
         except Exception:
             gc = None
 
-        # 0 V reference markers — small arrow on the right edge at each channel's zero line
+        # 0 V reference markers — always visible arrow on left edge, clamped when
+        # the zero line is outside the visible area.
         div_h = ph_plot / _NV
+        aw = 9
         for ch in self._channels:
             if not (ch.net_name and ch.net_name in self._traces):
                 continue
             r, g, b = _hex_to_rgb(ch.color)
-            zero_y = int(p + ph_plot / 2 - ch.position * div_h)
-            if p <= zero_y <= p + ph_plot:
-                aw = 9
-                dc.SetBrush(wx.Brush(wx.Colour(r, g, b)))
-                dc.SetPen(wx.Pen(wx.Colour(r // 3, g // 3, b // 3), 1))
-                # Arrow tip at left graticule edge, pointing right into screen
-                dc.DrawPolygon([wx.Point(p,      zero_y),
-                                wx.Point(p - aw, zero_y - 5),
-                                wx.Point(p - aw, zero_y + 5)])
+            zero_y = max(p + aw, min(p + ph_plot - aw,
+                                     int(p + ph_plot / 2 - ch.position * div_h)))
+            dc.SetBrush(wx.Brush(wx.Colour(r, g, b)))
+            dc.SetPen(wx.Pen(wx.Colour(r // 3, g // 3, b // 3), 1))
+            dc.DrawPolygon([wx.Point(p,      zero_y),
+                            wx.Point(p - aw, zero_y - 5),
+                            wx.Point(p - aw, zero_y + 5)])
 
         # Collect pts per channel first (used for both drawing and clip detection)
         channel_pts = []
@@ -587,6 +587,115 @@ class OscopeScreen(wx.Panel):
 
         return dict(vpp=vpp, vmax=vmax, vmin=vmin, vrms=vrms,
                     freq=freq, period=period)
+
+
+# ---------------------------------------------------------------------------
+# _ToggleSwitchWidget — vintage lever toggle switch
+# ---------------------------------------------------------------------------
+
+class _ToggleSwitchWidget(wx.Panel):
+    """Physical lever-style toggle switch, vintage test-equipment look."""
+    _W, _H = 36, 68
+
+    def __init__(self, parent, label: str = '',
+                 on_change: Optional[Callable[[bool], None]] = None):
+        super().__init__(parent, size=wx.Size(self._W, self._H))
+        self.SetMinSize(wx.Size(self._W, self._H))
+        self.SetBackgroundColour(_SECT_BG)
+        self._state: bool = False
+        self._label       = label
+        self._cb          = on_change
+        self.Bind(wx.EVT_PAINT,     self._on_paint)
+        self.Bind(wx.EVT_LEFT_DOWN, self._on_click)
+        self.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+
+    def GetValue(self) -> bool:
+        return self._state
+
+    def SetValue(self, v: bool) -> None:
+        self._state = bool(v)
+        self.Refresh()
+
+    def _on_click(self, _evt) -> None:
+        self._state = not self._state
+        self.Refresh()
+        if self._cb:
+            self._cb(self._state)
+
+    def _on_paint(self, _evt) -> None:
+        dc = wx.PaintDC(self)
+        W, H = self.GetClientSize()
+        dc.SetBackground(wx.Brush(_SECT_BG))
+        dc.Clear()
+
+        hw, hh = 20, 44
+        hx = (W - hw) // 2
+        hy = (H - hh) // 2 - 6   # leave room for label below
+
+        # Outer housing — dark recessed slot
+        dc.SetPen(wx.Pen(wx.Colour(10, 10, 12), 2))
+        dc.SetBrush(wx.Brush(wx.Colour(16, 16, 18)))
+        dc.DrawRoundedRectangle(hx, hy, hw, hh, 4)
+
+        # Centre ridge / slot divider
+        dc.SetPen(wx.Pen(wx.Colour(8, 8, 10), 1))
+        dc.DrawLine(hx + 3, hy + hh // 2, hx + hw - 3, hy + hh // 2)
+
+        # Lever
+        lw, lh = 14, 20
+        lx = hx + (hw - lw) // 2
+        if self._state:
+            ly        = hy + 3
+            face      = wx.Colour(205, 200, 190)
+            highlight = wx.Colour(245, 242, 236)
+            shadow    = wx.Colour(120, 118, 112)
+            txt_col   = wx.Colour(35, 32, 28)
+        else:
+            ly        = hy + hh - lh - 3
+            face      = wx.Colour(80, 78, 74)
+            highlight = wx.Colour(108, 106, 100)
+            shadow    = wx.Colour(40, 38, 35)
+            txt_col   = wx.Colour(180, 176, 168)
+
+        # Lever shadow
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(wx.Brush(wx.Colour(6, 6, 8)))
+        dc.DrawRoundedRectangle(lx + 2, ly + 2, lw, lh, 3)
+
+        # Lever body
+        dc.SetPen(wx.Pen(shadow, 1))
+        dc.SetBrush(wx.Brush(face))
+        dc.DrawRoundedRectangle(lx, ly, lw, lh, 3)
+
+        # Top highlight streak
+        dc.SetPen(wx.Pen(highlight, 1))
+        dc.DrawLine(lx + 2, ly + 1, lx + lw - 3, ly + 1)
+
+        # ON / OFF label on lever
+        dc.SetFont(wx.Font(6, wx.FONTFAMILY_DEFAULT,
+                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        dc.SetTextForeground(txt_col)
+        lbl = 'ON' if self._state else 'OFF'
+        tw, th = dc.GetTextExtent(lbl)
+        dc.DrawText(lbl, lx + (lw - tw) // 2, ly + (lh - th) // 2)
+
+        # Component label below housing
+        if self._label:
+            dc.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
+                               wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+            dc.SetTextForeground(_TEXT_DIM)
+            tw = dc.GetTextExtent(self._label)[0]
+            dc.DrawText(self._label, (W - tw) // 2, hy + hh + 4)
+
+        # Small LED dot below label — green when on, dark when off
+        led_y = hy + hh + (16 if self._label else 6)
+        if self._state:
+            dc.SetPen(wx.Pen(wx.Colour(0, 140, 36), 1))
+            dc.SetBrush(wx.Brush(_LED_GRN))
+        else:
+            dc.SetPen(wx.Pen(wx.Colour(15, 32, 15), 1))
+            dc.SetBrush(wx.Brush(wx.Colour(0, 32, 8)))
+        dc.DrawCircle(W // 2, led_y, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -1147,7 +1256,7 @@ class WaveformFrame(wx.Frame):
         b_sz.Add(self._screen, 1, wx.EXPAND | wx.ALL, 8)
         bezel.SetSizer(b_sz)
 
-        # CRT knobs column (FOCUS + INTEN) left of the screen
+        # CRT knobs column (FOCUS + INTEN + AUTOSET) left of the screen
         crt_knobs = wx.Panel(body)
         crt_knobs.SetBackgroundColour(_BODY)
         ck_sz = wx.BoxSizer(wx.VERTICAL)
@@ -1163,7 +1272,13 @@ class WaveformFrame(wx.Frame):
             val_fmt=lambda v: f'{int(v * 100)}%',
             on_change=self._screen.set_intensity, compact=True)
         self._inten_knob.set_index(len(_INTENSITY_DIVS) - 1)
-        ck_sz.Add(self._inten_knob, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 12)
+        ck_sz.Add(self._inten_knob, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 16)
+        _autoset_btn = wx.Button(crt_knobs, label='AUTO\nSET', size=(54, 36))
+        _autoset_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                                     wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        _autoset_btn.SetToolTip('Auto-scale all channels to fit the waveforms on screen')
+        _autoset_btn.Bind(wx.EVT_BUTTON, self._on_autoset)
+        ck_sz.Add(_autoset_btn, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 12)
         ck_sz.AddStretchSpacer()
         crt_knobs.SetSizer(ck_sz)
 
@@ -1328,15 +1443,8 @@ class WaveformFrame(wx.Frame):
         hdr.SetSizer(h_sz)
         outer_sz.Add(hdr, 0, wx.EXPAND)
 
-        # Row 1: AUTOSET + MEAS
+        # Row 1: MEAS toggle
         btn_sz = wx.BoxSizer(wx.HORIZONTAL)
-        autoset_btn = wx.Button(ctrl, label='AUTOSET', size=(68, 28))
-        autoset_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
-                                    wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        autoset_btn.SetToolTip('Auto-scale all channels to fit the waveforms on screen')
-        autoset_btn.Bind(wx.EVT_BUTTON, self._on_autoset)
-        btn_sz.Add(autoset_btn, 0, wx.LEFT | wx.TOP, 6)
-
         self._meas_btn = wx.ToggleButton(ctrl, label='MEAS', size=(68, 28))
         self._meas_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                                        wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
@@ -1344,14 +1452,13 @@ class WaveformFrame(wx.Frame):
         btn_sz.Add(self._meas_btn, 0, wx.LEFT | wx.TOP, 6)
         outer_sz.Add(btn_sz, 0, wx.LEFT, 2)
 
-        # Row 2: cursor enable toggle + two cursor knobs
+        # Row 2: cursor lever switch + two cursor knobs
         cur_sz = wx.BoxSizer(wx.HORIZONTAL)
 
-        self._cur_toggle = wx.ToggleButton(ctrl, label='CUR', size=(40, 52))
-        self._cur_toggle.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
-                                         wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        self._cur_toggle = _ToggleSwitchWidget(
+            ctrl, label='CUR',
+            on_change=self._screen.set_cursors_enabled)
         self._cur_toggle.SetToolTip('Enable / disable time cursors')
-        self._cur_toggle.Bind(wx.EVT_TOGGLEBUTTON, self._on_cursor_toggle)
         cur_sz.Add(self._cur_toggle, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 6)
 
         _cur_fmt = lambda v: f'{v:.2f} div'
@@ -1420,9 +1527,6 @@ class WaveformFrame(wx.Frame):
 
     def _on_meas_toggle(self, evt) -> None:
         self._screen.set_measurements_enabled(self._meas_btn.GetValue())
-
-    def _on_cursor_toggle(self, _evt) -> None:
-        self._screen.set_cursors_enabled(self._cur_toggle.GetValue())
 
     def _on_cursor_move(self, which: int, div_pos: float) -> None:
         self._screen.set_cursor_pos(which, div_pos)
