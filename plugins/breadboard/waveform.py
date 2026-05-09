@@ -100,6 +100,22 @@ def _best_idx(table: List[float], needed: float) -> int:
     return len(table) - 1
 
 
+def _detect_period(t_vals: list, v_vals: list) -> Optional[float]:
+    """Estimate signal period from rising mean-crossings. Returns None if not periodic."""
+    if len(v_vals) < 4:
+        return None
+    mean_v = sum(v_vals) / len(v_vals)
+    crossings = []
+    for i in range(1, len(v_vals)):
+        if v_vals[i - 1] < mean_v <= v_vals[i] and t_vals[i] > t_vals[i - 1]:
+            frac = (mean_v - v_vals[i - 1]) / (v_vals[i] - v_vals[i - 1])
+            crossings.append(t_vals[i - 1] + frac * (t_vals[i] - t_vals[i - 1]))
+    if len(crossings) < 2:
+        return None
+    periods = [crossings[k + 1] - crossings[k] for k in range(len(crossings) - 1)]
+    return sum(periods) / len(periods)
+
+
 # ---------------------------------------------------------------------------
 # _ChanState — per-channel state (shared between ChannelSection and screen)
 # ---------------------------------------------------------------------------
@@ -1412,40 +1428,64 @@ class WaveformFrame(wx.Frame):
         self._screen.set_cursor_pos(which, div_pos)
 
     def _on_autoset(self, _evt) -> None:
-        """Scale V/DIV and TIME/DIV so all active channels fit neatly on screen."""
+        """Stack each active channel in its own vertical band; show ~3 periods."""
         active_chs = [ch for ch in self._channels
                       if ch.net_name and ch.net_name in self._traces
                       and self._traces[ch.net_name].times]
         if not active_chs:
             return
 
-        # V/DIV: pick the smallest div that fits each channel's peak-to-peak
-        for ch in active_chs:
+        n = len(active_chs)
+        # Each channel occupies _NV/n divisions; use 75 % of that for headroom
+        band_div = _NV / n * 0.75
+
+        for slot, ch in enumerate(active_chs):
             vals = list(self._traces[ch.net_name].values)
             if not vals:
                 continue
-            vpp = max(vals) - min(vals)
-            needed = vpp / (_NV * 0.8)   # use 80 % of screen height
+
+            # V/DIV: fit peak-to-peak inside the channel's vertical band
+            vpp    = max(vals) - min(vals)
+            needed = (vpp / band_div) if band_div > 0 and vpp > 0 else 0.001
             ch.v_div_idx = _best_idx(_V_DIVS, needed)
-            # Centre the waveform: set position so mean sits on the zero line
-            mean = sum(vals) / len(vals)
-            # position offset in divisions to bring mean to centre
-            centre_div = -mean / _V_DIVS[ch.v_div_idx]
-            best_pos = min(_POS_DIVS, key=lambda p: abs(p - centre_div))
+            v_div  = _V_DIVS[ch.v_div_idx]
+
+            # Band centre in screen divisions (positive = up from screen centre)
+            # slot 0 → top band, slot n-1 → bottom band
+            band_centre = 4.0 - (slot + 0.5) * _NV / n
+
+            # Position offset so the signal mean lands at the band centre
+            mean = 0.0 if ch.coupling == 'AC' else sum(vals) / len(vals)
+            target_pos = band_centre - mean / v_div
+            best_pos   = min(_POS_DIVS, key=lambda p: abs(p - target_pos))
             ch.pos_idx = _POS_DIVS.index(best_pos)
-            # Sync the knob widget
+
+            # Sync the knob widgets
             sect = self._channel_sections[self._channels.index(ch)]
             sect._v_knob.set_index(ch.v_div_idx)
             sect._p_knob.set_index(ch.pos_idx)
 
-        # TIME/DIV: fit the full simulation span in 80 % of the horizontal axis
-        all_times = [t for ch in active_chs
-                     for t in self._traces[ch.net_name].times]
-        t_span  = max(all_times) - min(all_times)
-        t_needed = t_span / (_NH * 0.8)
-        new_t_idx = _best_idx(_T_DIVS, t_needed)
+        # TIME/DIV: aim for 3 periods of the fastest periodic signal on screen.
+        # Fall back to fitting the full simulation span if no period is found.
+        best_t_div: Optional[float] = None
+        for ch in active_chs:
+            t_vals = list(self._traces[ch.net_name].times)
+            v_vals = list(self._traces[ch.net_name].values)
+            period = _detect_period(t_vals, v_vals)
+            if period and period > 0:
+                candidate = period * 3 / _NH   # 3 periods across 10 divisions
+                if best_t_div is None or candidate < best_t_div:
+                    best_t_div = candidate
+
+        if best_t_div is None:
+            all_times = [t for ch in active_chs
+                         for t in self._traces[ch.net_name].times]
+            t_span    = max(all_times) - min(all_times)
+            best_t_div = t_span / (_NH * 0.8)
+
+        new_t_idx = _best_idx(_T_DIVS, best_t_div)
         self._t_knob.set_index(new_t_idx)
-        self._h_knob.set_index(len(_POS_DIVS) // 2)   # reset h position
+        self._h_knob.set_index(len(_POS_DIVS) // 2)
         self._screen.set_t_div(_T_DIVS[new_t_idx])
         self._screen.set_h_pos(0.0)
         self._screen.Refresh()
