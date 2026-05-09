@@ -59,6 +59,14 @@ _V_DIVS: List[float] = [
 # Vertical / horizontal POSITION steps (in divisions)
 _POS_DIVS: List[float] = [x * 0.5 for x in range(-10, 11)]   # −5 … +5
 
+# Cursor time-position steps (screen divisions, 0 = left edge, 10 = right edge)
+_CURSOR_POS: List[float] = [round(i * 0.25, 2) for i in range(41)]  # 0.0 … 10.0
+
+# CRT display knob tables
+_INTENSITY_DIVS: List[float] = [0.10, 0.20, 0.30, 0.40, 0.50,
+                                 0.60, 0.70, 0.80, 0.90, 1.00]
+_FOCUS_DIVS: List[float] = [0.30, 0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 2.50, 3.00]
+
 _NH = 10   # graticule divisions, horizontal
 _NV = 8    # graticule divisions, vertical
 
@@ -134,6 +142,11 @@ class OscopeScreen(wx.Panel):
         self._t_div:         Optional[float] = None
         self._h_pos:         float           = 0.0
         self._meas_enabled:  bool            = False
+        self._cursors_enabled: bool          = False
+        self._cursor1_div:   float           = 3.0
+        self._cursor2_div:   float           = 7.0
+        self._intensity:     float           = 1.0
+        self._focus:         float           = 1.0
         self.Bind(wx.EVT_PAINT, self._on_paint)
         self.Bind(wx.EVT_SIZE,  lambda _: self.Refresh())
 
@@ -147,6 +160,25 @@ class OscopeScreen(wx.Panel):
 
     def set_measurements_enabled(self, enabled: bool) -> None:
         self._meas_enabled = enabled
+        self.Refresh()
+
+    def set_cursors_enabled(self, enabled: bool) -> None:
+        self._cursors_enabled = enabled
+        self.Refresh()
+
+    def set_cursor_pos(self, which: int, div_pos: float) -> None:
+        if which == 1:
+            self._cursor1_div = div_pos
+        else:
+            self._cursor2_div = div_pos
+        self.Refresh()
+
+    def set_intensity(self, v: float) -> None:
+        self._intensity = v
+        self.Refresh()
+
+    def set_focus(self, v: float) -> None:
+        self._focus = v
         self.Refresh()
 
 
@@ -243,6 +275,9 @@ class OscopeScreen(wx.Panel):
 
         self._draw_clip_arrows(dc, p, pw, ph_plot, channel_pts)
 
+        if self._cursors_enabled:
+            self._draw_cursors(dc, p, pw, ph_plot, active, t_off, t_window)
+
         # Per-channel labels (right side, top-down)
         y_lbl = p + 5
         dc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT,
@@ -302,6 +337,98 @@ class OscopeScreen(wx.Panel):
                             wx.Point(cx - arrow_w // 2, by - arrow_h),
                             wx.Point(cx + arrow_w // 2, by - arrow_h)])
 
+    # ── cursor overlay ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _interp_v(t_vals: list, v_vals: list, t: float) -> float:
+        if not t_vals:
+            return 0.0
+        if t <= t_vals[0]:
+            return v_vals[0]
+        if t >= t_vals[-1]:
+            return v_vals[-1]
+        lo, hi = 0, len(t_vals) - 1
+        while lo + 1 < hi:
+            mid = (lo + hi) // 2
+            if t_vals[mid] <= t:
+                lo = mid
+            else:
+                hi = mid
+        span = t_vals[hi] - t_vals[lo]
+        frac = (t - t_vals[lo]) / span if span else 0.0
+        return v_vals[lo] + frac * (v_vals[hi] - v_vals[lo])
+
+    def _draw_cursors(self, dc: wx.DC,
+                      p: int, pw: int, ph_plot: int,
+                      active: list, t_off: float, t_window: float) -> None:
+        c1 = self._cursor1_div
+        c2 = self._cursor2_div
+        cx1 = p + int(c1 / 10 * pw)
+        cx2 = p + int(c2 / 10 * pw)
+        t1  = t_off + c1 / 10 * t_window
+        t2  = t_off + c2 / 10 * t_window
+
+        # Vertical cursor lines
+        dc.SetPen(wx.Pen(wx.Colour(255, 220, 0), 1))
+        dc.DrawLine(cx1, p, cx1, p + ph_plot)
+        dc.SetPen(wx.Pen(wx.Colour(0, 210, 230), 1))
+        dc.DrawLine(cx2, p, cx2, p + ph_plot)
+
+        # Horizontal tick marks where each cursor crosses each trace
+        div_h = ph_plot / _NV
+        readings: list = []
+        for ch, trace in active:
+            t_vals = list(trace.times)
+            v_vals = list(trace.values)
+            if ch.coupling == 'AC' and v_vals:
+                mean   = sum(v_vals) / len(v_vals)
+                v_vals = [v - mean for v in v_vals]
+            zero_y = p + ph_plot / 2 - ch.position * div_h
+            scale  = div_h / ch.v_div
+            r, g, b = _hex_to_rgb(ch.color)
+            v1 = self._interp_v(t_vals, v_vals, t1)
+            v2 = self._interp_v(t_vals, v_vals, t2)
+            readings.append((ch, v1, v2))
+            for cx, v in [(cx1, v1), (cx2, v2)]:
+                vy = int(zero_y - v * scale)
+                if p <= vy <= p + ph_plot:
+                    dc.SetPen(wx.Pen(wx.Colour(r, g, b), 2))
+                    dc.DrawLine(cx - 6, vy, cx + 6, vy)
+
+        # Readout box — top-left corner, dark background
+        lines = [
+            (f'C1  {_fmt_eng(t1, "s")}', wx.Colour(255, 220, 0)),
+        ]
+        for ch, v1, _ in readings:
+            r, g, b = _hex_to_rgb(ch.color)
+            idx = self._channels.index(ch)
+            lines.append((f'  CH{idx+1} {_fmt_eng(v1, "V")}', wx.Colour(r, g, b)))
+        lines.append((f'C2  {_fmt_eng(t2, "s")}', wx.Colour(0, 210, 230)))
+        for ch, _, v2 in readings:
+            r, g, b = _hex_to_rgb(ch.color)
+            idx = self._channels.index(ch)
+            lines.append((f'  CH{idx+1} {_fmt_eng(v2, "V")}', wx.Colour(r, g, b)))
+        lines.append((f'ΔT  {_fmt_eng(t2 - t1, "s")}', wx.Colour(180, 180, 180)))
+        if readings:
+            dv = readings[0][2] - readings[0][1]
+            lines.append((f'ΔV  {_fmt_eng(dv, "V")}', wx.Colour(180, 180, 180)))
+
+        dc.SetFont(wx.Font(9, wx.FONTFAMILY_TELETYPE,
+                           wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        row_h = 11
+        pad   = 4
+        box_w = max(dc.GetTextExtent(txt)[0] for txt, _ in lines) + pad * 2
+        box_h = len(lines) * row_h + pad * 2
+        bx, by = p + 2, p + 2
+        dc.SetBrush(wx.Brush(wx.Colour(0, 6, 2)))
+        dc.SetPen(wx.Pen(wx.Colour(0, 60, 20), 1))
+        dc.DrawRectangle(bx, by, box_w, box_h)
+        y = by + pad
+        for txt, col in lines:
+            dc.SetTextForeground(col)
+            dc.DrawText(txt, bx + pad, y)
+            y += row_h
+
     def _draw_graticule(self, dc: wx.DC,
                         ox: int, oy: int, pw: int, ph: int) -> None:
         dc.SetPen(wx.Pen(_GRID_MAJ, 1))
@@ -331,11 +458,14 @@ class OscopeScreen(wx.Panel):
 
     def _draw_phosphor(self, dc: wx.DC, gc, pts: list,
                        r: int, g: int, b: int) -> None:
+        i = self._intensity   # 0.1–1.0  brightness multiplier
+        f = self._focus       # 0.3–3.0  glow-spread multiplier
+        ir = int(r * i); ig = int(g * i); ib = int(b * i)
         if gc is not None:
             for width, col in [
-                (8.0, wx.Colour(r // 8, g // 8, b // 8)),
-                (3.5, wx.Colour(r // 3, g // 3, b // 3)),
-                (1.5, wx.Colour(r,      g,      b)),
+                (8.0 * f, wx.Colour(ir // 8, ig // 8, ib // 8)),
+                (3.5 * f, wx.Colour(ir // 3, ig // 3, ib // 3)),
+                (1.5,     wx.Colour(ir,       ig,      ib)),
             ]:
                 gc.SetPen(gc.CreatePen(
                     wx.GraphicsPenInfo(col).Width(width)
@@ -347,7 +477,7 @@ class OscopeScreen(wx.Panel):
                     path.AddLineToPoint(pt)
                 gc.StrokePath(path)
         else:
-            dc.SetPen(wx.Pen(wx.Colour(r, g, b), 2))
+            dc.SetPen(wx.Pen(wx.Colour(ir, ig, ib), 2))
             dc.DrawLines([(int(x), int(y)) for x, y in pts])
 
     # ── measurement overlay ────────────────────────────────────────────
@@ -452,7 +582,8 @@ class KnobWidget(wx.Panel):
 
     def __init__(self, parent, label: str, divs: List[float], unit: str,
                  on_change: Optional[Callable] = None, compact: bool = False,
-                 size_factor: float = 1.0):
+                 size_factor: float = 1.0,
+                 val_fmt: Optional[Callable[[float], str]] = None):
         sf = size_factor
         Rr = int((15 if compact else 26) * sf)
         Rf = int((11 if compact else 19) * sf)
@@ -469,7 +600,8 @@ class KnobWidget(wx.Panel):
         self._unit      = unit
         self._idx       = len(divs) // 2
         self._on_change = on_change
-        self._compact        = compact
+        self._compact   = compact
+        self._val_fmt   = val_fmt
         self._drag_start_xy: Optional[Tuple[int, int]] = None
         self._drag_start_idx: int = 0
         self.Bind(wx.EVT_PAINT,      self._on_paint)
@@ -591,7 +723,10 @@ class KnobWidget(wx.Panel):
         lw = dc.GetTextExtent(self._label)[0]
         dc.DrawText(self._label, (W - lw) // 2, cy + Rr + int(5 * sf))
 
-        val_str = _fmt_eng(self._divs[self._idx], self._unit) + '/div'
+        if self._val_fmt is not None:
+            val_str = self._val_fmt(self._divs[self._idx])
+        else:
+            val_str = _fmt_eng(self._divs[self._idx], self._unit) + '/div'
         dc.SetFont(wx.Font(vsz, wx.FONTFAMILY_TELETYPE,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         dc.SetTextForeground(_TEXT)
@@ -996,16 +1131,41 @@ class WaveformFrame(wx.Frame):
         b_sz.Add(self._screen, 1, wx.EXPAND | wx.ALL, 8)
         bezel.SetSizer(b_sz)
 
-        # Left column: screen only (header is full-width above)
-        left_sz = wx.BoxSizer(wx.VERTICAL)
-        left_sz.Add(bezel, 1, wx.EXPAND | wx.ALL, 5)
+        # CRT knobs column (FOCUS + INTEN) left of the screen
+        crt_knobs = wx.Panel(body)
+        crt_knobs.SetBackgroundColour(_BODY)
+        ck_sz = wx.BoxSizer(wx.VERTICAL)
+        ck_sz.AddStretchSpacer()
+        self._focus_knob = KnobWidget(
+            crt_knobs, 'FOCUS', _FOCUS_DIVS, '',
+            val_fmt=lambda v: f'{v:.2g}×',
+            on_change=self._screen.set_focus, compact=True)
+        self._focus_knob.set_index(_FOCUS_DIVS.index(1.0))
+        ck_sz.Add(self._focus_knob, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 12)
+        self._inten_knob = KnobWidget(
+            crt_knobs, 'INTEN', _INTENSITY_DIVS, '',
+            val_fmt=lambda v: f'{int(v * 100)}%',
+            on_change=self._screen.set_intensity, compact=True)
+        self._inten_knob.set_index(len(_INTENSITY_DIVS) - 1)
+        ck_sz.Add(self._inten_knob, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 12)
+        ck_sz.AddStretchSpacer()
+        crt_knobs.SetSizer(ck_sz)
 
-        # Right panel: horizontal controls → trigger → channels
+        # Left area: CRT knobs + bezel side by side
+        crt_row = wx.BoxSizer(wx.HORIZONTAL)
+        crt_row.Add(crt_knobs, 0, wx.EXPAND)
+        crt_row.Add(bezel, 1, wx.EXPAND | wx.ALL, 5)
+
+        left_sz = wx.BoxSizer(wx.VERTICAL)
+        left_sz.Add(crt_row, 1, wx.EXPAND)
+
+        # Right panel: horizontal controls → measure → channels
         right = wx.Panel(body)
         right.SetBackgroundColour(_BODY)
         right.SetMinSize(wx.Size(380, -1))
         right_sz = wx.BoxSizer(wx.VERTICAL)
         right_sz.Add(self._make_top_controls(right), 0, wx.EXPAND | wx.ALL, 4)
+        right_sz.Add(self._make_measure_section(right), 0, wx.EXPAND | wx.ALL, 4)
         right_sz.AddStretchSpacer(1)
         right_sz.Add(self._make_bottom_channels(right), 0, wx.EXPAND | wx.ALL, 4)
         right.SetSizer(right_sz)
@@ -1047,10 +1207,8 @@ class WaveformFrame(wx.Frame):
         sub.SetForegroundColour(wx.Colour(155, 153, 148))
         sub.SetBackgroundColour(_HDR_DARK)
 
-        col = wx.BoxSizer(wx.VERTICAL)
-        col.Add(logo, 0)
-        col.Add(sub,  0, wx.TOP, 3)
-        sz.Add(col, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 14)
+        sz.Add(logo, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 14)
+        sz.Add(sub,  0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 12)
         sz.AddStretchSpacer()
 
         if self._traces:
@@ -1131,24 +1289,69 @@ class WaveformFrame(wx.Frame):
 
         outer_sz.Add(dials_sz, 0)
 
-        # Buttons row: AUTOSET + MEAS side by side
-        btn_sz = wx.BoxSizer(wx.HORIZONTAL)
+        ctrl.SetSizer(outer_sz)
+        return ctrl
 
+    # ── middle: measure section ─────────────────────────────────────────
+
+    def _make_measure_section(self, parent: wx.Panel) -> wx.Panel:
+        ctrl = wx.Panel(parent)
+        ctrl.SetBackgroundColour(_SECT_BG)
+        outer_sz = wx.BoxSizer(wx.VERTICAL)
+
+        # Full-width MEASURE banner
+        hdr = wx.Panel(ctrl)
+        hdr.SetBackgroundColour(_HDR_DARK)
+        h_sz = wx.BoxSizer(wx.HORIZONTAL)
+        h_txt = wx.StaticText(hdr, label='MEASURE')
+        h_txt.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT,
+                              wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        h_txt.SetForegroundColour(_SECT_LBL)
+        h_txt.SetBackgroundColour(_HDR_DARK)
+        h_sz.Add(h_txt, 0, wx.ALIGN_CENTRE_VERTICAL | wx.ALL, 5)
+        hdr.SetSizer(h_sz)
+        outer_sz.Add(hdr, 0, wx.EXPAND)
+
+        # Row 1: AUTOSET + MEAS
+        btn_sz = wx.BoxSizer(wx.HORIZONTAL)
         autoset_btn = wx.Button(ctrl, label='AUTOSET', size=(68, 28))
         autoset_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                                     wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         autoset_btn.SetToolTip('Auto-scale all channels to fit the waveforms on screen')
         autoset_btn.Bind(wx.EVT_BUTTON, self._on_autoset)
-        btn_sz.Add(autoset_btn, 0, wx.LEFT | wx.BOTTOM, 8)
+        btn_sz.Add(autoset_btn, 0, wx.LEFT | wx.TOP, 6)
 
         self._meas_btn = wx.ToggleButton(ctrl, label='MEAS', size=(68, 28))
         self._meas_btn.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                                        wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         self._meas_btn.Bind(wx.EVT_TOGGLEBUTTON, self._on_meas_toggle)
-        btn_sz.Add(self._meas_btn, 0, wx.LEFT | wx.BOTTOM, 6)
-
+        btn_sz.Add(self._meas_btn, 0, wx.LEFT | wx.TOP, 6)
         outer_sz.Add(btn_sz, 0, wx.LEFT, 2)
 
+        # Row 2: cursor enable toggle + two cursor knobs
+        cur_sz = wx.BoxSizer(wx.HORIZONTAL)
+
+        self._cur_toggle = wx.ToggleButton(ctrl, label='CUR', size=(40, 52))
+        self._cur_toggle.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                                         wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        self._cur_toggle.SetToolTip('Enable / disable time cursors')
+        self._cur_toggle.Bind(wx.EVT_TOGGLEBUTTON, self._on_cursor_toggle)
+        cur_sz.Add(self._cur_toggle, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 6)
+
+        _cur_fmt = lambda v: f'{v:.2f} div'
+        self._c1_knob = KnobWidget(ctrl, 'CUR 1', _CURSOR_POS, '',
+                                    val_fmt=_cur_fmt, compact=True,
+                                    on_change=lambda v: self._on_cursor_move(1, v))
+        self._c1_knob.set_index(12)   # 3.0 div
+        cur_sz.Add(self._c1_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 6)
+
+        self._c2_knob = KnobWidget(ctrl, 'CUR 2', _CURSOR_POS, '',
+                                    val_fmt=_cur_fmt, compact=True,
+                                    on_change=lambda v: self._on_cursor_move(2, v))
+        self._c2_knob.set_index(28)   # 7.0 div
+        cur_sz.Add(self._c2_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 4)
+
+        outer_sz.Add(cur_sz, 0)
         ctrl.SetSizer(outer_sz)
         return ctrl
 
@@ -1201,6 +1404,12 @@ class WaveformFrame(wx.Frame):
 
     def _on_meas_toggle(self, evt) -> None:
         self._screen.set_measurements_enabled(self._meas_btn.GetValue())
+
+    def _on_cursor_toggle(self, _evt) -> None:
+        self._screen.set_cursors_enabled(self._cur_toggle.GetValue())
+
+    def _on_cursor_move(self, which: int, div_pos: float) -> None:
+        self._screen.set_cursor_pos(which, div_pos)
 
     def _on_autoset(self, _evt) -> None:
         """Scale V/DIV and TIME/DIV so all active channels fit neatly on screen."""
