@@ -799,8 +799,7 @@ class BreadboardWindow(wx.Frame):
             return
 
         if sys.platform.startswith('linux'):
-            # X11: wmctrl can raise a foreign window by WM_CLASS.
-            # Eeschema registers as 'eeschema.Eeschema' (class.name).
+            # X11 only: wmctrl can raise an already-open Eeschema window.
             if shutil.which('wmctrl') and 'WAYLAND_DISPLAY' not in os.environ:
                 rc = subprocess.call(
                     ['wmctrl', '-x', '-a', 'eeschema'],
@@ -809,20 +808,11 @@ class BreadboardWindow(wx.Frame):
                 if rc == 0:
                     return
 
-            # Wayland (and X11 fallback): xdg-open routes through the desktop
-            # portal's OpenURI D-Bus interface, which lets KiCad handle single-
-            # instance activation via its own window management.
-            if shutil.which('xdg-open'):
-                try:
-                    subprocess.Popen(['xdg-open', str(sch)])
-                    return
-                except OSError:
-                    pass
-
-        # All-platform fallback: launch eeschema directly.
-        # KiCad's own D-Bus single-instance detection should raise an existing
-        # window; if no instance is running, this opens a new one.
-        exe = shutil.which('eeschema') or shutil.which('kicad') or 'eeschema'
+        # Launch eeschema directly — never xdg-open (file associations may be
+        # wrong, e.g. OnlyOffice claiming .kicad_sch).  KiCad's own IPC
+        # single-instance socket raises an already-running Eeschema window;
+        # if none is running, a new one opens.
+        exe = shutil.which('eeschema') or 'eeschema'
         try:
             subprocess.Popen([exe, str(sch)])
         except FileNotFoundError:
