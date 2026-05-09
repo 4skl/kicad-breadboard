@@ -1,8 +1,8 @@
 """
 WaveformFrame — KiScope digital-storage oscilloscope UI for transient analysis.
 
-Public API (unchanged from the outside):
-    frame = WaveformFrame(parent, traces, on_probe_toggle=cb)
+Public API:
+    frame = WaveformFrame(parent, traces, on_probe_toggle=cb, warnings=[...])
     frame.Show()
     frame.toggle_net('VCC')      # assign to probing channel / next empty channel
     frame.deactivate_probe()     # called when canvas exits probe mode externally
@@ -901,12 +901,14 @@ class WaveformFrame(wx.Frame):
 
     def __init__(self, parent,
                  traces: Dict[str, TransientTrace],
-                 on_probe_toggle: Optional[Callable[[bool], None]] = None):
+                 on_probe_toggle: Optional[Callable[[bool], None]] = None,
+                 warnings: Optional[List[str]] = None):
         super().__init__(parent, title='KiScope',
                          size=(1080, 720),
                          style=wx.DEFAULT_FRAME_STYLE)
         self._traces          = traces
         self._on_probe_toggle = on_probe_toggle
+        self._warnings        = warnings or []
         self._probing_channel:   Optional[int]          = None
         self._channel_sections: List[ChannelSection]   = []
         self._bnc_connectors:   List[_BncConnector]    = []
@@ -1009,6 +1011,8 @@ class WaveformFrame(wx.Frame):
 
         outer = wx.BoxSizer(wx.VERTICAL)
         outer.Add(self._make_header(body), 0, wx.EXPAND)
+        if self._warnings:
+            outer.Add(self._make_warning_bar(body), 0, wx.EXPAND)
         outer.Add(main, 1, wx.EXPAND)
         body.SetSizer(outer)
 
@@ -1058,6 +1062,29 @@ class WaveformFrame(wx.Frame):
         sz.Add(pwr, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 14)
         hdr.SetSizer(sz)
         return hdr
+
+    # ── simulation warning bar ──────────────────────────────────────────
+
+    def _make_warning_bar(self, parent: wx.Panel) -> wx.Panel:
+        n = len(self._warnings)
+        # First warning gives the most useful detail (e.g. "R1 (LED): no SPICE model")
+        first = self._warnings[0] if self._warnings else ''
+        extra = f' (+{n - 1} more)' if n > 1 else ''
+        text = f'⚠  {first}{extra}  —  results may be inaccurate'
+
+        bar = wx.Panel(parent)
+        bar.SetBackgroundColour(wx.Colour(80, 55, 10))
+        sz = wx.BoxSizer(wx.HORIZONTAL)
+
+        lbl = wx.StaticText(bar, label=text)
+        lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        lbl.SetForegroundColour(wx.Colour(255, 200, 80))
+        lbl.SetBackgroundColour(wx.Colour(80, 55, 10))
+        sz.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 5)
+
+        bar.SetSizer(sz)
+        return bar
 
     # ── top controls: horizontal section + measurements ─────────────────
 

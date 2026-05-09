@@ -1692,10 +1692,21 @@ class BreadboardCanvas(wx.Panel):
             # Fall back to hole proximity (board space)
             hole = self.layout.nearest_hole(px, py)
             if hole is not None:
-                uf = self.board.build_connectivity()
-                root = uf.find(hole)
-                self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
-                self._net_hl_name  = self._hl_net_name_from_holes()
+                if isinstance(hole, Terminal):
+                    # Terminal binding posts are not in the UnionFind — look up
+                    # their assigned schematic net and highlight from there.
+                    net = self.board.get_terminal_net(hole.name)
+                    if net:
+                        self._highlight_net_by_name(net)
+                        self._net_hl_holes.add(hole)
+                    else:
+                        self._net_hl_holes = set()
+                        self._net_hl_name  = ''
+                else:
+                    uf = self.board.build_connectivity()
+                    root = uf.find(hole)
+                    self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
+                    self._net_hl_name  = self._hl_net_name_from_holes()
             else:
                 self._net_hl_holes = set()
                 self._net_hl_name  = ''
@@ -1705,12 +1716,21 @@ class BreadboardCanvas(wx.Panel):
         if self.mode == MODE_NET_PROBE:
             hole = self.layout.nearest_hole(px, py)
             if hole is not None:
-                uf = self.board.build_connectivity()
-                root = uf.find(hole)
-                self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
-                self._net_hl_name  = self._hl_net_name_from_holes()
-                if self._net_hl_name and self._net_probe_cb:
-                    self._net_probe_cb(self._net_hl_name, hole)
+                if isinstance(hole, Terminal):
+                    net = self.board.get_terminal_net(hole.name)
+                    if net:
+                        self._highlight_net_by_name(net)
+                        self._net_hl_holes.add(hole)
+                        self._net_hl_name = net
+                        if self._net_probe_cb:
+                            self._net_probe_cb(net, hole)
+                else:
+                    uf = self.board.build_connectivity()
+                    root = uf.find(hole)
+                    self._net_hl_holes = {h for h in uf._parent if uf.find(h) == root}
+                    self._net_hl_name  = self._hl_net_name_from_holes()
+                    if self._net_hl_name and self._net_probe_cb:
+                        self._net_probe_cb(self._net_hl_name, hole)
             self.Refresh()
             return
 

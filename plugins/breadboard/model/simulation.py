@@ -8,6 +8,7 @@ Public API:
 """
 from __future__ import annotations
 
+import ctypes
 import math
 import os
 import re
@@ -15,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -614,7 +616,313 @@ def _scan_ngspice_output(output: str) -> Tuple[Optional[str], List[str]]:
     return None, warnings
 
 
-def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str], List[str]]:
+# ---------------------------------------------------------------------------
+# libngspice ctypes driver
+# ---------------------------------------------------------------------------
+
+class _VecInfo(ctypes.Structure):
+    """Maps ngspice sharedspice.h pvector_info struct."""
+    _fields_ = [
+        ('name',       ctypes.c_char_p),
+        ('pdvec',      ctypes.POINTER(ctypes.c_double)),
+        ('pdvecimg',   ctypes.POINTER(ctypes.c_double)),
+        ('v_length',   ctypes.c_int),
+        ('v_type',     ctypes.c_int),
+        ('is_scale',   ctypes.c_bool),
+        ('is_complex', ctypes.c_bool),
+    ]
+
+
+def _find_ngspice_lib() -> Optional[ctypes.CDLL]:
+    """Load the ngspice shared library that KiCad already depends on."""
+    if sys.platform.startswith('linux'):
+        candidates = [
+            'libngspice.so.0',
+            'libngspice.so',
+            # Debian/Ubuntu/Zorin explicit multiarch paths
+            '/usr/lib/x86_64-linux-gnu/libngspice.so.0',
+            '/usr/lib/aarch64-linux-gnu/libngspice.so.0',
+            '/usr/lib/arm-linux-gnueabihf/libngspice.so.0',
+            '/usr/lib/libngspice.so.0',
+        ]
+    elif sys.platform == 'darwin':
+        candidates = [
+            'libngspice.dylib',
+            '/Applications/KiCad/KiCad.app/Contents/Frameworks/libngspice.dylib',
+        ]
+    elif sys.platform == 'win32':
+        candidates = ['ngspice.dll', 'libngspice-0.dll']
+        for ver in ('9.0', '8.0', '7.0'):
+            candidates += [
+                rf'C:\Program Files\KiCad\{ver}\bin\ngspice.dll',
+                rf'C:\Program Files\KiCad\{ver}\bin\libngspice-0.dll',
+            ]
+    else:
+        candidates = ['libngspice.so.0']
+
+    for name in candidates:
+        try:
+            lib = ctypes.CDLL(name)
+            lib.ngSpice_Init  # AttributeError if symbol missing in some wrappers
+            return lib
+        except (OSError, AttributeError):
+            continue
+    return None
+
+
+class _NgSpiceLib:
+    """
+    Singleton in-process ngspice driver via libngspice shared library.
+    KiCad ships or depends on this library on every supported platform, so no
+    separate ngspice package is required.
+    """
+    _instance: Optional['_NgSpiceLib'] = None
+    _init_lock = threading.Lock()
+
+    @classmethod
+    def get(cls) -> Optional['_NgSpiceLib']:
+        if cls._instance is None:
+            with cls._init_lock:
+                if cls._instance is None:
+                    cls._instance = cls._create()
+        return cls._instance
+
+    @classmethod
+    def _create(cls) -> Optional['_NgSpiceLib']:
+        lib = _find_ngspice_lib()
+        if lib is None:
+            return None
+        obj = cls(lib)
+        return obj if obj._init_lib() else None
+
+    def __init__(self, lib: ctypes.CDLL) -> None:
+        self._lib = lib
+        self._output_lines: List[str] = []
+        self._out_lock = threading.Lock()
+        self._bg_done  = threading.Event()   # set by BGThreadRunning(noruns=True)
+        self._exit_ev  = threading.Event()   # set by ControlledExit
+        self._sim_lock = threading.Lock()
+        self._exit_error = False
+
+    def _init_lib(self) -> bool:
+        """Call ngSpice_Init once per process. Returns False on failure."""
+        _SendChar = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p)
+        _SendStat = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p)
+        _CtrlExit = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_bool, ctypes.c_bool, ctypes.c_int, ctypes.c_void_p)
+        _BGThread = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_bool, ctypes.c_int, ctypes.c_void_p)
+
+        @_SendChar
+        def _cb_char(msg, ident, userdata):
+            if msg:
+                with self._out_lock:
+                    self._output_lines.append(msg.decode('utf-8', errors='replace'))
+            return 0
+
+        @_SendStat
+        def _cb_stat(msg, ident, userdata):
+            return 0
+
+        @_CtrlExit
+        def _cb_exit(status, immediate, quit_exit, ident, userdata):
+            if status != 0:
+                self._exit_error = True
+            # Signal exit event; bg_done is set separately by BGThreadRunning.
+            # We do NOT set bg_done here — vectors may not be stored yet when
+            # ControlledExit fires (e.g. at .end processing on some versions).
+            self._exit_ev.set()
+            return 0
+
+        @_BGThread
+        def _cb_bgthread(noruns, ident, userdata):
+            if noruns:
+                # BGThreadRunning(noruns=True) is the reliable signal that the
+                # simulation has finished and all vectors have been stored.
+                self._bg_done.set()
+            return 0
+
+        # Hold strong references — ctypes callbacks are GC'd otherwise
+        self._cb_char     = _cb_char
+        self._cb_stat     = _cb_stat
+        self._cb_exit     = _cb_exit
+        self._cb_bgthread = _cb_bgthread
+
+        self._lib.ngSpice_Init.restype  = ctypes.c_int
+        self._lib.ngSpice_Init.argtypes = [ctypes.c_void_p] * 7
+        rc = self._lib.ngSpice_Init(
+            _cb_char, _cb_stat, _cb_exit,
+            None, None, _cb_bgthread,
+            None,
+        )
+
+        self._lib.ngSpice_Circ.restype      = ctypes.c_int
+        self._lib.ngSpice_Circ.argtypes     = [ctypes.POINTER(ctypes.c_char_p)]
+        self._lib.ngSpice_Command.restype   = ctypes.c_int
+        self._lib.ngSpice_Command.argtypes  = [ctypes.c_char_p]
+        self._lib.ngSpice_AllPlots.restype  = ctypes.POINTER(ctypes.c_char_p)
+        self._lib.ngSpice_AllPlots.argtypes = []
+        self._lib.ngSpice_AllVecs.restype   = ctypes.POINTER(ctypes.c_char_p)
+        self._lib.ngSpice_AllVecs.argtypes  = [ctypes.c_char_p]
+        self._lib.ngGet_Vec_Info.restype    = ctypes.POINTER(_VecInfo)
+        self._lib.ngGet_Vec_Info.argtypes   = [ctypes.c_char_p]
+        return rc == 0
+
+    def _read_tran_vectors(
+        self, node_map: Dict[str, str]
+    ) -> Tuple[Dict[str, 'TransientTrace'], str]:
+        """
+        After a transient bg_run, dump vectors to a temp file and parse them.
+
+        Uses 'set wr_vecnames' and 'set wr_singlescale' so wrdata writes:
+            time  v(node1)  v(node2)  ...
+            0.0   val       val
+            ...
+        instead of the default headerless (scale, value) interleaved format.
+
+        Returns (traces_dict, diag_string).  diag_string is empty on success.
+        """
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.dat')
+        os.close(tmp_fd)
+        try:
+            # wr_vecnames  — include vector names as first line
+            # wr_singlescale — write the time column once, not per-vector
+            self._lib.ngSpice_Command(b'set wr_vecnames')
+            self._lib.ngSpice_Command(b'set wr_singlescale')
+            self._lib.ngSpice_Command(f'wrdata {tmp_path} all'.encode('utf-8'))
+
+            try:
+                size = os.path.getsize(tmp_path)
+            except OSError:
+                return {}, '[ngspice] wrdata produced no file'
+            if size == 0:
+                return {}, '[ngspice] wrdata file is empty'
+
+            with open(tmp_path, 'r', encoding='utf-8', errors='replace') as fh:
+                content = fh.read()
+
+            traces, diag = _parse_wrdata(content, node_map)
+            return traces, diag
+        except Exception as exc:
+            return {}, f'[ngspice] exception in _read_tran_vectors: {exc}'
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _read_dc_vectors(self) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """
+        After a DC .op bg_run, dump vectors via wrdata and parse the single data row.
+
+        Returns (node_voltages, branch_currents) with raw lowercase node names.
+        Used as a reliable fallback when _parse_output cannot find the text table.
+        """
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.dat')
+        os.close(tmp_fd)
+        try:
+            self._lib.ngSpice_Command(b'set wr_vecnames')
+            self._lib.ngSpice_Command(f'wrdata {tmp_path} all'.encode())
+
+            try:
+                if os.path.getsize(tmp_path) == 0:
+                    return {}, {}
+            except OSError:
+                return {}, {}
+
+            with open(tmp_path, 'r', encoding='utf-8', errors='replace') as fh:
+                content = fh.read()
+
+            lines = [ln for ln in content.splitlines() if ln.strip()]
+            if len(lines) < 2:
+                return {}, {}
+
+            header = lines[0].strip().split()
+            # Last data row covers any DC sweep; for .op there is exactly one row
+            data = lines[-1].strip().split()
+            n = min(len(header), len(data))
+
+            node_voltages: Dict[str, float] = {}
+            branch_currents: Dict[str, float] = {}
+
+            for col_name, val_str in zip(header[:n], data[:n]):
+                lo = col_name.lower()
+                if lo in ('time', 'frequency', '#index', 'index'):
+                    continue
+                # Strip v() wrapper written by ngspice
+                if lo.startswith('v(') and lo.endswith(')'):
+                    node = lo[2:-1]
+                else:
+                    node = lo
+                try:
+                    val = float(val_str)
+                except ValueError:
+                    continue
+                if '#branch' in node:
+                    branch_currents[node.replace('#branch', '')] = val
+                else:
+                    node_voltages[node] = val
+
+            return node_voltages, branch_currents
+        except Exception:
+            return {}, {}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def run(self, spice_text: str) -> Tuple[str, Optional[str], List[str]]:
+        """Run a SPICE simulation. Returns (output, error_or_None, warnings)."""
+        with self._sim_lock:
+            with self._out_lock:
+                self._output_lines.clear()
+            self._bg_done.clear()
+            self._exit_ev.clear()
+            self._exit_error = False
+
+            # Flush any plots from a previous run so AllPlots stays unambiguous.
+            self._lib.ngSpice_Command(b'destroy all')
+
+            raw_lines = spice_text.splitlines()
+            arr = (ctypes.c_char_p * (len(raw_lines) + 1))()
+            for i, ln in enumerate(raw_lines):
+                arr[i] = ln.encode('utf-8')
+            arr[len(raw_lines)] = None
+
+            rc = self._lib.ngSpice_Circ(arr)
+            if rc != 0:
+                return '', f'ngSpice_Circ failed (rc={rc})', []
+
+            self._lib.ngSpice_Command(b'bg_run')
+
+            # Wait for BGThread to confirm simulation + vector storage are complete.
+            # If that doesn't arrive but ControlledExit does, treat it as an error.
+            # Polling avoids blocking forever when only exit fires.
+            deadline = 30.0
+            poll    = 0.05
+            elapsed = 0.0
+            while elapsed < deadline:
+                if self._bg_done.wait(timeout=poll):
+                    break
+                if self._exit_ev.is_set() and self._exit_error:
+                    break          # hard error — don't wait further
+                elapsed += poll
+            else:
+                return '', 'ngspice timed out after 30 s', []
+
+            with self._out_lock:
+                output = '\n'.join(self._output_lines)
+
+            scan_err, scan_warns = _scan_ngspice_output(output)
+            if self._exit_error and not scan_err:
+                scan_err = 'ngspice error exit (check spice_output for details)'
+            return output, scan_err, scan_warns
+
+
+# ---------------------------------------------------------------------------
+# ngspice subprocess fallback
+# ---------------------------------------------------------------------------
+
+def _run_ngspice_subprocess(spice_text: str) -> Tuple[str, Optional[str], List[str]]:
     """
     Write spice_text to a temporary file, run ngspice -b.
     Returns (output, error_or_None, ngspice_warnings).
@@ -651,6 +959,14 @@ def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str], List[str]]:
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def _run_ngspice(spice_text: str) -> Tuple[str, Optional[str], List[str]]:
+    """Run ngspice via libngspice if available, falling back to subprocess."""
+    lib = _NgSpiceLib.get()
+    if lib is not None:
+        return lib.run(spice_text)
+    return _run_ngspice_subprocess(spice_text)
 
 
 # ---------------------------------------------------------------------------
@@ -700,10 +1016,9 @@ def _parse_output(output: str) -> Tuple[Dict[str, float], Dict[str, float]]:
         if re.match(r'^[-\s]+$', stripped) or stripped.startswith('----'):
             continue
 
-        # Blank line ends the current section
+        # Blank lines don't end sections — ngspice may emit blank lines within
+        # the Node/Voltage table (especially in in-process mode).
         if not stripped:
-            in_voltage_section = False
-            in_current_section = False
             continue
 
         if in_voltage_section:
@@ -808,6 +1123,98 @@ def _parse_transient_output(
 
 
 # ---------------------------------------------------------------------------
+# wrdata output parser (libngspice in-process path)
+# ---------------------------------------------------------------------------
+
+def _parse_wrdata(
+    content: str,
+    node_map: Dict[str, str],
+) -> Tuple[Dict[str, TransientTrace], str]:
+    """
+    Parse the output of ngspice 'wrdata' with wr_vecnames + wr_singlescale set.
+
+    Expected format (no Index column, time written once):
+        time  v(node1)  v(node2)
+        0.0   val       val
+        ...
+
+    Returns (traces_dict, diag_string).
+    """
+    lines = [ln for ln in content.splitlines() if ln.strip()]
+    if not lines:
+        return {}, '[ngspice] wrdata file has no lines'
+
+    header = lines[0].strip().split()
+    if not header:
+        return {}, '[ngspice] wrdata header is empty'
+
+    # Detect whether wr_singlescale took effect:
+    # with it:    "time v(n1) v(n2)"  — first token is 'time'
+    # without it: "time v(n1) time v(n2) time time" — 'time' repeats
+    #
+    # Strategy: collect only the ODD-indexed columns when wr_singlescale is
+    # absent, i.e. when the header pattern alternates (scale, vec, scale, vec).
+    h_lo = [h.lower() for h in header]
+    if h_lo[0] not in ('time', 'frequency'):
+        return {}, f'[ngspice] unexpected wrdata header: {lines[0][:120]}'
+
+    # Detect interleaved (scale, value) format: even columns = scale name repeated
+    is_interleaved = (
+        len(header) >= 4
+        and h_lo[0] == h_lo[2]   # col-0 name == col-2 name (both 'time')
+    )
+
+    if is_interleaved:
+        # Odd columns: index 1, 3, 5, … → data vectors
+        # Even columns: all scale (time) — use col 0
+        data_col_indices = list(range(1, len(header), 2))
+        data_col_names   = [header[i] for i in data_col_indices]
+    else:
+        # Simple: col 0 = time, rest = data
+        data_col_indices = list(range(1, len(header)))
+        data_col_names   = header[1:]
+
+    spice_to_net: Dict[str, str] = {v.lower(): k for k, v in node_map.items() if v != '0'}
+
+    times: List[float] = []
+    col_data: List[List[float]] = [[] for _ in data_col_indices]
+
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) < max(data_col_indices, default=-1) + 1:
+            continue
+        try:
+            times.append(float(parts[0]))
+            for slot, col_idx in enumerate(data_col_indices):
+                col_data[slot].append(float(parts[col_idx]))
+        except (ValueError, IndexError):
+            if times:
+                break
+
+    if not times:
+        return {}, f'[ngspice] no data rows parsed; header: {header}; first line: {lines[1][:80] if len(lines) > 1 else "(none)"}'
+
+    traces: Dict[str, TransientTrace] = {}
+    for slot, col_name in enumerate(data_col_names):
+        lo = col_name.lower()
+        if lo in ('time', 'frequency'):
+            continue
+        node = lo[2:-1] if (lo.startswith('v(') and lo.endswith(')')) else lo
+        net_name = spice_to_net.get(node, col_name)
+        traces[net_name] = TransientTrace(
+            net_name=net_name, times=times, values=col_data[slot]
+        )
+
+    if not traces:
+        return {}, (
+            f'[ngspice] no traces mapped; '
+            f'data cols: {data_col_names}; '
+            f'known nodes: {list(spice_to_net)[:8]}'
+        )
+    return traces, ''
+
+
+# ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
 
@@ -846,6 +1253,16 @@ def simulate(board: Breadboard, netlist: Netlist,
         )
 
     node_voltages, branch_currents_raw = _parse_output(output)
+
+    # For libngspice, text output may not contain the Node/Voltage table
+    # (format differs across versions / in-process vs batch).  Fall back to
+    # wrdata which is format-independent.
+    _lib = _NgSpiceLib.get()
+    if _lib is not None and not node_voltages:
+        dc_vols, dc_curr = _lib._read_dc_vectors()
+        if dc_vols:
+            node_voltages = dc_vols
+            branch_currents_raw = {**branch_currents_raw, **dc_curr}
 
     # ---- Build net_voltages by inverting the node_map ----
     # We need to rebuild node_map from the same inputs to invert it.
@@ -928,18 +1345,34 @@ def simulate_transient(
             warnings=build_warnings,
         )
 
-    output, run_err, run_warns = _run_ngspice(spice_text)
-    all_warnings = build_warnings + run_warns
-    if run_err:
-        return SimResult(
-            node_voltages={}, net_voltages={}, branch_currents={},
-            error=run_err,
-            spice_netlist=spice_text,
-            spice_output=output or '',
-            warnings=all_warnings,
-        )
+    lib = _NgSpiceLib.get()
+    if lib is not None:
+        output, run_err, run_warns = lib.run(spice_text)
+        all_warnings = build_warnings + run_warns
+        if run_err:
+            return SimResult(
+                node_voltages={}, net_voltages={}, branch_currents={},
+                error=run_err,
+                spice_netlist=spice_text,
+                spice_output=output or '',
+                warnings=all_warnings,
+            )
+        traces, vec_diag = lib._read_tran_vectors(node_map)
+        if vec_diag:
+            output = (output + '\n' + vec_diag).strip()
+    else:
+        output, run_err, run_warns = _run_ngspice_subprocess(spice_text)
+        all_warnings = build_warnings + run_warns
+        if run_err:
+            return SimResult(
+                node_voltages={}, net_voltages={}, branch_currents={},
+                error=run_err,
+                spice_netlist=spice_text,
+                spice_output=output or '',
+                warnings=all_warnings,
+            )
+        traces = _parse_transient_output(output, node_map)
 
-    traces = _parse_transient_output(output, node_map)
     if not traces:
         return SimResult(
             node_voltages={}, net_voltages={}, branch_currents={},
