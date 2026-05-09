@@ -101,20 +101,23 @@ def _panel_bg() -> wx.Colour:
     return _DARK_PANEL_COLOUR if _is_dark_mode() else wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE)
 
 
-def _local_icon(name: str, size: int = 24) -> 'wx.Bitmap':
-    """Load a PNG from kicad_icons/images/ and scale to size×size."""
+def _local_icon(name: str, size: int = 24, scale: float = 1.0) -> 'wx.Bitmap':
+    """Load a PNG from kicad_icons/images/ and scale to size×size physical pixels."""
     path = _ICONS_IMAGES_DIR / name
     try:
         img = wx.Image(str(path), wx.BITMAP_TYPE_PNG)
         if img.GetWidth() != size or img.GetHeight() != size:
             img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
-        return wx.Bitmap(img)
+        bmp = wx.Bitmap(img)
+        if scale != 1.0:
+            bmp.SetScaleFactor(scale)
+        return bmp
     except Exception:
         return wx.NullBitmap
 
 
-def _kicad_icon(name: str, size: int = 20) -> 'wx.Bitmap':
-    """Load a PNG from the KiCad icon archive, scaled to size×size.
+def _kicad_icon(name: str, size: int = 20, scale: float = 1.0) -> 'wx.Bitmap':
+    """Load a PNG from the KiCad icon archive, scaled to size×size physical pixels.
 
     In dark mode, automatically tries the _dark_ variant first
     (e.g. save_24.png → save_dark_24.png).
@@ -125,7 +128,7 @@ def _kicad_icon(name: str, size: int = 20) -> 'wx.Bitmap':
         dark_name = _re.sub(r'_(\d+\.png)$', r'_dark_\1', name)
         if dark_name != name:
             name = dark_name
-    cache_key = (name, size)
+    cache_key = (name, size, scale)
     if cache_key in _icon_cache:
         return _icon_cache[cache_key]
     import io, tarfile
@@ -140,6 +143,8 @@ def _kicad_icon(name: str, size: int = 20) -> 'wx.Bitmap':
         if img.GetWidth() != size or img.GetHeight() != size:
             img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
         bmp = wx.Bitmap(img)
+        if scale != 1.0:
+            bmp.SetScaleFactor(scale)
         _icon_cache[cache_key] = bmp
         return bmp
     except Exception:
@@ -490,42 +495,43 @@ class BreadboardWindow(wx.Frame):
     def _build_vtoolbar(self, parent: wx.Window) -> wx.ToolBar:
         """Right-side vertical tool palette, mirroring Eeschema's right toolbar."""
         vt = wx.ToolBar(parent, style=wx.TB_VERTICAL | wx.TB_NODIVIDER)
+        _sf  = self.GetContentScaleFactor()
         _ico = self.FromDIP(20)
-        vt.SetToolBitmapSize((_ico, _ico))
+        vt.SetToolBitmapSize((20, 20))
 
         # --- Pointer / view tools ---
-        vt.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png', _ico),
+        vt.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png', _ico, _sf),
                    shortHelp='Select / Move  [Esc]', kind=wx.ITEM_CHECK)
         vt.AddTool(ID_NET_HIGHLIGHT, 'Highlight Net',
-                   _kicad_icon('net_highlight_schematic_24.png', _ico),
+                   _kicad_icon('net_highlight_schematic_24.png', _ico, _sf),
                    shortHelp='Highlight net — click a hole to show its connections', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
         # --- Wiring ---
-        vt.AddTool(ID_WIRE, 'Wire', _kicad_icon('add_line_24.png', _ico),
+        vt.AddTool(ID_WIRE, 'Wire', _kicad_icon('add_line_24.png', _ico, _sf),
                    shortHelp='Draw jumper wire  [W]', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
         # --- Annotation drawing tools ---
         vt.AddTool(ID_DRAW_LINE, 'Draw Line',
-                   _kicad_icon('add_graphical_segments_24.png', _ico),
+                   _kicad_icon('add_graphical_segments_24.png', _ico, _sf),
                    shortHelp='Draw annotation line — click start, click end', kind=wx.ITEM_CHECK)
         vt.AddTool(ID_DRAW_RECT, 'Draw Rectangle',
-                   _kicad_icon('add_rectangle_24.png', _ico),
+                   _kicad_icon('add_rectangle_24.png', _ico, _sf),
                    shortHelp='Draw annotation rectangle — click corner, click opposite corner', kind=wx.ITEM_CHECK)
         vt.AddTool(ID_DRAW_CIRCLE, 'Draw Circle',
-                   _kicad_icon('add_circle_24.png', _ico),
+                   _kicad_icon('add_circle_24.png', _ico, _sf),
                    shortHelp='Draw annotation circle — click center, click radius', kind=wx.ITEM_CHECK)
         vt.AddTool(ID_DRAW_TEXT, 'Add Text',
-                   _kicad_icon('text_24.png', _ico),
+                   _kicad_icon('text_24.png', _ico, _sf),
                    shortHelp='Place text annotation — click position, type text', kind=wx.ITEM_CHECK)
         vt.AddTool(ID_DRAW_TEXTBOX, 'Text Box',
-                   _kicad_icon('add_textbox_24.png', _ico),
+                   _kicad_icon('add_textbox_24.png', _ico, _sf),
                    shortHelp='Draw a text box — drag to define the box, then type text', kind=wx.ITEM_CHECK)
         vt.AddSeparator()
 
         # --- Delete ---
-        vt.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png', _ico),
+        vt.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png', _ico, _sf),
                    shortHelp='Delete component, wire, or annotation  [D]', kind=wx.ITEM_CHECK)
 
         vt.Realize()
@@ -565,32 +571,35 @@ class BreadboardWindow(wx.Frame):
     def _build_toolbar(self) -> None:
         tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_NODIVIDER)
         tb.SetBackgroundColour(_panel_bg())
+        _sf  = self.GetContentScaleFactor()
         _ico = self.FromDIP(20)
-        tb.SetToolBitmapSize((_ico, _ico))
+        tb.SetToolBitmapSize((20, 20))
 
         # File + prefs
-        tb.AddTool(ID_OPEN, 'Open', _kicad_icon('directory_open_24.png', _ico),
+        tb.AddTool(ID_OPEN, 'Open', _kicad_icon('directory_open_24.png', _ico, _sf),
                    shortHelp='Open a KiCad netlist (.net)  [Ctrl+O]')
-        tb.AddTool(ID_SAVE, 'Save', _kicad_icon('save_24.png', _ico),
+        tb.AddTool(ID_SAVE, 'Save', _kicad_icon('save_24.png', _ico, _sf),
                    shortHelp='Save current session (.kicad_bbrd)  [Ctrl+S]')
         _export_icon = ('export_svg_24.png' if self.prefs.export_format == 'svg'
                         else 'export_png_24.png')
-        tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon, _ico),
+        tb.AddTool(ID_EXPORT, 'Export', _kicad_icon(_export_icon, _ico, _sf),
                    shortHelp='Save the breadboard as an image')
-        tb.AddTool(ID_PREFS, 'Preferences', _local_icon('preficon.png', _ico),
+        tb.AddTool(ID_PREFS, 'Preferences', _local_icon('preficon.png', _ico, _sf),
                    shortHelp='Open preferences')
         tb.AddSeparator()
 
         # Edit history + clear
-        tb.AddTool(ID_UNDO, 'Undo', _kicad_icon('undo_24.png', _ico),
+        tb.AddTool(ID_UNDO, 'Undo', _kicad_icon('undo_24.png', _ico, _sf),
                    shortHelp='Undo  [Ctrl+Z]')
-        tb.AddTool(ID_REDO, 'Redo', _kicad_icon('redo_24.png', _ico),
+        tb.AddTool(ID_REDO, 'Redo', _kicad_icon('redo_24.png', _ico, _sf),
                    shortHelp='Redo  [Ctrl+Y]')
         _clear_icon = wx.NullBitmap
         try:
             _img = wx.Image(str(_RESOURCES / 'icon.png'), wx.BITMAP_TYPE_PNG)
             _img.Rescale(_ico, _ico, wx.IMAGE_QUALITY_HIGH)
             _clear_icon = wx.Bitmap(_img)
+            if _sf != 1.0:
+                _clear_icon.SetScaleFactor(_sf)
         except Exception:
             pass
         tb.AddTool(ID_CLEAR, 'Clear Board', _clear_icon,
@@ -598,28 +607,28 @@ class BreadboardWindow(wx.Frame):
         tb.AddSeparator()
 
         # Zoom
-        tb.AddTool(ID_ZOOM_IN,  'Zoom In',  _kicad_icon('zoom_in_24.png', _ico),
+        tb.AddTool(ID_ZOOM_IN,  'Zoom In',  _kicad_icon('zoom_in_24.png', _ico, _sf),
                    shortHelp='Zoom in  [+]')
-        tb.AddTool(ID_ZOOM_OUT, 'Zoom Out', _kicad_icon('zoom_out_24.png', _ico),
+        tb.AddTool(ID_ZOOM_OUT, 'Zoom Out', _kicad_icon('zoom_out_24.png', _ico, _sf),
                    shortHelp='Zoom out  [-]')
-        tb.AddTool(ID_ZOOM_FIT, 'Fit View', _kicad_icon('zoom_fit_in_page_24.png', _ico),
+        tb.AddTool(ID_ZOOM_FIT, 'Fit View', _kicad_icon('zoom_fit_in_page_24.png', _ico, _sf),
                    shortHelp='Fit board in view  [Ctrl+Home]')
         tb.AddSeparator()
 
         # Schematic sync
         _update_icon_name = ('update_bbrd_from_sch_dark_64.png' if _is_dark_mode()
                              else 'update_bbrd_from_sch_64.png')
-        tb.AddTool(ID_UPDATE, 'Update', _local_icon(_update_icon_name, _ico),
+        tb.AddTool(ID_UPDATE, 'Update', _local_icon(_update_icon_name, _ico, _sf),
                    shortHelp='Re-export netlist from .kicad_sch and reload (requires kicad-cli)')
-        tb.AddTool(ID_EESCHEMA, 'Schematic', _kicad_icon('icon_eeschema_24_24.png', _ico),
+        tb.AddTool(ID_EESCHEMA, 'Schematic', _kicad_icon('icon_eeschema_24_24.png', _ico, _sf),
                    shortHelp='Open schematic in Eeschema')
         tb.AddSeparator()
 
         # Interaction modes
-        tb.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png', _ico),
+        tb.AddTool(ID_SELECT, 'Select', _kicad_icon('cursor_24.png', _ico, _sf),
                    shortHelp='Select and move placed components  [Esc]',
                    kind=wx.ITEM_RADIO)
-        tb.AddTool(ID_WIRE, 'Wire', _kicad_icon('add_line_24.png', _ico),
+        tb.AddTool(ID_WIRE, 'Wire', _kicad_icon('add_line_24.png', _ico, _sf),
                    shortHelp='Draw a jumper wire between two holes  [W]',
                    kind=wx.ITEM_RADIO)
         tb.AddControl(wx.StaticText(tb, label=' '))
@@ -629,17 +638,17 @@ class BreadboardWindow(wx.Frame):
             'Wire colour — Auto cycles through colours each wire; pick one to fix it.')
         self._wire_color_choice.Bind(wx.EVT_CHOICE, self._on_wire_color_choice)
         tb.AddControl(self._wire_color_choice)
-        tb.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png', _ico),
+        tb.AddTool(ID_DELETE, 'Delete', _kicad_icon('delete_cursor_24.png', _ico, _sf),
                    shortHelp='Delete a component or wire  [D]',
                    kind=wx.ITEM_CHECK)
         tb.AddSeparator()
 
         # Validate / simulate / clear labels
-        tb.AddTool(ID_VALIDATE, 'Validate', _kicad_icon('erc_24.png', _ico),
+        tb.AddTool(ID_VALIDATE, 'Validate', _kicad_icon('erc_24.png', _ico, _sf),
                    shortHelp='Check if your circuit matches the schematic')
-        tb.AddTool(ID_SIMULATE, 'Simulate', _kicad_icon('simulator_24.png', _ico),
+        tb.AddTool(ID_SIMULATE, 'Simulate', _kicad_icon('simulator_24.png', _ico, _sf),
                    shortHelp='Run SPICE DC simulation via ngspice')
-        tb.AddTool(ID_CLEAR_WARNINGS, 'Clear Labels', _kicad_icon('ercwarn_24.png', _ico),
+        tb.AddTool(ID_CLEAR_WARNINGS, 'Clear Labels', _kicad_icon('ercwarn_24.png', _ico, _sf),
                    shortHelp='Dismiss validation warning/short markers')
 
         tb.Realize()
@@ -1238,7 +1247,8 @@ class BreadboardWindow(wx.Frame):
         if p.export_format != old.export_format:
             icon_name = ('export_svg_24.png' if p.export_format == 'svg'
                          else 'export_png_24.png')
-            self.toolbar.SetToolNormalBitmap(ID_EXPORT, _kicad_icon(icon_name))
+            self.toolbar.SetToolNormalBitmap(ID_EXPORT, _kicad_icon(
+                icon_name, self.FromDIP(20), self.GetContentScaleFactor()))
             self.toolbar.Refresh()
 
         self.canvas.Refresh()
@@ -1551,6 +1561,7 @@ class BreadboardWindow(wx.Frame):
             self, result.transient_traces,
             on_probe_toggle=self._on_waveform_probe_toggle,
             warnings=result.warnings or [],
+            num_channels=self.prefs.scope_channels,
         )
         self._waveform_frame.Show()
 

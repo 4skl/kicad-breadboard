@@ -451,16 +451,19 @@ class KnobWidget(wx.Panel):
     """Knob with dark outer ring and white indicator. compact=True for channel sections."""
 
     def __init__(self, parent, label: str, divs: List[float], unit: str,
-                 on_change: Optional[Callable] = None, compact: bool = False):
-        Rr = 15 if compact else 26
-        Rf = 11 if compact else 19
-        w  = 54 if compact else 76
-        h  = 64 if compact else 90
+                 on_change: Optional[Callable] = None, compact: bool = False,
+                 size_factor: float = 1.0):
+        sf = size_factor
+        Rr = int((15 if compact else 26) * sf)
+        Rf = int((11 if compact else 19) * sf)
+        w  = int((54 if compact else 76) * sf)
+        h  = int((64 if compact else 90) * sf)
         super().__init__(parent, size=wx.Size(w, h))
         self.SetMinSize(wx.Size(w, h))
         self.SetBackgroundColour(_SECT_BG)
         self._Rr        = Rr
         self._Rf        = Rf
+        self._sf        = sf
         self._label     = label
         self._divs      = divs
         self._unit      = unit
@@ -526,13 +529,14 @@ class KnobWidget(wx.Panel):
 
         Rr = self._Rr
         Rf = self._Rf
+        sf = self._sf
         cx = W // 2
-        cy = Rr + (7 if self._compact else 10)
+        cy = Rr + int((7 if self._compact else 10) * sf)
 
         # Shadow
         dc.SetPen(wx.Pen(_KNOB_SHAD, 1))
         dc.SetBrush(wx.Brush(_KNOB_SHAD))
-        dc.DrawCircle(cx + 2, cy + 2, Rr + 2)
+        dc.DrawCircle(cx + int(2 * sf), cy + int(2 * sf), Rr + int(2 * sf))
 
         # Outer ring
         dc.SetPen(wx.Pen(wx.Colour(52, 52, 56), 1))
@@ -544,8 +548,8 @@ class KnobWidget(wx.Panel):
         dc.SetPen(wx.Pen(wx.Colour(48, 48, 52), 1))
         for k in range(n_notch):
             a  = math.radians(k * 360 / n_notch)
-            x1 = cx + int((Rr - 3) * math.cos(a))
-            y1 = cy + int((Rr - 3) * math.sin(a))
+            x1 = cx + int((Rr - int(3 * sf)) * math.cos(a))
+            y1 = cy + int((Rr - int(3 * sf)) * math.sin(a))
             x2 = cx + int(Rr * math.cos(a))
             y2 = cy + int(Rr * math.sin(a))
             dc.DrawLine(x1, y1, x2, y2)
@@ -558,41 +562,41 @@ class KnobWidget(wx.Panel):
         # Indicator
         n     = max(len(self._divs) - 1, 1)
         angle = math.radians(-135 + (self._idx / n) * 270 - 90)
-        ix    = cx + int((Rf - 3) * math.cos(angle))
-        iy    = cy + int((Rf - 3) * math.sin(angle))
-        dc.SetPen(wx.Pen(_IND_LINE, 2, wx.PENSTYLE_SOLID))
+        ix    = cx + int((Rf - int(3 * sf)) * math.cos(angle))
+        iy    = cy + int((Rf - int(3 * sf)) * math.sin(angle))
+        dc.SetPen(wx.Pen(_IND_LINE, max(1, int(2 * sf)), wx.PENSTYLE_SOLID))
         dc.DrawLine(cx, cy, ix, iy)
 
         # Rivet
         dc.SetPen(wx.Pen(wx.Colour(50, 50, 48), 1))
         dc.SetBrush(wx.Brush(wx.Colour(62, 60, 58)))
-        dc.DrawCircle(cx, cy, 3)
+        dc.DrawCircle(cx, cy, max(2, int(3 * sf)))
 
         # Scale ticks
         dc.SetPen(wx.Pen(_TEXT_DIM, 1))
         for k in range(9):
             a  = math.radians(-135 + k * 270 / 8 - 90)
-            x1 = cx + int((Rr + 2) * math.cos(a))
-            y1 = cy + int((Rr + 2) * math.sin(a))
-            x2 = cx + int((Rr + 5) * math.cos(a))
-            y2 = cy + int((Rr + 5) * math.sin(a))
+            x1 = cx + int((Rr + int(2 * sf)) * math.cos(a))
+            y1 = cy + int((Rr + int(2 * sf)) * math.sin(a))
+            x2 = cx + int((Rr + int(5 * sf)) * math.cos(a))
+            y2 = cy + int((Rr + int(5 * sf)) * math.sin(a))
             dc.DrawLine(x1, y1, x2, y2)
 
-        lsz = 7 if self._compact else 8
-        vsz = 7 if self._compact else 8
+        lsz = max(7, int((7 if self._compact else 8) * sf))
+        vsz = max(7, int((7 if self._compact else 8) * sf))
 
         dc.SetFont(wx.Font(lsz, wx.FONTFAMILY_DEFAULT,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         dc.SetTextForeground(_TEXT_DIM)
         lw = dc.GetTextExtent(self._label)[0]
-        dc.DrawText(self._label, (W - lw) // 2, cy + Rr + 5)
+        dc.DrawText(self._label, (W - lw) // 2, cy + Rr + int(5 * sf))
 
         val_str = _fmt_eng(self._divs[self._idx], self._unit) + '/div'
         dc.SetFont(wx.Font(vsz, wx.FONTFAMILY_TELETYPE,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         dc.SetTextForeground(_TEXT)
         vw = dc.GetTextExtent(val_str)[0]
-        dc.DrawText(val_str, (W - vw) // 2, cy + Rr + 14)
+        dc.DrawText(val_str, (W - vw) // 2, cy + Rr + int(14 * sf))
 
 
 # ---------------------------------------------------------------------------
@@ -902,13 +906,15 @@ class WaveformFrame(wx.Frame):
     def __init__(self, parent,
                  traces: Dict[str, TransientTrace],
                  on_probe_toggle: Optional[Callable[[bool], None]] = None,
-                 warnings: Optional[List[str]] = None):
+                 warnings: Optional[List[str]] = None,
+                 num_channels: int = _NUM_CH):
         super().__init__(parent, title='KiScope',
                          size=(1080, 720),
                          style=wx.DEFAULT_FRAME_STYLE)
         self._traces          = traces
         self._on_probe_toggle = on_probe_toggle
         self._warnings        = warnings or []
+        self._num_channels    = max(1, min(num_channels, _NUM_CH))
         self._probing_channel:   Optional[int]          = None
         self._channel_sections: List[ChannelSection]   = []
         self._bnc_connectors:   List[_BncConnector]    = []
@@ -928,7 +934,7 @@ class WaveformFrame(wx.Frame):
                 color=_CH_COLORS[i % len(_CH_COLORS)],
                 default_v_idx=default_v_idx,
             )
-            for i in range(_NUM_CH)
+            for i in range(self._num_channels)
         ]
 
         self._build()
@@ -1109,7 +1115,7 @@ class WaveformFrame(wx.Frame):
 
         self._t_knob = KnobWidget(ctrl, 'TIME/DIV', _T_DIVS, 's',
                                    on_change=self._screen.set_t_div,
-                                   compact=False)
+                                   compact=False, size_factor=2.0)
         self._t_knob.set_index(self._init_t_idx)
         sz.Add(self._t_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 8)
 
@@ -1168,7 +1174,7 @@ class WaveformFrame(wx.Frame):
 
             sz.Add(col_sz, 0, wx.LEFT, 6 if i == 0 else 2)
 
-            if i < _NUM_CH - 1:
+            if i < self._num_channels - 1:
                 sep = wx.StaticLine(strip, style=wx.LI_VERTICAL)
                 sz.Add(sep, 0, wx.EXPAND | wx.TOP | wx.BOTTOM | wx.LEFT, 4)
 
