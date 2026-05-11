@@ -5,6 +5,7 @@ Public API:
     simulate(board, netlist, terminal_voltages) -> SimResult
     simulate_transient(board, netlist, terminal_voltages, plot_nets) -> SimResult
     find_vsin_sources(netlist) -> List[VsinSource]
+    initial_terminal_voltages(board, netlist) -> Dict[str, float]
 """
 from __future__ import annotations
 
@@ -169,6 +170,18 @@ def _parse_spice_float(s: str) -> float:
     return float(s)
 
 
+def _parse_voltage_value(s: str) -> float:
+    """Parse a voltage value from KiCad/SPICE text such as '5', '5V', or 'DC 5'."""
+    s = s.strip()
+    if not s:
+        raise ValueError('empty voltage')
+    if s.upper().startswith('DC '):
+        s = s[3:].strip()
+    if s.upper().endswith('V'):
+        s = s[:-1].strip()
+    return _parse_spice_float(s)
+
+
 def _parse_sim_params(raw: str) -> Dict[str, str]:
     """Parse a KiCad Sim.Params string like 'dc=0 ampl=1 f=1k ac=1' into a dict."""
     result: Dict[str, str] = {}
@@ -176,6 +189,79 @@ def _parse_sim_params(raw: str) -> Dict[str, str]:
         if '=' in token:
             k, _, v = token.partition('=')
             result[k.strip().lower()] = v.strip()
+    return result
+
+
+def _voltage_source_edges(netlist: 'Netlist') -> List[Tuple[str, str, float]]:
+    """Return schematic voltage-source edges as (positive_net, negative_net, volts)."""
+    edges: List[Tuple[str, str, float]] = []
+    for ref, comp in netlist.components.items():
+        pins = netlist.nets_for_ref(ref)
+        pos_net = pins.get(1)
+        neg_net = pins.get(2)
+        if pos_net is None or neg_net is None:
+            continue
+
+        symbol = comp.symbol.upper()
+        sim_device = comp.properties.get('Sim.Device', '').upper()
+        sim_type = comp.properties.get('Sim.Type', '').upper()
+        sim_params = _parse_sim_params(comp.properties.get('Sim.Params', '') or '')
+
+        raw_voltage: Optional[str] = None
+        if symbol == 'VSIN':
+            raw_voltage = sim_params.get('dc', comp.properties.get('VOFF', '0') or '0')
+        elif sim_device == 'V' and (sim_type in ('', 'DC') or symbol in ('VDC', 'VSOURCE')):
+            raw_voltage = sim_params.get('dc') or comp.value
+        elif symbol in ('VDC', 'VSOURCE'):
+            raw_voltage = sim_params.get('dc') or comp.value
+
+        if raw_voltage is None:
+            continue
+        try:
+            edges.append((pos_net.name, neg_net.name, _parse_voltage_value(raw_voltage)))
+        except (ValueError, OverflowError):
+            continue
+    return edges
+
+
+def _source_voltage_for_net(netlist: 'Netlist', net_name: str, ground_net: str) -> Optional[float]:
+    """Resolve net voltage from schematic voltage sources, relative to ground_net."""
+    if not net_name:
+        return None
+    ground_aliases = {ground_net, '0', 'GND', 'gnd', ''}
+    edges = _voltage_source_edges(netlist)
+
+    def resolve(cur: str, seen: set) -> Optional[float]:
+        if cur in ground_aliases:
+            return 0.0
+        if cur in seen:
+            return None
+        seen.add(cur)
+        for pos, neg, volts in edges:
+            if pos == cur:
+                base = resolve(neg, seen.copy())
+                if base is not None:
+                    return base + volts
+            if neg == cur:
+                base = resolve(pos, seen.copy())
+                if base is not None:
+                    return base - volts
+        return None
+
+    return resolve(net_name, set())
+
+
+def initial_terminal_voltages(board: Breadboard, netlist: Netlist) -> Dict[str, float]:
+    """Return default .op terminal voltages inferred from schematic voltage sources."""
+    gnd_net = board.terminal_nets.get('GND', '') or '0'
+    result: Dict[str, float] = {}
+    for term in ('V1', 'V2', 'V3'):
+        net_name = board.terminal_nets.get(term, '')
+        if not net_name:
+            continue
+        voltage = _source_voltage_for_net(netlist, net_name, gnd_net)
+        if voltage is not None:
+            result[term] = voltage
     return result
 
 

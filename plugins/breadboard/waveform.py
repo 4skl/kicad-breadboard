@@ -5,6 +5,7 @@ Public API:
     frame = WaveformFrame(parent, traces, on_probe_toggle=cb, warnings=[...])
     frame.Show()
     frame.toggle_net('VCC')      # assign to probing channel / next empty channel
+    frame.clear_probes()         # disconnect all scope channels
     frame.deactivate_probe()     # called when canvas exits probe mode externally
 """
 from __future__ import annotations
@@ -23,9 +24,9 @@ from .model.simulation import TransientTrace
 _BODY      = wx.Colour(175, 172, 166)
 _HDR_DARK  = wx.Colour(32, 32, 35)
 _BEZEL     = wx.Colour(16, 16, 18)
-_SCREEN    = wx.Colour(3, 14, 5)
-_GRID_MAJ  = wx.Colour(12, 36, 15)
-_GRID_CTR  = wx.Colour(18, 54, 22)
+_SCREEN    = wx.Colour(4, 24, 28)
+_GRID_MAJ  = wx.Colour(10, 64, 52)
+_GRID_CTR  = wx.Colour(24, 112, 72)
 _SECT_BG   = wx.Colour(150, 147, 142)
 _SECT_LBL  = wx.Colour(215, 213, 208)
 _TEXT      = wx.Colour(22, 22, 22)
@@ -283,11 +284,7 @@ class OscopeScreen(wx.Panel):
                    if p - 4 <= tx(t) <= p + pw + 4]
             channel_pts.append((ch, pts))
 
-        for ch, pts in channel_pts:
-            if len(pts) < 2:
-                continue
-            r, g, b = _hex_to_rgb(ch.color)
-            self._draw_phosphor(dc, gc, pts, r, g, b)
+        self._draw_phosphor_traces(dc, gc, channel_pts)
 
         self._draw_clip_arrows(dc, p, pw, ph_plot, channel_pts)
 
@@ -472,29 +469,37 @@ class OscopeScreen(wx.Panel):
         dc.SetBrush(wx.TRANSPARENT_BRUSH)
         dc.DrawRectangle(ox, oy, pw, ph)
 
-    def _draw_phosphor(self, dc: wx.DC, gc, pts: list,
-                       r: int, g: int, b: int) -> None:
+    def _draw_phosphor_traces(self, dc: wx.DC, gc, channel_pts: list) -> None:
+        """Draw all trace glows first, then all cores, so focus glow never masks traces."""
         i = self._intensity   # 0.1–1.0  brightness multiplier
         f = self._focus       # 0.3–3.0  glow-spread multiplier
-        ir = int(r * i); ig = int(g * i); ib = int(b * i)
+
         if gc is not None:
-            for width, col in [
-                (8.0 * f, wx.Colour(ir // 8, ig // 8, ib // 8)),
-                (3.5 * f, wx.Colour(ir // 3, ig // 3, ib // 3)),
-                (1.5,     wx.Colour(ir,       ig,      ib)),
-            ]:
-                gc.SetPen(gc.CreatePen(
-                    wx.GraphicsPenInfo(col).Width(width)
-                    .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)
-                ))
-                path = gc.CreatePath()
-                path.MoveToPoint(pts[0])
-                for pt in pts[1:]:
-                    path.AddLineToPoint(pt)
-                gc.StrokePath(path)
+            for width_mul, alpha_mul in ((8.0, 34), (3.5, 78), (1.5, 255)):
+                for ch, pts in channel_pts:
+                    if len(pts) < 2:
+                        continue
+                    r, g, b = _hex_to_rgb(ch.color)
+                    ir = int(r * i); ig = int(g * i); ib = int(b * i)
+                    width = width_mul * f if width_mul > 1.5 else width_mul
+                    col = wx.Colour(ir, ig, ib, int(alpha_mul * i))
+                    gc.SetPen(gc.CreatePen(
+                        wx.GraphicsPenInfo(col).Width(width)
+                        .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)
+                    ))
+                    path = gc.CreatePath()
+                    path.MoveToPoint(pts[0])
+                    for pt in pts[1:]:
+                        path.AddLineToPoint(pt)
+                    gc.StrokePath(path)
         else:
-            dc.SetPen(wx.Pen(wx.Colour(ir, ig, ib), 2))
-            dc.DrawLines([(int(x), int(y)) for x, y in pts])
+            for ch, pts in channel_pts:
+                if len(pts) < 2:
+                    continue
+                r, g, b = _hex_to_rgb(ch.color)
+                ir = int(r * i); ig = int(g * i); ib = int(b * i)
+                dc.SetPen(wx.Pen(wx.Colour(ir, ig, ib), 2))
+                dc.DrawLines([(int(x), int(y)) for x, y in pts])
 
     # ── measurement overlay ────────────────────────────────────────────
 
@@ -629,19 +634,9 @@ class _PushButton(wx.Panel):
 
         r, g, b = self._color.Red(), self._color.Green(), self._color.Blue()
 
-        # LED dot at top centre
-        lcy = 7
-        if self._pressed:
-            dc.SetPen(wx.Pen(wx.Colour(r // 2, g // 2, b // 2), 1))
-            dc.SetBrush(wx.Brush(self._color))
-        else:
-            dc.SetPen(wx.Pen(wx.Colour(r // 5, g // 5, b // 5), 1))
-            dc.SetBrush(wx.Brush(wx.Colour(r // 5, g // 5, b // 5)))
-        dc.DrawCircle(W // 2, lcy, 4)
-
         # Button body
-        bx, by = 3, 16
-        bw, bh = W - 6, H - 20
+        bx, by = 3, 3
+        bw, bh = W - 6, H - 7
 
         face      = wx.Colour(26, 24, 22) if self._pressed else wx.Colour(46, 44, 40)
         highlight = wx.Colour(18, 16, 14) if self._pressed else wx.Colour(68, 66, 60)
@@ -691,7 +686,7 @@ class _PushButton(wx.Panel):
 
 class _ToggleSwitchWidget(wx.Panel):
     """Physical lever-style toggle switch, horizontal orientation."""
-    _W, _H = 72, 48
+    _W, _H = 82, 48
 
     def __init__(self, parent, label: str = '',
                  on_change: Optional[Callable[[bool], None]] = None):
@@ -783,16 +778,6 @@ class _ToggleSwitchWidget(wx.Panel):
             tw = dc.GetTextExtent(self._label)[0]
             dc.DrawText(self._label, (W - tw) // 2, hy + hh + 4)
 
-        # Small LED dot below label — green when on, dark when off
-        led_y = hy + hh + (16 if self._label else 6)
-        if self._state:
-            dc.SetPen(wx.Pen(wx.Colour(0, 140, 36), 1))
-            dc.SetBrush(wx.Brush(_LED_GRN))
-        else:
-            dc.SetPen(wx.Pen(wx.Colour(15, 32, 15), 1))
-            dc.SetBrush(wx.Brush(wx.Colour(0, 32, 8)))
-        dc.DrawCircle(W // 2, led_y, 3)
-
 
 # ---------------------------------------------------------------------------
 # KnobWidget — Tektronix-style rotary knob
@@ -804,6 +789,7 @@ class KnobWidget(wx.Panel):
     def __init__(self, parent, label: str, divs: List[float], unit: str,
                  on_change: Optional[Callable] = None, compact: bool = False,
                  size_factor: float = 1.0,
+                 text_size_factor: Optional[float] = None,
                  val_fmt: Optional[Callable[[float], str]] = None):
         sf = size_factor
         Rr = int((15 if compact else 26) * sf)
@@ -816,6 +802,7 @@ class KnobWidget(wx.Panel):
         self._Rr        = Rr
         self._Rf        = Rf
         self._sf        = sf
+        self._text_sf   = text_size_factor if text_size_factor is not None else sf
         self._label     = label
         self._divs      = divs
         self._unit      = unit
@@ -825,6 +812,7 @@ class KnobWidget(wx.Panel):
         self._val_fmt   = val_fmt
         self._drag_start_xy: Optional[Tuple[int, int]] = None
         self._drag_start_idx: int = 0
+        self._wheel_accum: int = 0
         self.Bind(wx.EVT_PAINT,      self._on_paint)
         self.Bind(wx.EVT_MOUSEWHEEL, self._on_wheel)
         self.Bind(wx.EVT_LEFT_DOWN,  self._on_mouse_down)
@@ -840,7 +828,11 @@ class KnobWidget(wx.Panel):
         self.Refresh()
 
     def _on_wheel(self, evt: wx.MouseEvent) -> None:
-        self._step(1 if evt.GetWheelRotation() > 0 else -1)
+        self._wheel_accum += evt.GetWheelRotation()
+        threshold = max(1, evt.GetWheelDelta() * 2)
+        while abs(self._wheel_accum) >= threshold:
+            self._step(1 if self._wheel_accum > 0 else -1)
+            self._wheel_accum += -threshold if self._wheel_accum > 0 else threshold
 
     def _on_mouse_down(self, evt: wx.MouseEvent) -> None:
         self._drag_start_xy  = (evt.GetX(), evt.GetY())
@@ -935,8 +927,9 @@ class KnobWidget(wx.Panel):
             y2 = cy + int((Rr + int(5 * sf)) * math.sin(a))
             dc.DrawLine(x1, y1, x2, y2)
 
-        lsz = max(7, int((7 if self._compact else 8) * sf))
-        vsz = max(7, int((7 if self._compact else 8) * sf))
+        text_sf = self._text_sf
+        lsz = max(7, int((7 if self._compact else 8) * text_sf))
+        vsz = max(7, int((7 if self._compact else 8) * text_sf))
 
         dc.SetFont(wx.Font(lsz, wx.FONTFAMILY_DEFAULT,
                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
@@ -1262,6 +1255,7 @@ class WaveformFrame(wx.Frame):
     def __init__(self, parent,
                  traces: Dict[str, TransientTrace],
                  on_probe_toggle: Optional[Callable[[bool], None]] = None,
+                 on_clear_probes: Optional[Callable[[], None]] = None,
                  warnings: Optional[List[str]] = None,
                  num_channels: int = _NUM_CH):
         super().__init__(parent, title='KiScope',
@@ -1269,6 +1263,7 @@ class WaveformFrame(wx.Frame):
                          style=wx.DEFAULT_FRAME_STYLE)
         self._traces          = traces
         self._on_probe_toggle = on_probe_toggle
+        self._on_clear_probes = on_clear_probes
         self._warnings        = warnings or []
         self._num_channels    = max(1, min(num_channels, _NUM_CH))
         self._probing_channel:   Optional[int]          = None
@@ -1333,6 +1328,20 @@ class WaveformFrame(wx.Frame):
         for sect in self._channel_sections:
             sect.set_probe_active(False)
 
+    def clear_probes(self) -> None:
+        """Disconnect all displayed scope channels and remove breadboard markers."""
+        if self._probing_channel is not None and self._on_probe_toggle:
+            self._on_probe_toggle(False)
+        self._probing_channel = None
+        for i, ch in enumerate(self._channels):
+            ch.net_name = None
+            self._channel_sections[i].set_net(None)
+            self._channel_sections[i].set_probe_active(False)
+        self._update_bnc_labels()
+        if self._on_clear_probes:
+            self._on_clear_probes()
+        self._screen.Refresh()
+
     def _update_bnc_labels(self) -> None:
         for i, bnc in enumerate(self._bnc_connectors):
             bnc.set_net(self._channels[i].net_name)
@@ -1376,7 +1385,15 @@ class WaveformFrame(wx.Frame):
             on_click=self._on_autoset,
         )
         _autoset_btn.SetToolTip('Auto-scale all channels to fit the waveforms on screen')
-        ck_sz.Add(_autoset_btn, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 12)
+        ck_sz.Add(_autoset_btn, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 8)
+        _clear_btn = _PushButton(
+            crt_knobs, 'CLEAR\nRESET',
+            color=wx.Colour(165, 40, 30),
+            size=(60, 58),
+            on_click=self.clear_probes,
+        )
+        _clear_btn.SetToolTip('Disconnect all scope probes')
+        ck_sz.Add(_clear_btn, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 12)
         ck_sz.AddStretchSpacer()
         crt_knobs.SetSizer(ck_sz)
 
@@ -1437,7 +1454,8 @@ class WaveformFrame(wx.Frame):
         sub.SetBackgroundColour(_HDR_DARK)
 
         sz.Add(logo, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 14)
-        sz.Add(sub,  0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 12)
+        sz.AddStretchSpacer()
+        sz.Add(sub, 0, wx.ALIGN_CENTRE_VERTICAL)
         sz.AddStretchSpacer()
 
         if self._traces:
@@ -1504,7 +1522,8 @@ class WaveformFrame(wx.Frame):
 
         self._t_knob = KnobWidget(ctrl, 'TIME/DIV', _T_DIVS, 's',
                                    on_change=self._screen.set_t_div,
-                                   compact=False, size_factor=2.0)
+                                   compact=False, size_factor=2.0,
+                                   text_size_factor=1.0)
         self._t_knob.set_index(self._init_t_idx)
         dials_sz.Add(self._t_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.ALL, 6)
 
@@ -1551,7 +1570,7 @@ class WaveformFrame(wx.Frame):
         row_sz.Add(self._meas_toggle, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 6)
 
         self._cur_toggle = _ToggleSwitchWidget(
-            ctrl, label='CUR',
+            ctrl, label='CURSORS',
             on_change=self._screen.set_cursors_enabled)
         self._cur_toggle.SetToolTip('Enable / disable time cursors')
         row_sz.Add(self._cur_toggle, 0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 6)

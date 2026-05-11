@@ -1,6 +1,8 @@
 # KiCad Breadboard Builder <img src="images/icon.png" height="45">
 
-A KiCad 9 / 10 plugin for introductory analog electronics courses at the University of Antwerp. Draw your schematic in Eeschema, then wire it up on a virtual breadboard and validate it against the schematic.
+A KiCad 9 / 10 plugin for introductory analog electronics courses at the University of Antwerp. Draw your schematic in Eeschema, then wire it up on a virtual breadboard, validate it against the schematic, and run simple SPICE checks from the breadboard view.
+
+Current release name: **Whole Wheat**.
 
 ![breadboard](images/breadboard.png)
 
@@ -60,6 +62,12 @@ Click **Validate** to check your build against the schematic. Open nets and shor
 
 ![shortcircuit](images/shortcircuit.png)
 
+Use **Simulate** for DC operating point analysis, or open **KiScope** for transient waveforms when the schematic contains a VSIN source.
+
+> **Image placeholder:** add `images/simulation-pane.png` showing the simulation pane with inferred DC source voltages.
+>
+> **Image placeholder:** add `images/kiscope.png` showing the KiScope CRT-style scope window.
+
 ---
 
 ## Features
@@ -71,13 +79,48 @@ Click **Validate** to check your build against the schematic. Open nets and shor
 - **Pin functions toggle** (toolbar): shows the KiCad pin function name (e.g. TRIG, THRESH, GND) on every placed DIP IC instead of pin numbers; short labels stay vertical, long labels angle automatically to avoid overlap
 - TO-92 transistors (BJT, JFET, MOSFET) show the current pinout order (e.g. C-B-E or G-S-D) on their card; click `>` to cycle variants before placing
 - Film capacitors render as flat rectangles with the value printed on the body (e.g. C5 100nF); electrolytic capacitors render as top-down circles with a polarity stripe
+- Diodes and Zener diodes render as compact axial bodies with a cathode band; long pin spacing extends the leads rather than stretching the body
 - Draw jumper wires between any two holes (tie strip, rail, or binding post)
 - Validate the board against the schematic: highlights open nets (?) and shorts (⚡)
+- Highlight schematic nets from the board or from the net list overlay; in highlight mode the overlay includes a **MARK** column with a radio-style target for each net
+- Add drawing annotations directly on the breadboard: lines, rectangles, circles, text, and text boxes; annotations can be selected, moved, resized, edited, deleted, saved, and loaded
 - Export the board as a PNG or SVG image
 - "Update from schematic" re-exports the netlist via `kicad-cli` without leaving the window
 - Save and load board sessions (`.kicad_bbrd`)
 - Instrument probes: place function-generator, oscilloscope (1–4 channels), and PSU connection points on the board; drag their labels freely for better visibility
+- SPICE DC operating point simulation (`.op`) from the breadboard view; assigned source terminals are pre-filled from schematic voltage sources where possible
+- Transient simulation for VSIN-based schematics, with waveform thumbnails on the board and a dedicated **KiScope** oscilloscope window
 - Preferences dialog (`File → Preferences…`) controls instruments, display, board layout, and export format; settings can be saved as defaults and restored on startup
+
+> **Image placeholder:** add `images/net-highlight-mark.png` showing the net list overlay with the MARK column.
+
+---
+
+## Simulation and KiScope
+
+The **Simulate** button opens a small simulation pane over the breadboard.
+
+### DC operating point
+
+For `.op` analysis, assign the breadboard binding posts to schematic nets first. `GND` must be assigned. The plugin creates GND-referenced DC sources for assigned supply terminals and runs ngspice.
+
+Where the schematic netlist contains voltage sources, the voltage fields are pre-filled from the netlist instead of always starting at `5.0 V`. This includes common KiCad SPICE DC voltage sources and the DC offset of VSIN sources. The values remain editable before running.
+
+Simulation is blocked when validation finds open nets or shorts, because the SPICE result would no longer represent the breadboard wiring.
+
+### Transient analysis
+
+When the schematic contains one or more VSIN sources, the simulation pane shows **Open KiScope**. KiScope is a CRT-style oscilloscope view with:
+
+- 1–4 channels, depending on Preferences
+- per-channel probe buttons for selecting breadboard nets
+- TIME/DIV, POSITION, VOLTS/DIV, FOCUS, and INTEN controls
+- MEAS and CURSORS overlays
+- AUTO SET scaling
+- CLEAR / RESET to disconnect all scope probes
+- waveform thumbnails next to placed CH probes on the board
+
+> **Image placeholder:** add `images/kiscope-probing.png` showing KiScope next to a breadboard with CH probe markers.
 
 ---
 
@@ -123,7 +166,15 @@ The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **
 | Open netlist | Load a `.net` file manually |
 | Update from schematic | Re-export netlist from `.kicad_sch` via `kicad-cli` and reload *(requires KiCad project; not available in standalone mode)* |
 | Export image | Save the current board view as a PNG or SVG (format set in Preferences) |
+| Preferences | Open the Preferences dialog |
+| Undo / Redo | Undo or redo board edits |
+| Select | Select, move, resize, or edit placed items |
+| Wire | Draw a jumper wire |
+| Delete | Delete components, wires, probes, or annotations |
+| Net highlight | Highlight a schematic net by clicking a hole or the MARK column in the net list |
+| Drawing tools | Add line, rectangle, circle, text, or text-box annotations |
 | Validate | Check if the breadboard matches the schematic |
+| Simulate | Open the SPICE simulation pane |
 | Clear warnings | Dismiss `?` / `⚡` validation markers |
 | Clear board | Remove all placed components and wires |
 
@@ -138,12 +189,14 @@ The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **
 | D | Delete mode |
 | R | Rotate / flip component (during placement or when selected) |
 | Esc | Back to Select / Move mode |
-| Del | Delete selected component or wire |
+| Del / Backspace | Delete selected component, wire, probe, or annotation |
 | Right-click on DIP | Rotate 180° |
 | Right-click on binding post | Assign to schematic net |
 | Ctrl+O | Open netlist |
 | Ctrl+S | Save session |
 | Ctrl+L | Load session |
+| Ctrl+Z | Undo |
+| Ctrl+Y / Ctrl+Shift+Z | Redo |
 | Scroll | Zoom in / out |
 | Shift+Scroll | Pan vertical |
 | Ctrl+Scroll | Pan horizontal |
@@ -184,7 +237,7 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 | Setting | Description |
 |---|---|
 | Size / layout | `Mini` (170 holes, no rails) · `Half` (400 holes) · `Full` (830 holes) · `Double` (2× full stacked) · `Triple` (3× full + vertical power rails left side) · `Double Rails` (2× full + vertical power rails both sides) |
-| Binding posts side | Position of the GND / V1 / V2 binding posts: `Left` (default), `Right`, `Top`, or `Bottom` |
+| Binding posts side | Position of the GND / V1 / V2 / V3 binding posts: `Left` (default), `Right`, `Top`, or `Bottom` |
 | Show baseboard | Draw a coloured panel behind the breadboard(s) |
 | Baseboard colour | Fill colour of the baseboard |
 | Include branding | Display a logo image alongside the binding posts (on the outer side, away from the board) |
@@ -198,7 +251,7 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 
 ### Binding posts
 
-Three binding posts (GND, V1, V2) on the board can be assigned to schematic nets via the dropdowns. GND is automatically assigned to net `0` (SPICE-style) or `GND` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
+Four binding posts (GND, V1, V2, V3) on the board can be assigned to schematic nets via the dropdowns or by right-clicking the post. GND is automatically assigned to net `0` (SPICE-style) or `GND` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
 
 ### Instruments
 
@@ -218,6 +271,25 @@ The **Function generator**, **Oscilloscope**, and **Power supply (PSU)** section
 - Click **Remove** (same button once placed) to remove the probe.
 - In **Delete mode** (D), hover over a probe flag and click to remove it.
 - In **Select mode**, drag a probe flag to reposition the label. A leaderline connects the label back to its hole. The label position is saved in the session file.
+
+</details>
+
+<details>
+<summary>Drawing annotations</summary>
+
+The right-side drawing toolbar can add:
+
+| Tool | Action |
+|---|---|
+| Line | Click start, click end |
+| Rectangle | Click one corner, click the opposite corner |
+| Circle | Click centre, click radius |
+| Text | Click position, then enter text |
+| Text box | Drag a box, then enter wrapped text |
+
+Annotations are saved in `.kicad_bbrd` session files. In Select mode, click an annotation to select it, drag it to move it, drag handles to resize it, double-click to edit properties, and press Delete or Backspace to remove it.
+
+> **Image placeholder:** add `images/annotations.png` showing a board with line, rectangle, and text annotations.
 
 </details>
 

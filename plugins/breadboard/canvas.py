@@ -1344,7 +1344,7 @@ class BreadboardCanvas(wx.Panel):
         self.SetFocus()
 
     def delete_selection(self) -> None:
-        """Delete whichever object is currently selected (wire, component, or probe)."""
+        """Delete whichever object is currently selected."""
         if self._selected_wire is not None:
             self.push_undo()
             self.board.remove_wire(self._selected_wire)
@@ -1364,6 +1364,17 @@ class BreadboardCanvas(wx.Panel):
             if self.on_probe_placed:
                 self.on_probe_placed(self._selected_probe)
             self._selected_probe = None
+            self.Refresh()
+        elif self._selected_ann_idx is not None:
+            if 0 <= self._selected_ann_idx < len(self._annotations):
+                self.push_undo()
+                self._annotations.pop(self._selected_ann_idx)
+            self._selected_ann_idx = None
+            self._hover_ann_idx = None
+            self._drag_ann_idx = None
+            self._drag_ann_orig = None
+            self._drag_ann_pre_snap = None
+            self._resize_handle_idx = None
             self.Refresh()
 
     def begin_place(self, comp_def: ComponentDef, ref: str) -> None:
@@ -4494,6 +4505,8 @@ class BreadboardCanvas(wx.Panel):
             # Axial pill (R, C, L, D, D_Zener, C_POL …)
             # Body occupies the middle half of the span (25%–75%)
             body_half = length * 0.25
+            if placed.type_id in ('D', 'D_Zener'):
+                body_half = min(max(body_half, 8.0), 1.25 * PITCH)
 
             # Lead attachment points on the body surface
             bx1, by1 = mx - ux * body_half, my - uy * body_half   # near pin 1
@@ -4556,29 +4569,25 @@ class BreadboardCanvas(wx.Panel):
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
                     gc.StrokePath(_rp)
 
-                elif placed.type_id in ('D', 'D_Zener'):
-                    # Cathode stripe: a path shaped like the left slice of the rounded
-                    # rectangle — left corners rounded (r=4), right side straight.
-                    # This never overflows the body border.
-                    sp_r = 4.0
-                    sp = gc.CreatePath()
-                    sp.MoveToPoint(-body_half + sp_r, -body_h / 2)
-                    # TL arc: from "pointing up" (-π/2) to "pointing left" (-π), CCW on screen
-                    sp.AddArc(-body_half + sp_r, -body_h / 2 + sp_r, sp_r,
-                               -math.pi / 2, -math.pi, False)
-                    sp.AddLineToPoint(-body_half, body_h / 2 - sp_r)
-                    # BL arc: from "pointing left" (π) to "pointing down" (π/2), CW on screen
-                    sp.AddArc(-body_half + sp_r, body_h / 2 - sp_r, sp_r,
-                               math.pi, math.pi / 2, True)
-                    sp.CloseSubpath()
+                elif placed.type_id == 'D':
                     _stripe = wx.Colour('#cccccc')
                     gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
-                    gc.FillPath(sp)
+                    gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
                     # Redraw body border on top so the stripe doesn't obscure it
                     gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, sp_r)
+                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+                elif placed.type_id == 'D_Zener':
+                    # Zener cathode marker: same occupied area as the original
+                    # cathode band, but rectangular so there is no rounded blob.
+                    _stripe = wx.Colour('#cccccc')
+                    gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
+                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
+                    gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
+                    gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
+                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
             else:
                 # Fallback for SVGFileDC: components are always horizontal on a breadboard
@@ -4627,11 +4636,18 @@ class BreadboardCanvas(wx.Panel):
                     dc.DrawRoundedRectangle(int(mx + body_half - _R_CAP_W), int(my - _R_END_HH),
                                              int(_R_CAP_W), int(2 * _R_END_HH), int(_R_CAP_R))
 
-                elif placed.type_id in ('D', 'D_Zener'):
+                elif placed.type_id == 'D':
                     # DC fallback: inset stripe stays clear of corner overflow
                     dc.SetBrush(wx.Brush('#cccccc'))
                     dc.SetPen(wx.Pen('#cccccc', 0))
-                    dc.DrawRectangle(bx, by + 4, 4, int(body_h) - 8)
+                    dc.DrawRectangle(bx, by, 4, int(body_h))
+                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetPen(wx.Pen(border_color, pen_w))
+                    dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
+                elif placed.type_id == 'D_Zener':
+                    dc.SetBrush(wx.Brush('#cccccc'))
+                    dc.SetPen(wx.Pen('#cccccc', 0))
+                    dc.DrawRectangle(bx, by, 4, int(body_h))
                     dc.SetBrush(wx.TRANSPARENT_BRUSH)
                     dc.SetPen(wx.Pen(border_color, pen_w))
                     dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
@@ -5650,7 +5666,7 @@ class BreadboardCanvas(wx.Panel):
             return
 
         # Collect: net_name → ref of the sole placed component pin
-        entries: List[Tuple[str, str]] = []   # (display_name, ref_summary)
+        entries: List[Tuple[str, str, str]] = []   # (actual_name, display_name, ref_summary)
         for net in self.netlist.nets:
             name = net.name
             if name.startswith('Net-(') or name.startswith('unconnected-('):
@@ -5668,7 +5684,7 @@ class BreadboardCanvas(wx.Panel):
                 summary = placed_refs[0]
             else:
                 summary = placed_refs[0] + ' +' + str(len(placed_refs) - 1)
-            entries.append((display_name, summary))
+            entries.append((name, display_name, summary))
 
         if not entries:
             self._net_label_rows = []
@@ -5697,19 +5713,24 @@ class BreadboardCanvas(wx.Panel):
 
         # Measure column widths
         dc.SetFont(font_hdr)
+        hdr_mark_w = dc.GetTextExtent('MARK')[0] if in_hl_mode else 0
         hdr_w1, _ = dc.GetTextExtent('Signal')
         hdr_w2, _ = dc.GetTextExtent('Component')
         dc.SetFont(font_body)
         col1_w = hdr_w1
         col2_w = hdr_w2
-        for net_name, ref in entries:
+        for _actual_name, net_name, ref in entries:
             w1, _ = dc.GetTextExtent(net_name)
             w2, _ = dc.GetTextExtent(ref)
             col1_w = max(col1_w, w1)
             col2_w = max(col2_w, w2)
 
         col_gap = 16
-        box_w = PAD + col1_w + col_gap + col2_w + PAD
+        mark_w = max(hdr_mark_w, 34) if in_hl_mode else 0
+        box_w = PAD
+        if in_hl_mode:
+            box_w += mark_w + col_gap
+        box_w += col1_w + col_gap + col2_w + PAD
         n_rows = 1 + len(entries)   # header + data rows
         box_h = PAD + n_rows * (row_h + ROW_GAP) + PAD
 
@@ -5733,24 +5754,43 @@ class BreadboardCanvas(wx.Panel):
         dc.SetTextForeground(FG)
         dc.SetFont(font_hdr)
         y = by + PAD
-        dc.DrawText('Signal',    bx + PAD, y)
-        dc.DrawText('Component', bx + PAD + col1_w + col_gap, y)
+        x = bx + PAD
+        if in_hl_mode:
+            dc.DrawText('MARK', x, y)
+            x += mark_w + col_gap
+        sig_x = x
+        comp_x = sig_x + col1_w + col_gap
+        dc.DrawText('Signal', sig_x, y)
+        dc.DrawText('Component', comp_x, y)
         y += row_h + ROW_GAP
 
         dc.SetFont(font_body)
         self._net_label_rows = []
-        for net_name, ref in entries:
+        for actual_name, net_name, ref in entries:
             rh = row_h + ROW_GAP
-            self._net_label_rows.append((bx, y - 1, box_w, rh, net_name))
-            if in_hl_mode and net_name == self._net_hl_name:
+            self._net_label_rows.append((bx, y - 1, box_w, rh, actual_name))
+            is_selected = in_hl_mode and actual_name == self._net_hl_name
+            if is_selected:
                 dc.SetBrush(wx.Brush(HL_ROW))
                 dc.SetPen(wx.TRANSPARENT_PEN)
                 dc.DrawRectangle(bx + 1, y - 1, box_w - 2, rh)
                 dc.SetTextForeground(wx.Colour(0x22, 0x22, 0x22))
             else:
                 dc.SetTextForeground(FG)
-            dc.DrawText(net_name, bx + PAD, y)
-            dc.DrawText(ref,      bx + PAD + col1_w + col_gap, y)
+            if in_hl_mode:
+                cx = bx + PAD + mark_w // 2
+                cy = y + row_h // 2
+                ring = wx.Colour(0x22, 0x22, 0x22) if is_selected else FG
+                fill = wx.Colour(0x22, 0x22, 0x22) if is_selected else wx.Colour(0xff, 0xff, 0xff)
+                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetPen(wx.Pen(ring, 2))
+                dc.DrawCircle(cx, cy, 6)
+                if is_selected:
+                    dc.SetBrush(wx.Brush(fill))
+                    dc.SetPen(wx.TRANSPARENT_PEN)
+                    dc.DrawCircle(cx, cy, 3)
+            dc.DrawText(net_name, sig_x, y)
+            dc.DrawText(ref, comp_x, y)
             y += rh
 
     def _draw_column_labels(self, dc: wx.DC) -> None:

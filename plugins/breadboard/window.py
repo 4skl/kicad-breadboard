@@ -33,13 +33,14 @@ from .model import (
     Breadboard, Netlist,
     parse_netlist, find_netlist, find_schematic,
     simulate, simulate_transient, SimResult, VsinSource, find_vsin_sources,
+    initial_terminal_voltages,
     validate, IssueKind,
     ALL_DEFS, guess_type_id,
     save_session, load_session,
     PROBE_NAMES, PROBE_META,
 )
 
-PLUGIN_VERSION = 'Wotou'
+PLUGIN_VERSION = 'Whole Wheat'
 REPO           = 'kerstensrobin/kicad-breadboard'
 
 # Toolbar button IDs
@@ -86,6 +87,7 @@ _WIRE_COLOR_LABELS = ['Auto'] + _WIRE_COLOR_NAMES
 
 _KICAD_ICON_ARCHIVE = '/usr/share/kicad/resources/images.tar.gz'
 _ICONS_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / 'kicad_icons' / 'images'
+_REPO_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / 'images'
 _icon_cache: dict = {}
 
 
@@ -102,15 +104,18 @@ def _panel_bg() -> wx.Colour:
 
 
 def _local_icon(name: str, size: int = 24, scale: float = 1.0) -> 'wx.Bitmap':
-    """Load a PNG from kicad_icons/images/ and scale to size×size."""
-    path = _ICONS_IMAGES_DIR / name
-    try:
-        img = wx.Image(str(path), wx.BITMAP_TYPE_PNG)
-        if img.GetWidth() != size or img.GetHeight() != size:
-            img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
-        return wx.Bitmap(img)
-    except Exception:
-        return wx.NullBitmap
+    """Load a repo/local PNG and scale to size×size."""
+    for path in (_REPO_IMAGES_DIR / name, _ICONS_IMAGES_DIR / name):
+        try:
+            if not path.exists():
+                continue
+            img = wx.Image(str(path), wx.BITMAP_TYPE_PNG)
+            if img.GetWidth() != size or img.GetHeight() != size:
+                img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
+            return wx.Bitmap(img)
+        except Exception:
+            continue
+    return wx.NullBitmap
 
 
 def _kicad_icon(name: str, size: int = 20, scale: float = 1.0) -> 'wx.Bitmap':
@@ -712,7 +717,7 @@ class BreadboardWindow(wx.Frame):
         if mode == MODE_SELECT:
             self.SetStatusText('Mode: Select / Move  [W] Wire  [D] Delete', 1)
         elif mode == MODE_NET_HIGHLIGHT:
-            self.SetStatusText('Mode: Highlight Net — click any hole to highlight its net  [Esc] exit', 1)
+            self.SetStatusText('Mode: Highlight Net — click MARK or any hole to highlight its net  [Esc] exit', 1)
         elif mode == MODE_WIRE:
             self.SetStatusText('Mode: Draw Wire — click start, click end  [Esc] cancel', 1)
         elif mode == MODE_DRAW_LINE:
@@ -1542,6 +1547,7 @@ class BreadboardWindow(wx.Frame):
         self._waveform_frame = WaveformFrame(
             self, result.transient_traces,
             on_probe_toggle=self._on_waveform_probe_toggle,
+            on_clear_probes=self.canvas.clear_all_scope_probes,
             warnings=result.warnings or [],
             num_channels=self.prefs.scope_channels,
         )
@@ -1954,6 +1960,7 @@ class SimPane(wx.Panel):
         body.Add(src_lbl, 0, wx.LEFT | wx.TOP, 8)
 
         _TC = {'GND': '#3a3a3a', 'V1': '#bb2020', 'V2': '#1a7a30'}
+        initial_voltages = initial_terminal_voltages(board, self._netlist) if self._netlist else {}
         grid = wx.FlexGridSizer(cols=3, vgap=4, hgap=6)
         grid.AddGrowableCol(1)
         for term in ('GND', 'V1', 'V2'):
@@ -1976,8 +1983,11 @@ class SimPane(wx.Panel):
                 self._volt_ctrls[term] = None
             else:
                 sp = wx.SpinCtrlDouble(self, min=-100.0, max=100.0,
-                                       initial=5.0, inc=0.5, size=(68, -1))
+                                       initial=initial_voltages.get(term, 5.0),
+                                       inc=0.5, size=(68, -1))
                 sp.SetDigits(2)
+                if term in initial_voltages:
+                    sp.SetToolTip('Initial value from schematic voltage source')
                 grid.Add(lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
                 grid.Add(net_lbl, 0, wx.ALIGN_CENTRE_VERTICAL)
                 grid.Add(sp, 0, wx.ALIGN_CENTRE_VERTICAL)
