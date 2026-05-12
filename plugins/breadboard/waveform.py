@@ -83,6 +83,10 @@ def _hex_to_rgb(h: str) -> Tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
+def _transparent_brush() -> wx.Brush:
+    return wx.Brush(wx.Colour(0, 0, 0, 0), wx.BRUSHSTYLE_TRANSPARENT)
+
+
 def _fmt_eng(val: float, unit: str) -> str:
     if val == 0:
         return f'0 {unit}'
@@ -471,7 +475,7 @@ class OscopeScreen(wx.Panel):
             dc.DrawLine(cx - tk, y, cx + tk, y)
 
         dc.SetPen(wx.Pen(_GRID_CTR, 1))
-        dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        dc.SetBrush(_transparent_brush())
         dc.DrawRectangle(ox, oy, pw, ph)
 
     def _draw_phosphor_traces(self, dc: wx.DC, gc, channel_pts: list) -> None:
@@ -1206,7 +1210,7 @@ class _BncConnector(wx.Panel):
         dc.SetBrush(wx.Brush(wx.Colour(44, 44, 48)))
         dc.DrawCircle(cx, cy, 22)
         dc.SetPen(wx.Pen(wx.Colour(r // 2, g // 2, b // 2), 4))
-        dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        dc.SetBrush(_transparent_brush())
         dc.DrawCircle(cx, cy, 17)
         dc.SetPen(wx.Pen(wx.Colour(175, 170, 162), 1))
         dc.SetBrush(wx.Brush(wx.Colour(205, 200, 190)))
