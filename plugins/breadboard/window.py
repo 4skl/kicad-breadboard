@@ -94,6 +94,26 @@ _icon_cache: dict = {}
 _DARK_PANEL_COLOUR = wx.Colour(0x47, 0x47, 0x47)
 
 
+def _focus_is_text_entry() -> bool:
+    """Return True when keyboard input should be handled by the focused editor."""
+    ctrl = wx.Window.FindFocus()
+    text_entry_types = tuple(
+        t for t in (
+            getattr(wx, 'TextCtrl', None),
+            getattr(wx, 'SpinCtrl', None),
+            getattr(wx, 'SpinCtrlDouble', None),
+            getattr(wx, 'ComboBox', None),
+            getattr(wx, 'ComboCtrl', None),
+            getattr(wx, 'SearchCtrl', None),
+        ) if t is not None
+    )
+    while ctrl is not None:
+        if isinstance(ctrl, text_entry_types):
+            return True
+        ctrl = ctrl.GetParent()
+    return False
+
+
 def _is_dark_mode() -> bool:
     bg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE)
     return (int(bg.Red()) + int(bg.Green()) + int(bg.Blue())) < 382
@@ -840,6 +860,10 @@ class BreadboardWindow(wx.Frame):
         self._refresh_probe_choices()
 
     def _on_char_hook(self, evt: wx.KeyEvent) -> None:
+        if _focus_is_text_entry():
+            evt.Skip()
+            return
+
         key = evt.GetKeyCode()
         if key in (ord('W'), ord('w')):
             self._set_mode(MODE_WIRE)
@@ -1174,6 +1198,8 @@ class BreadboardWindow(wx.Frame):
             self._instr_panel.Layout()
             if self._sim_pane:
                 self._sim_pane.set_scope_channels(p.scope_channels, self.board)
+            if self._waveform_frame and self._waveform_frame.IsShown():
+                self._reopen_waveform_frame(p.scope_channels)
 
         # PSU channel count
         if p.psu_channels != old.psu_channels:
@@ -1543,17 +1569,46 @@ class BreadboardWindow(wx.Frame):
         if self._waveform_frame:
             self._waveform_frame.Destroy()
         self.canvas.clear_all_scope_probes()
-        from .waveform import WaveformFrame, _CH_COLORS
+        from .waveform import WaveformFrame
         self._waveform_frame = WaveformFrame(
             self, result.transient_traces,
             on_probe_toggle=self._on_waveform_probe_toggle,
             on_clear_probes=self.canvas.clear_all_scope_probes,
             warnings=result.warnings or [],
             num_channels=self.prefs.scope_channels,
+            initial_channel_nets=self._scope_channel_nets(),
         )
         self._waveform_frame.Show()
+        self._refresh_waveform_probe_markers()
 
-        # Pre-place scope probe markers for auto-assigned channels
+    def _scope_channel_nets(self) -> list:
+        return [self.board.get_probe_net(f'CH{i}') or None for i in range(1, 5)]
+
+    def _reopen_waveform_frame(self, num_channels: int) -> None:
+        from .waveform import WaveformFrame
+
+        old = self._waveform_frame
+        traces = old._traces
+        warnings = old._warnings
+        channel_nets = old.channel_net_names
+        old.Destroy()
+        self._waveform_frame = WaveformFrame(
+            self, traces,
+            on_probe_toggle=self._on_waveform_probe_toggle,
+            on_clear_probes=self.canvas.clear_all_scope_probes,
+            warnings=warnings,
+            num_channels=num_channels,
+            initial_channel_nets=channel_nets,
+        )
+        self._waveform_frame.Show()
+        self._refresh_waveform_probe_markers()
+
+    def _refresh_waveform_probe_markers(self) -> None:
+        if not self._waveform_frame:
+            return
+        from .waveform import _CH_COLORS
+
+        self.canvas.clear_all_scope_probes()
         for i, net_name in enumerate(self._waveform_frame.channel_net_names):
             if net_name:
                 hole = self._find_probe_hole_for_net(net_name)
@@ -1922,6 +1977,13 @@ class SimPane(wx.Panel):
 
     # ------------------------------------------------------------------
 
+    def _make_button(self, label: str, handler, *, style: int = 0) -> wx.Button:
+        btn = wx.Button(self, label=label, style=wx.BORDER_SIMPLE | style)
+        btn.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
+        btn.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNTEXT))
+        btn.Bind(wx.EVT_BUTTON, handler)
+        return btn
+
     def _build(self, board, netlist=None) -> None:
         if netlist is not None:
             self._netlist = netlist
@@ -1996,10 +2058,8 @@ class SimPane(wx.Panel):
 
         # Run / Clear buttons
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
-        run_btn = wx.Button(self, label='▶  Run')
-        run_btn.Bind(wx.EVT_BUTTON, self._on_run)
-        clr_btn = wx.Button(self, label='Clear')
-        clr_btn.Bind(wx.EVT_BUTTON, lambda _: self._on_clear_cb())
+        run_btn = self._make_button('▶  Run', self._on_run)
+        clr_btn = self._make_button('Clear', lambda _: self._on_clear_cb())
         btn_row.Add(run_btn, 1, wx.EXPAND | wx.RIGHT, 4)
         btn_row.Add(clr_btn, 0)
         body.Add(btn_row, 0, wx.EXPAND | wx.ALL, 8)
@@ -2024,8 +2084,7 @@ class SimPane(wx.Panel):
                 tran_lbl.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
                 body.Add(tran_lbl, 0, wx.LEFT | wx.TOP, 8)
 
-                tran_btn = wx.Button(self, label='▶  Open KiScope')
-                tran_btn.Bind(wx.EVT_BUTTON, self._on_run_transient)
+                tran_btn = self._make_button('▶  Open KiScope', self._on_run_transient)
                 body.Add(tran_btn, 0, wx.EXPAND | wx.ALL, 8)
 
         # Results
@@ -2048,12 +2107,11 @@ class SimPane(wx.Panel):
         body.Add(self._result_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         # Console expander
-        self._console_btn = wx.Button(self, label='▶  Console',
-                                      style=wx.BORDER_NONE | wx.BU_LEFT)
+        self._console_btn = self._make_button('▶  Console', self._on_console_toggle,
+                                              style=wx.BU_LEFT)
         self._console_btn.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                                           wx.FONTWEIGHT_NORMAL))
         self._console_btn.Hide()
-        self._console_btn.Bind(wx.EVT_BUTTON, self._on_console_toggle)
         body.Add(self._console_btn, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
 
         self._console_text = wx.TextCtrl(

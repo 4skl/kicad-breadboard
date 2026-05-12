@@ -737,6 +737,9 @@ class DragGhost:
 # Annotation property dialogs
 # ---------------------------------------------------------------------------
 
+_ANNOTATION_SPIN_SIZE = (110, -1)
+
+
 class _ShapePropsDialog(wx.Dialog):
     """Properties dialog for line, rectangle, and circle annotations."""
 
@@ -748,7 +751,8 @@ class _ShapePropsDialog(wx.Dialog):
         gs.AddGrowableCol(1)
 
         gs.Add(wx.StaticText(self, label='Line width:'), flag=wx.ALIGN_CENTER_VERTICAL)
-        self._width = wx.SpinCtrl(self, value=str(width), min=1, max=10, size=(80, -1))
+        self._width = wx.SpinCtrl(self, value=str(width), min=1, max=10,
+                                  size=_ANNOTATION_SPIN_SIZE)
         gs.Add(self._width, flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
 
         gs.Add(wx.StaticText(self, label='Color:'), flag=wx.ALIGN_CENTER_VERTICAL)
@@ -810,7 +814,8 @@ class _TextPropsDialog(wx.Dialog):
         gs.Add(self._text, flag=wx.EXPAND)
 
         gs.Add(wx.StaticText(self, label='Font size:'), flag=wx.ALIGN_CENTER_VERTICAL)
-        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72, size=(80, -1))
+        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72,
+                                 size=_ANNOTATION_SPIN_SIZE)
         gs.Add(self._size, flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
 
         gs.Add(wx.StaticText(self, label='Color:'), flag=wx.ALIGN_CENTER_VERTICAL)
@@ -873,7 +878,8 @@ class _TextBoxPropsDialog(wx.Dialog):
         gs.Add(self._text, flag=wx.EXPAND)
 
         gs.Add(wx.StaticText(self, label='Font size:'), flag=wx.ALIGN_CENTER_VERTICAL)
-        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72, size=(80, -1))
+        self._size = wx.SpinCtrl(self, value=str(font_size), min=6, max=72,
+                                 size=_ANNOTATION_SPIN_SIZE)
         gs.Add(self._size, flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL)
 
         gs.Add(wx.StaticText(self, label='Text color:'), flag=wx.ALIGN_CENTER_VERTICAL)
@@ -898,7 +904,8 @@ class _TextBoxPropsDialog(wx.Dialog):
 
         gs.Add(wx.StaticText(self, label='Border:'), flag=wx.ALIGN_CENTER_VERTICAL)
         border_row = wx.BoxSizer(wx.HORIZONTAL)
-        self._width = wx.SpinCtrl(self, value=str(width), min=0, max=10, size=(80, -1))
+        self._width = wx.SpinCtrl(self, value=str(width), min=0, max=10,
+                                  size=_ANNOTATION_SPIN_SIZE)
         border_row.Add(wx.StaticText(self, label='w='), 0, wx.ALIGN_CENTER_VERTICAL)
         border_row.Add(self._width, 0)
         border_row.AddSpacer(8)

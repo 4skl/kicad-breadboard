@@ -1026,9 +1026,9 @@ class ChannelSection(wx.Panel):
         sz = wx.BoxSizer(wx.VERTICAL)
         sz.Add(self._make_header(),                              0, wx.EXPAND)
         sz.Add(self._make_v_knob(on_v_div_change),              0,
-               wx.ALIGN_CENTRE_HORIZONTAL | wx.TOP, 4)
+               wx.EXPAND | wx.TOP, 4)
         sz.Add(self._make_p_knob(on_pos_change),                0,
-               wx.ALIGN_CENTRE_HORIZONTAL | wx.TOP, 4)
+               wx.EXPAND | wx.TOP, 4)
         sz.Add(self._make_ctrl_row(on_coupling_change),         0,
                wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP | wx.BOTTOM, 5)
         self.SetSizer(sz)
@@ -1038,25 +1038,24 @@ class ChannelSection(wx.Panel):
     def _make_header(self) -> wx.Panel:
         hdr = wx.Panel(self)
         hdr.SetBackgroundColour(_HDR_DARK)
-        hdr.SetMinSize(wx.Size(-1, 20))
-        sz = wx.BoxSizer(wx.HORIZONTAL)
+        hdr.SetMinSize(wx.Size(-1, 34))
+        sz = wx.BoxSizer(wx.VERTICAL)
 
         r, g, b = _hex_to_rgb(self._state.color)
         ch_lbl = wx.StaticText(hdr, label=f'CH{self._ch_idx + 1}')
-        ch_lbl.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
+        ch_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
                                wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         ch_lbl.SetForegroundColour(wx.Colour(r, g, b))
         ch_lbl.SetBackgroundColour(_HDR_DARK)
 
         self._net_lbl = wx.StaticText(hdr, label=self._net_label())
-        self._net_lbl.SetFont(wx.Font(10, wx.FONTFAMILY_TELETYPE,
+        self._net_lbl.SetFont(wx.Font(8, wx.FONTFAMILY_TELETYPE,
                                       wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        self._net_lbl.SetForegroundColour(wx.WHITE)
+        self._net_lbl.SetForegroundColour(wx.Colour(245, 245, 235))
         self._net_lbl.SetBackgroundColour(_HDR_DARK)
 
-        sz.Add(ch_lbl,       0, wx.ALIGN_CENTRE_VERTICAL | wx.LEFT, 8)
-        sz.AddStretchSpacer()
-        sz.Add(self._net_lbl, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8)
+        sz.Add(ch_lbl,        0, wx.ALIGN_CENTRE_HORIZONTAL | wx.TOP, 2)
+        sz.Add(self._net_lbl, 0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 3)
         hdr.SetSizer(sz)
         return hdr
 
@@ -1122,7 +1121,7 @@ class ChannelSection(wx.Panel):
 
     def _net_label(self) -> str:
         n = self._state.net_name
-        return (n[:14] if len(n) > 14 else n) if n else '---'
+        return (n[:10] if len(n) > 10 else n) if n else '---'
 
     def _on_probe_toggle(self, _evt) -> None:
         active = self._probe_btn.GetValue()
@@ -1257,7 +1256,8 @@ class WaveformFrame(wx.Frame):
                  on_probe_toggle: Optional[Callable[[bool], None]] = None,
                  on_clear_probes: Optional[Callable[[], None]] = None,
                  warnings: Optional[List[str]] = None,
-                 num_channels: int = _NUM_CH):
+                 num_channels: int = _NUM_CH,
+                 initial_channel_nets: Optional[List[Optional[str]]] = None):
         super().__init__(parent, title='KiScope',
                          size=(1080, 720),
                          style=wx.DEFAULT_FRAME_STYLE)
@@ -1278,10 +1278,19 @@ class WaveformFrame(wx.Frame):
         t_needed  = (max(all_times) / _NH) if all_times else 1e-3
         self._init_t_idx = _best_idx(_T_DIVS, t_needed)
 
-        sorted_nets = sorted(traces)
+        requested_nets = list(initial_channel_nets or [])
+        requested_nets = requested_nets[:self._num_channels]
+        while len(requested_nets) < self._num_channels:
+            requested_nets.append(None)
+
+        assigned = {n for n in requested_nets if n in traces}
+        sorted_nets = [n for n in sorted(traces) if n not in assigned]
         self._channels: List[_ChanState] = [
             _ChanState(
-                net_name=(sorted_nets[i] if i < len(sorted_nets) else None),
+                net_name=(
+                    requested_nets[i] if requested_nets[i] in traces
+                    else sorted_nets.pop(0) if sorted_nets else None
+                ),
                 color=_CH_COLORS[i % len(_CH_COLORS)],
                 default_v_idx=default_v_idx,
             )
@@ -1289,7 +1298,8 @@ class WaveformFrame(wx.Frame):
         ]
 
         self._build()
-        self.SetMinSize(wx.Size(640, 480))
+        best = self.GetBestSize()
+        self.SetMinSize(wx.Size(max(640, best.Width), max(480, best.Height)))
         self.SetIcon(wx.NullIcon)
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
@@ -1408,7 +1418,7 @@ class WaveformFrame(wx.Frame):
         # Right panel: horizontal controls → measure → channels
         right = wx.Panel(body)
         right.SetBackgroundColour(_BODY)
-        right.SetMinSize(wx.Size(380, -1))
+        right.SetMinSize(wx.Size(self._right_panel_min_width(), -1))
         right_sz = wx.BoxSizer(wx.VERTICAL)
         right_sz.Add(self._make_top_controls(right), 0, wx.EXPAND | wx.ALL, 4)
         right_sz.Add(self._make_measure_section(right), 0, wx.EXPAND | wx.ALL, 4)
@@ -1447,7 +1457,7 @@ class WaveformFrame(wx.Frame):
         logo.SetForegroundColour(wx.Colour(255, 255, 255))
         logo.SetBackgroundColour(_HDR_DARK)
 
-        sub = wx.StaticText(hdr, label='DIGITAL STORAGE OSCILLOSCOPE  ·  DSO BB-1')
+        sub = wx.StaticText(hdr, label='DIGITAL STORAGE OSCILLOSCOPE  ·  NCO BB-1')
         sub.SetFont(wx.Font(9, wx.FONTFAMILY_DEFAULT,
                             wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         sub.SetForegroundColour(wx.Colour(155, 153, 148))
@@ -1519,6 +1529,7 @@ class WaveformFrame(wx.Frame):
 
         # Dials row: large TIME/DIV + compact POSITION
         dials_sz = wx.BoxSizer(wx.HORIZONTAL)
+        dials_sz.AddStretchSpacer(1)
 
         self._t_knob = KnobWidget(ctrl, 'TIME/DIV', _T_DIVS, 's',
                                    on_change=self._screen.set_t_div,
@@ -1534,8 +1545,9 @@ class WaveformFrame(wx.Frame):
                                    on_change=_h_pos_changed, compact=True)
         self._h_knob.set_index(len(_POS_DIVS) // 2)
         dials_sz.Add(self._h_knob, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 6)
+        dials_sz.AddStretchSpacer(1)
 
-        outer_sz.Add(dials_sz, 0)
+        outer_sz.Add(dials_sz, 0, wx.EXPAND)
 
         ctrl.SetSizer(outer_sz)
         return ctrl
@@ -1619,23 +1631,29 @@ class WaveformFrame(wx.Frame):
             col_sz.Add(sect, 0, wx.EXPAND)
             col_sz.Add(bnc,  0, wx.ALIGN_CENTRE_HORIZONTAL | wx.BOTTOM, 4)
 
-            sz.Add(col_sz, 0, wx.LEFT, 6 if i == 0 else 2)
+            sz.Add(col_sz, 1, wx.EXPAND | wx.LEFT, 6 if i == 0 else 2)
 
             if i < self._num_channels - 1:
                 sep = wx.StaticLine(strip, style=wx.LI_VERTICAL)
                 sz.Add(sep, 0, wx.EXPAND | wx.TOP | wx.BOTTOM | wx.LEFT, 4)
 
-        sz.AddStretchSpacer()
+        if self._num_channels < _NUM_CH:
+            sz.AddStretchSpacer()
 
-        brand = wx.StaticText(strip, label='KiScope DSO BB-1')
-        brand.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT,
-                              wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        brand.SetForegroundColour(_TEXT_DIM)
-        brand.SetBackgroundColour(_SECT_BG)
-        sz.Add(brand, 0, wx.ALIGN_BOTTOM | wx.RIGHT | wx.BOTTOM, 12)
+            brand = wx.StaticText(strip, label='KiScope NCO BB-1')
+            brand.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT,
+                                  wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+            brand.SetForegroundColour(_TEXT_DIM)
+            brand.SetBackgroundColour(_SECT_BG)
+            sz.Add(brand, 0, wx.ALIGN_BOTTOM | wx.RIGHT | wx.BOTTOM, 12)
 
         strip.SetSizer(sz)
         return strip
+
+    def _right_panel_min_width(self) -> int:
+        # Four channel strips plus separators need more room than the default
+        # two-channel instrument face; otherwise wx can clip the last channel.
+        return 460 if self._num_channels >= 4 else 380
 
     # ── event handlers ─────────────────────────────────────────────────
 
