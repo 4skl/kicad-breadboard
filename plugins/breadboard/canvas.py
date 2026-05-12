@@ -54,6 +54,10 @@ def _make_gc(dc: 'wx.DC') -> 'wx.GraphicsContext | None':
         return None
 
 
+def _transparent_brush() -> 'wx.Brush':
+    return wx.Brush(wx.Colour(0, 0, 0, 0), wx.BRUSHSTYLE_TRANSPARENT)
+
+
 def _parse_svg_size(path: str):
     """Return (width, height) from SVG viewBox attribute, or (100.0, 100.0) as fallback."""
     import re
@@ -2974,7 +2978,7 @@ class BreadboardCanvas(wx.Panel):
         if target is not None:
             xy = self.layout.hole_xy(target)
             if xy:
-                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(wx.Colour('#e8c020'), 2))
                 dc.DrawCircle(xy[0], xy[1], HOLE_R + 4)
 
@@ -3122,7 +3126,7 @@ class BreadboardCanvas(wx.Panel):
                 wx.GraphicsPenInfo(pen.GetColour()).Width(pen.GetWidth())
                 .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)
             ))
-            gc.SetBrush(wx.TRANSPARENT_BRUSH)
+            gc.SetBrush(_transparent_brush())
             path = gc.CreatePath()
             path.MoveToPoint(A[0], A[1])
             path.AddLineToPoint(t1x, t1y)
@@ -3221,7 +3225,7 @@ class BreadboardCanvas(wx.Panel):
             halo_color = '#ff4444' if delete_hover else '#00ccff'
             halo_rect = wx.Rect(min(xs) - 8, min(ys) - 11,
                                 max(xs) - min(xs) + 16, max(ys) - min(ys) + 22)
-            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            dc.SetBrush(_transparent_brush())
             dc.SetPen(wx.Pen(wx.Colour(halo_color), 3))
             dc.DrawRoundedRectangle(halo_rect, 5)
 
@@ -3704,7 +3708,7 @@ class BreadboardCanvas(wx.Panel):
 
         # ── Selection halo ────────────────────────────────────────────────
         if selected:
-            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            dc.SetBrush(_transparent_brush())
             dc.SetPen(wx.Pen('#00ccff', 3))
             dc.DrawRoundedRectangle(body_x - 4, body_y - 4, body_w + 8, body_h + 8, 6)
 
@@ -3949,7 +3953,7 @@ class BreadboardCanvas(wx.Panel):
 
         # ── Selection halo ────────────────────────────────────────────────
         if selected:
-            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            dc.SetBrush(_transparent_brush())
             dc.SetPen(wx.Pen('#00ccff', 3))
             dc.DrawRoundedRectangle(body_x - 4, body_y - 4, body_w + 8, body_h + 8, 6)
 
@@ -4432,7 +4436,7 @@ class BreadboardCanvas(wx.Panel):
                 gc.FillPath(_lens)
 
                 # Outer circle border (on top of everything)
-                gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
                 gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
 
@@ -4450,7 +4454,7 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetPen(wx.Pen('#111111', 0))
                 dc.DrawRectangle(int(x1) - 1, int(my - math.sqrt(r*r - stripe_x**2)),
                                  int(stripe_x + 2), int(2 * math.sqrt(r*r - stripe_x**2)))
-                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(border_color, pen_w))
                 dc.DrawCircle(int(mx), int(my), int(r))
         elif placed.type_id == 'C_POL':
@@ -4484,7 +4488,7 @@ class BreadboardCanvas(wx.Panel):
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(stripe).Width(0)))
                 gc.DrawPath(sp)
                 # Redraw circle border on top
-                gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
                 gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
                 # "+" text on pin-1 (+) side
@@ -4500,7 +4504,7 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetPen(wx.Pen('#111111', 0))
                 dc.DrawRectangle(int(mx + stripe_x), int(my - y_isect),
                                  int(r - stripe_x), int(2 * y_isect))
-                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(border_color, pen_w))
                 dc.DrawCircle(int(mx), int(my), int(r))
                 dc.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -4572,7 +4576,7 @@ class BreadboardCanvas(wx.Panel):
                             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
                             gc.DrawRectangle(bx_pos, -bh, 5, 2 * bh)
                     # Redraw outer border on top to clean up band overflow at edges
-                    gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                    gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
                     gc.StrokePath(_rp)
 
@@ -4582,7 +4586,7 @@ class BreadboardCanvas(wx.Panel):
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
                     gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
                     # Redraw body border on top so the stripe doesn't obscure it
-                    gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                    gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
                     gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
                 elif placed.type_id == 'D_Zener':
@@ -4592,7 +4596,7 @@ class BreadboardCanvas(wx.Panel):
                     gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
                     gc.DrawRectangle(-body_half, -body_h / 2, 4, body_h)
-                    gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+                    gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
                     gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
 
@@ -4636,7 +4640,7 @@ class BreadboardCanvas(wx.Panel):
                             bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             dc.SetBrush(wx.Brush(wx.Colour(bcolor)))
                             dc.DrawRectangle(int(mx + bx_pos), int(my - bh), 5, int(2 * bh))
-                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetBrush(_transparent_brush())
                     dc.SetPen(wx.Pen(border_color, pen_w))
                     dc.DrawRoundedRectangle(int(mx - body_half), int(my - _R_END_HH),
                                              int(_R_CAP_W), int(2 * _R_END_HH), int(_R_CAP_R))
@@ -4648,14 +4652,14 @@ class BreadboardCanvas(wx.Panel):
                     dc.SetBrush(wx.Brush('#cccccc'))
                     dc.SetPen(wx.Pen('#cccccc', 0))
                     dc.DrawRectangle(bx, by, 4, int(body_h))
-                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetBrush(_transparent_brush())
                     dc.SetPen(wx.Pen(border_color, pen_w))
                     dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
                 elif placed.type_id == 'D_Zener':
                     dc.SetBrush(wx.Brush('#cccccc'))
                     dc.SetPen(wx.Pen('#cccccc', 0))
                     dc.DrawRectangle(bx, by, 4, int(body_h))
-                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetBrush(_transparent_brush())
                     dc.SetPen(wx.Pen(border_color, pen_w))
                     dc.DrawRoundedRectangle(bx, by, int(body_w), int(body_h), 4)
 
@@ -5290,7 +5294,7 @@ class BreadboardCanvas(wx.Panel):
             gc.SetBrush(gc.CreateBrush(wx.Brush(k_col)))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(k_col).Width(0)))
             gc.DrawPath(sp)
-            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+            gc.SetBrush(gc.CreateBrush(_transparent_brush()))
             gc.SetPen(gc.CreatePen(border_pen))
             gc.DrawEllipse(-r_inner, -r_inner, 2 * r_inner, 2 * r_inner)
             return
@@ -5321,7 +5325,7 @@ class BreadboardCanvas(wx.Panel):
             gc.SetBrush(gc.CreateBrush(wx.Brush(stripe)))
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(stripe).Width(0)))
             gc.DrawPath(sp)
-            gc.SetBrush(gc.CreateBrush(wx.TRANSPARENT_BRUSH))
+            gc.SetBrush(gc.CreateBrush(_transparent_brush()))
             gc.SetPen(gc.CreatePen(border_pen))
             gc.DrawEllipse(-r, -r, 2 * r, 2 * r)
             font = wx.Font(8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -5419,7 +5423,7 @@ class BreadboardCanvas(wx.Panel):
                 if ann.fill:
                     dc.SetBrush(wx.Brush(wx.Colour('#ffcccc' if is_hover else ann.fill_color)))
                 else:
-                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(wx.Colour(color), ann.width + (2 if is_hover else 0)))
                 x = int(min(ann.x1, ann.x2)); y = int(min(ann.y1, ann.y2))
                 w = int(abs(ann.x2 - ann.x1)); h = int(abs(ann.y2 - ann.y1))
@@ -5429,7 +5433,7 @@ class BreadboardCanvas(wx.Panel):
                 if ann.fill:
                     dc.SetBrush(wx.Brush(wx.Colour('#ffcccc' if is_hover else ann.fill_color)))
                 else:
-                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(wx.Colour(color), ann.width + (2 if is_hover else 0)))
                 dc.DrawCircle(int(ann.cx), int(ann.cy), int(ann.r))
             elif isinstance(ann, DrawText):
@@ -5447,7 +5451,7 @@ class BreadboardCanvas(wx.Panel):
                 if ann.fill:
                     dc.SetBrush(wx.Brush(wx.Colour('#ffcccc' if is_hover else ann.fill_color)))
                 else:
-                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(wx.Colour(border_color), ann.width))
                 dc.DrawRectangle(bx, by, bw, bh)
                 # Draw wrapped text inside with padding
@@ -5493,7 +5497,7 @@ class BreadboardCanvas(wx.Panel):
             x1, y1 = self._draw_start
             x2, y2 = self._draw_preview
             dc.SetPen(wx.Pen(wx.Colour('#999999'), 1))
-            dc.SetBrush(wx.TRANSPARENT_BRUSH)
+            dc.SetBrush(_transparent_brush())
             if self.mode == MODE_DRAW_LINE:
                 dc.DrawLine(int(x1), int(y1), int(x2), int(y2))
             elif self.mode == MODE_DRAW_RECT:
@@ -5789,7 +5793,7 @@ class BreadboardCanvas(wx.Panel):
                 cy = y + row_h // 2
                 ring = wx.Colour(0x22, 0x22, 0x22) if is_selected else FG
                 fill = wx.Colour(0x22, 0x22, 0x22) if is_selected else wx.Colour(0xff, 0xff, 0xff)
-                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(ring, 2))
                 dc.DrawCircle(cx, cy, 6)
                 if is_selected:

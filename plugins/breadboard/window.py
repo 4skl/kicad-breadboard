@@ -85,7 +85,6 @@ ID_DRAW_TEXTBOX  = wx.NewIdRef()
 _WIRE_COLOR_NAMES = ['Yellow', 'Red', 'Blue', 'Green', 'Orange', 'Purple', 'Cyan', 'Grey', 'Black']
 _WIRE_COLOR_LABELS = ['Auto'] + _WIRE_COLOR_NAMES
 
-_KICAD_ICON_ARCHIVE = '/usr/share/kicad/resources/images.tar.gz'
 _ICONS_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / 'kicad_icons' / 'images'
 _REPO_IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / 'images'
 _icon_cache: dict = {}
@@ -138,38 +137,109 @@ def _local_icon(name: str, size: int = 24, scale: float = 1.0) -> 'wx.Bitmap':
     return wx.NullBitmap
 
 
+def _kicad_icon_archives() -> list[Path]:
+    candidates: list[Path] = []
+
+    def add(path) -> None:
+        if path:
+            p = Path(path)
+            candidates.append(p if p.name == 'images.tar.gz' else p / 'images.tar.gz')
+
+    add(os.getenv('KICAD_RESOURCES_DIR'))
+    add(os.getenv('KICAD_RESOURCE_DIR'))
+
+    for root in (
+        '/usr/share/kicad/resources',
+        '/usr/local/share/kicad/resources',
+        '/opt/kicad/share/kicad/resources',
+        '/Applications/KiCad/KiCad.app/Contents/SharedSupport/resources',
+        '/Applications/KiCad/KiCad.app/Contents/SharedSupport/kicad/resources',
+        '/Applications/KiCad/KiCad.app/Contents/SharedSupport/share/kicad/resources',
+    ):
+        add(root)
+
+    for base in (os.getenv('ProgramFiles'), os.getenv('ProgramFiles(x86)'), os.getenv('LOCALAPPDATA')):
+        if not base:
+            continue
+        for path in Path(base).glob('KiCad*/**/share/kicad/resources/images.tar.gz'):
+            candidates.append(path)
+        for path in (Path(base) / 'KiCad').glob('*/share/kicad/resources/images.tar.gz'):
+            candidates.append(path)
+
+    seen = set()
+    result = []
+    for path in candidates:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def _fallback_icon(label: str, size: int) -> 'wx.Bitmap':
+    bmp = wx.Bitmap(size, size, 32)
+    dc = wx.MemoryDC(bmp)
+    bg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE)
+    fg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNTEXT)
+    dc.SetBackground(wx.Brush(bg))
+    dc.Clear()
+    dc.SetPen(wx.Pen(fg, 1))
+    dc.SetBrush(wx.Brush(bg, wx.BRUSHSTYLE_TRANSPARENT))
+    dc.DrawRectangle(1, 1, max(1, size - 2), max(1, size - 2))
+    dc.SetFont(wx.Font(max(7, size // 2), wx.FONTFAMILY_DEFAULT,
+                       wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+    dc.SetTextForeground(fg)
+    text = (label[:1] or '?').upper()
+    tw, th = dc.GetTextExtent(text)
+    dc.DrawText(text, (size - tw) // 2, (size - th) // 2)
+    dc.SelectObject(wx.NullBitmap)
+    return bmp
+
+
 def _kicad_icon(name: str, size: int = 20, scale: float = 1.0) -> 'wx.Bitmap':
     """Load a PNG from the KiCad icon archive, scaled to size×size.
 
     In dark mode, automatically tries the _dark_ variant first
-    (e.g. save_24.png → save_dark_24.png).
-    Returns NullBitmap on any error.
+    (e.g. save_24.png → save_dark_24.png), then falls back to the
+    regular icon.  Uses platform-specific KiCad install locations.
     """
     import re as _re
+    names = []
     if _is_dark_mode():
         dark_name = _re.sub(r'_(\d+\.png)$', r'_dark_\1', name)
         if dark_name != name:
-            name = dark_name
+            names.append(dark_name)
+    names.append(name)
+
     cache_key = (name, size)
     if cache_key in _icon_cache:
         return _icon_cache[cache_key]
     import io, tarfile
-    try:
-        with tarfile.open(_KICAD_ICON_ARCHIVE) as tf:
-            member = tf.extractfile(f'./{name}')
-            if member is None:
-                _icon_cache[cache_key] = wx.NullBitmap
-                return wx.NullBitmap
-            data = member.read()
-        img = wx.Image(io.BytesIO(data), wx.BITMAP_TYPE_PNG)
-        if img.GetWidth() != size or img.GetHeight() != size:
-            img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
-        bmp = wx.Bitmap(img)
-        _icon_cache[cache_key] = bmp
-        return bmp
-    except Exception:
-        _icon_cache[cache_key] = wx.NullBitmap
-        return wx.NullBitmap
+    for archive in _kicad_icon_archives():
+        if not archive.exists():
+            continue
+        try:
+            with tarfile.open(archive) as tf:
+                members = set(tf.getnames())
+                for icon_name in names:
+                    member_name = f'./{icon_name}'
+                    if member_name not in members and icon_name not in members:
+                        continue
+                    member = tf.extractfile(member_name if member_name in members else icon_name)
+                    if member is None:
+                        continue
+                    img = wx.Image(io.BytesIO(member.read()), wx.BITMAP_TYPE_PNG)
+                    if img.GetWidth() != size or img.GetHeight() != size:
+                        img.Rescale(size, size, wx.IMAGE_QUALITY_HIGH)
+                    bmp = wx.Bitmap(img)
+                    _icon_cache[cache_key] = bmp
+                    return bmp
+        except Exception:
+            continue
+
+    bmp = _fallback_icon(name, size)
+    _icon_cache[cache_key] = bmp
+    return bmp
 
 
 class BreadboardWindow(wx.Frame):

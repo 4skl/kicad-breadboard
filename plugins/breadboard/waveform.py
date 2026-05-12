@@ -152,6 +152,7 @@ class OscopeScreen(wx.Panel):
                  traces:   Dict[str, TransientTrace],
                  channels: List[_ChanState]):
         super().__init__(parent)
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.SetBackgroundColour(_SCREEN)
         self.SetMinSize(wx.Size(420, 300))
         self._traces         = traces
@@ -165,6 +166,7 @@ class OscopeScreen(wx.Panel):
         self._intensity:     float           = 1.0
         self._focus:         float           = 1.0
         self.Bind(wx.EVT_PAINT, self._on_paint)
+        self.Bind(wx.EVT_ERASE_BACKGROUND, lambda _: None)
         self.Bind(wx.EVT_SIZE,  lambda _: self.Refresh())
 
     def set_t_div(self, v: float) -> None:
@@ -202,13 +204,16 @@ class OscopeScreen(wx.Panel):
     # ------------------------------------------------------------------
 
     def _on_paint(self, _evt) -> None:
-        dc = wx.BufferedPaintDC(self)
+        dc = wx.AutoBufferedPaintDC(self)
         W, H = self.GetClientSize()
         p = self._PAD
         pw, ph = W - 2 * p, H - 2 * p
 
         dc.SetBackground(wx.Brush(_SCREEN))
         dc.Clear()
+        dc.SetBrush(wx.Brush(_SCREEN))
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.DrawRectangle(0, 0, W, H)
         if pw < 40 or ph < 30:
             return
 
