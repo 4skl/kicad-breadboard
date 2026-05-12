@@ -1106,15 +1106,15 @@ class BreadboardWindow(wx.Frame):
     def _on_export(self, _evt) -> None:
         use_svg = self.prefs.export_format == 'svg'
         ext = 'svg' if use_svg else 'png'
-        default = f'breadboard.{ext}'
-        if self._project_path:
-            default = str(Path(self._project_path) / default)
+        default_dir = self._project_path or ''
+        default_file = f'breadboard.{ext}'
         wildcard = ('SVG image (*.svg)|*.svg' if use_svg
                     else 'PNG image (*.png)|*.png')
         with wx.FileDialog(
             self,
             message='Save breadboard image',
-            defaultFile=default,
+            defaultDir=default_dir,
+            defaultFile=default_file,
             wildcard=wildcard,
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
@@ -1136,14 +1136,13 @@ class BreadboardWindow(wx.Frame):
         self.SetStatusText(f'Image saved to {path}', 0)
 
     def _on_save(self, _evt) -> None:
-        default = 'breadboard.kicad_bbrd'
-        if self._project_path:
-            from pathlib import Path as _Path
-            default = str(_Path(self._project_path) / 'breadboard.kicad_bbrd')
+        default_dir = self._project_path or ''
+        default_file = 'breadboard.kicad_bbrd'
         with wx.FileDialog(
             self,
             message='Save session',
-            defaultFile=default,
+            defaultDir=default_dir,
+            defaultFile=default_file,
             wildcard='Breadboard session (*.kicad_bbrd)|*.kicad_bbrd|All files (*)|*',
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
