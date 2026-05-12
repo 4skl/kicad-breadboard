@@ -217,7 +217,10 @@ def _kicad_icon(name: str, size: int = 20, scale: float = 1.0) -> 'wx.Bitmap':
             return [icon_name]
         prefix, _, suffix = m.groups()
         sizes = (16, 24, 32, 48, 64)
-        ordered = sorted(sizes, key=lambda s: (abs(s - size), s < size))
+        larger = [s for s in sizes if s >= size]
+        smaller = [s for s in sizes if s < size]
+        ordered = sorted(larger, key=lambda s: s - size) + sorted(
+            smaller, key=lambda s: size - s)
         candidates = [f'{prefix}{s}{suffix}' for s in ordered]
         if icon_name not in candidates:
             candidates.append(icon_name)
@@ -601,7 +604,7 @@ class BreadboardWindow(wx.Frame):
     def _build_vtoolbar(self, parent: wx.Window) -> wx.ToolBar:
         """Right-side vertical tool palette, mirroring Eeschema's right toolbar."""
         vt = wx.ToolBar(parent, style=wx.TB_VERTICAL | wx.TB_NODIVIDER)
-        _ico = self.FromDIP(20)
+        _ico = self.FromDIP(24)
         vt.SetToolBitmapSize((_ico, _ico))
 
         # --- Pointer / view tools ---
@@ -676,7 +679,7 @@ class BreadboardWindow(wx.Frame):
     def _build_toolbar(self) -> None:
         tb = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_NODIVIDER)
         tb.SetBackgroundColour(_panel_bg())
-        _ico = self.FromDIP(20)
+        _ico = self.FromDIP(24)
         tb.SetToolBitmapSize((_ico, _ico))
 
         # File + prefs
@@ -1344,7 +1347,7 @@ class BreadboardWindow(wx.Frame):
         if p.export_format != old.export_format:
             icon_name = ('export_svg_24.png' if p.export_format == 'svg'
                          else 'export_png_24.png')
-            self.toolbar.SetToolNormalBitmap(ID_EXPORT, _kicad_icon(icon_name, self.FromDIP(20)))
+            self.toolbar.SetToolNormalBitmap(ID_EXPORT, _kicad_icon(icon_name, self.FromDIP(24)))
             self.toolbar.Refresh()
 
         self.canvas.Refresh()
@@ -1601,7 +1604,8 @@ class BreadboardWindow(wx.Frame):
 
     def _run_transient_simulation(self, terminal_voltages: dict) -> None:
         if not self.board.placements:
-            self._sim_pane.show_error('No components placed on the board.')
+            self._open_waveform_frame({}, [])
+            self.SetStatusText('KiScope opened — place components and run transient analysis to show signals.', 0)
             return
 
         if self.netlist:
@@ -1639,6 +1643,12 @@ class BreadboardWindow(wx.Frame):
             self.SetStatusText('Transient simulation failed.', 0)
             return
 
+        board_nets = self._board_signal_nets()
+        result.transient_traces = {
+            net: trace for net, trace in result.transient_traces.items()
+            if net in board_nets
+        }
+
         self.canvas.set_simulation_result(result)
         self._sim_pane.show_results(result)
         n = len(result.transient_traces)
@@ -1648,21 +1658,35 @@ class BreadboardWindow(wx.Frame):
             status += f', {w} warning(s)'
         self.SetStatusText(status, 0)
 
-        # Open (or replace) the waveform viewer
+        self._open_waveform_frame(result.transient_traces, result.warnings or [])
+
+    def _open_waveform_frame(self, traces: dict, warnings: list) -> None:
         if self._waveform_frame:
             self._waveform_frame.Destroy()
         self.canvas.clear_all_scope_probes()
         from .waveform import WaveformFrame
         self._waveform_frame = WaveformFrame(
-            self, result.transient_traces,
+            self, traces,
             on_probe_toggle=self._on_waveform_probe_toggle,
             on_clear_probes=self.canvas.clear_all_scope_probes,
-            warnings=result.warnings or [],
+            warnings=warnings,
             num_channels=self.prefs.scope_channels,
             initial_channel_nets=self._scope_channel_nets(),
         )
         self._waveform_frame.Show()
         self._refresh_waveform_probe_markers()
+
+    def _board_signal_nets(self) -> set:
+        """Return schematic nets represented by placed component pins on the board."""
+        if not self.board or not self.netlist:
+            return set()
+        nets = set()
+        for ref, placed in self.board.placements.items():
+            nets_dict = self.netlist.nets_for_ref(ref)
+            for pin_num, net in nets_dict.items():
+                if placed.pin_holes.get(pin_num) is not None and net.name:
+                    nets.add(net.name)
+        return nets
 
     def _scope_channel_nets(self) -> list:
         return [self.board.get_probe_net(f'CH{i}') or None for i in range(1, 5)]

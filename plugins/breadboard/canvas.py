@@ -4514,10 +4514,9 @@ class BreadboardCanvas(wx.Panel):
                 dc.DrawText('+', int(mx - r + 3), int(my - th // 2))
         else:
             # Axial pill (R, C, L, D, D_Zener, C_POL …)
-            # Body occupies the middle half of the span (25%–75%)
-            body_half = length * 0.25
-            if placed.type_id in ('D', 'D_Zener'):
-                body_half = min(max(body_half, 8.0), 1.25 * PITCH)
+            # Body occupies the middle of the span, capped so long angled
+            # placements keep a normal component body with longer leads.
+            body_half = min(max(length * 0.25, 8.0), 1.25 * PITCH)
 
             # Lead attachment points on the body surface
             bx1, by1 = mx - ux * body_half, my - uy * body_half   # near pin 1
@@ -4572,15 +4571,14 @@ class BreadboardCanvas(wx.Panel):
                             -body_half + 15,
                             body_half - 8,
                         ]
-                        no_pen = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(0, 0, 0, 0)).Width(0))
-                        gc.SetPen(no_pen)
                         for bx_pos, bcolor in zip(positions, bands):
-                            gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
+                            band_color = wx.Colour(bcolor)
+                            bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             band_path = gc.CreatePath()
-                            band_path.AddRectangle(bx_pos, -_R_END_HH, 5, 2 * _R_END_HH)
-                            gc.Clip(_rp)
+                            band_path.AddRectangle(bx_pos, -bh, 5, 2 * bh)
+                            gc.SetBrush(gc.CreateBrush(wx.Brush(band_color)))
+                            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(band_color).Width(1)))
                             gc.FillPath(band_path)
-                            gc.ResetClip()
                     # Redraw outer border on top to clean up band overflow at edges
                     gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
@@ -4590,11 +4588,7 @@ class BreadboardCanvas(wx.Panel):
                     _stripe = wx.Colour('#cccccc')
                     gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
-                    stripe_path = gc.CreatePath()
-                    stripe_path.AddRectangle(-body_half + 3, -body_h / 2, 6, body_h)
-                    gc.Clip(body_path)
-                    gc.FillPath(stripe_path)
-                    gc.ResetClip()
+                    gc.DrawRectangle(-body_half + 4, -body_h / 2, 4, body_h)
                     # Redraw body border on top so the stripe doesn't obscure it
                     gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
@@ -4605,11 +4599,7 @@ class BreadboardCanvas(wx.Panel):
                     _stripe = wx.Colour('#cccccc')
                     gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
-                    stripe_path = gc.CreatePath()
-                    stripe_path.AddRectangle(-body_half + 3, -body_h / 2, 6, body_h)
-                    gc.Clip(body_path)
-                    gc.FillPath(stripe_path)
-                    gc.ResetClip()
+                    gc.DrawRectangle(-body_half + 4, -body_h / 2, 4, body_h)
                     gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
                     gc.StrokePath(body_path)
