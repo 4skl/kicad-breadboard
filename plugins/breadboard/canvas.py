@@ -4538,6 +4538,8 @@ class BreadboardCanvas(wx.Panel):
             if gc is not None:
                 gc.Translate(mx, my)
                 gc.Rotate(angle)
+                body_path = gc.CreatePath()
+                body_path.AddRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
                 gc.SetBrush(gc.CreateBrush(wx.Brush(body_color)))
                 gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
 
@@ -4556,7 +4558,8 @@ class BreadboardCanvas(wx.Panel):
                     gc.FillPath(_rp)
                     gc.StrokePath(_rp)
                 else:
-                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+                    gc.FillPath(body_path)
+                    gc.StrokePath(body_path)
 
                 if placed.type_id == 'R' and self.netlist:
                     comp = self.netlist.components.get(ref)
@@ -4572,9 +4575,12 @@ class BreadboardCanvas(wx.Panel):
                         no_pen = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(0, 0, 0, 0)).Width(0))
                         gc.SetPen(no_pen)
                         for bx_pos, bcolor in zip(positions, bands):
-                            bh = _res_body_half_height(bx_pos + 2.5, body_half)
                             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(bcolor))))
-                            gc.DrawRectangle(bx_pos, -bh, 5, 2 * bh)
+                            band_path = gc.CreatePath()
+                            band_path.AddRectangle(bx_pos, -_R_END_HH, 5, 2 * _R_END_HH)
+                            gc.Clip(_rp)
+                            gc.FillPath(band_path)
+                            gc.ResetClip()
                     # Redraw outer border on top to clean up band overflow at edges
                     gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
@@ -4584,21 +4590,29 @@ class BreadboardCanvas(wx.Panel):
                     _stripe = wx.Colour('#cccccc')
                     gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
-                    gc.DrawRectangle(-body_half + 4, -body_h / 2, 4, body_h)
+                    stripe_path = gc.CreatePath()
+                    stripe_path.AddRectangle(-body_half + 3, -body_h / 2, 6, body_h)
+                    gc.Clip(body_path)
+                    gc.FillPath(stripe_path)
+                    gc.ResetClip()
                     # Redraw body border on top so the stripe doesn't obscure it
                     gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+                    gc.StrokePath(body_path)
                 elif placed.type_id == 'D_Zener':
                     # Zener cathode marker: same occupied area as the original
                     # cathode band, but rectangular so there is no rounded blob.
                     _stripe = wx.Colour('#cccccc')
                     gc.SetBrush(gc.CreateBrush(wx.Brush(_stripe)))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(_stripe).Width(0)))
-                    gc.DrawRectangle(-body_half + 4, -body_h / 2, 4, body_h)
+                    stripe_path = gc.CreatePath()
+                    stripe_path.AddRectangle(-body_half + 3, -body_h / 2, 6, body_h)
+                    gc.Clip(body_path)
+                    gc.FillPath(stripe_path)
+                    gc.ResetClip()
                     gc.SetBrush(gc.CreateBrush(_transparent_brush()))
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(border_color).Width(pen_w)))
-                    gc.DrawRoundedRectangle(-body_half, -body_h / 2, body_w, body_h, 4)
+                    gc.StrokePath(body_path)
 
             else:
                 # Fallback for SVGFileDC: components are always horizontal on a breadboard

@@ -211,6 +211,20 @@ def _kicad_icon(name: str, size: int = 20, scale: float = 1.0) -> 'wx.Bitmap':
             names.append(dark_name)
     names.append(name)
 
+    def sized_names(icon_name: str) -> list[str]:
+        m = _re.match(r'^(.*_)(\d+)(\.png)$', icon_name)
+        if not m:
+            return [icon_name]
+        prefix, _, suffix = m.groups()
+        sizes = (16, 24, 32, 48, 64)
+        ordered = sorted(sizes, key=lambda s: (abs(s - size), s < size))
+        candidates = [f'{prefix}{s}{suffix}' for s in ordered]
+        if icon_name not in candidates:
+            candidates.append(icon_name)
+        return candidates
+
+    names = [candidate for icon_name in names for candidate in sized_names(icon_name)]
+
     cache_key = (name, size)
     if cache_key in _icon_cache:
         return _icon_cache[cache_key]
