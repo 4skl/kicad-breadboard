@@ -987,6 +987,11 @@ class BreadboardCanvas(wx.Panel):
         self._wire_bend_start_mouse: Tuple[int, int] = (0, 0)
         self._wire_bend_pre_snap: Optional[dict] = None
 
+        self._wire_end_drag_wire: Optional[Wire] = None   # wire whose endpoint is being moved
+        self._wire_end_drag_which: Optional[str] = None   # 'h1' or 'h2'
+        self._wire_end_drag_hole: Optional[object] = None # current snap target
+        self._wire_end_drag_pre_snap: Optional[dict] = None
+
         self._pin_drag_ref:  Optional[str]  = None   # ref whose pin is being repositioned
         self._pin_drag_num:  Optional[int]  = None   # which pin number is being dragged
         self._pin_drag_hole: Optional[Hole] = None   # current snap target for that pin
@@ -1023,6 +1028,7 @@ class BreadboardCanvas(wx.Panel):
         self.show_branding: bool = False
         self.baseboard_color: str = '#3d6fa8'
         self.branding_image: str = ''
+        self.rail_style: str = 'bbrd_classic'  # toggled via preferences
 
         self._placing_probe: Optional[str] = None   # probe name pending placement
         self._probe_drag: bool = False              # True = drag-to-place (release to commit)
@@ -1291,6 +1297,10 @@ class BreadboardCanvas(wx.Panel):
         self._pin_drag_ref  = None
         self._pin_drag_num  = None
         self._pin_drag_hole = None
+        self._wire_end_drag_wire = None
+        self._wire_end_drag_which = None
+        self._wire_end_drag_hole = None
+        self._wire_end_drag_pre_snap = None
         if mode != MODE_PROBE:
             self._placing_probe = None
             self._probe_drag = False
@@ -1927,6 +1937,23 @@ class BreadboardCanvas(wx.Panel):
                 self.CaptureMouse()
             else:
                 import copy as _copy
+                # Check wire endpoints first — takes priority over body-click/bend
+                end_hit = self._wire_end_at(px, py)
+                if end_hit:
+                    wire, which = end_hit
+                    self._wire_end_drag_wire = wire
+                    self._wire_end_drag_which = which
+                    self._wire_end_drag_hole = getattr(wire, which)
+                    self._wire_end_drag_pre_snap = self._board_snapshot()
+                    self._selected_wire = wire
+                    self._selected_ref = None
+                    self._selected_probe = None
+                    self._selected_ann_idx = None
+                    self.SetFocus()
+                    if not self.HasCapture():
+                        self.CaptureMouse()
+                    self.Refresh()
+                    return
                 wire = self._wire_at(px, py)
                 self._selected_wire = wire
                 self._selected_ref = None
@@ -2073,6 +2100,27 @@ class BreadboardCanvas(wx.Panel):
             self._thumb_drag_ch = None
         if self._dragging_probe_label:
             self._dragging_probe_label = None
+            self.Refresh()
+            return
+        if self._wire_end_drag_wire is not None:
+            if self.HasCapture():
+                self.ReleaseMouse()
+            wire   = self._wire_end_drag_wire
+            which  = self._wire_end_drag_which
+            target = self._wire_end_drag_hole
+            old_hole = getattr(wire, which)
+            if target is not None and target != old_hole:
+                setattr(wire, which, target)
+                if self._wire_end_drag_pre_snap is not None:
+                    self._undo_stack.append(self._wire_end_drag_pre_snap)
+                    if len(self._undo_stack) > 50:
+                        self._undo_stack.pop(0)
+                    self._redo_stack.clear()
+                    self._notify_history()
+            self._wire_end_drag_wire = None
+            self._wire_end_drag_which = None
+            self._wire_end_drag_hole = None
+            self._wire_end_drag_pre_snap = None
             self.Refresh()
             return
         if self._wire_bend_drag:
@@ -2295,6 +2343,14 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
             return
 
+        # Wire endpoint drag: snap the dragged end to the nearest hole
+        if self._wire_end_drag_wire is not None:
+            hole = self.layout.nearest_hole(px, py)
+            if hole is not None:
+                self._wire_end_drag_hole = hole
+            self.Refresh()
+            return
+
         # Wire bend drag: upgrade candidate to active drag once mouse moves enough
         if self._wire_bend_candidate and not self._wire_bend_drag:
             dx = px - self._wire_bend_start_mouse[0]
@@ -2500,6 +2556,22 @@ class BreadboardCanvas(wx.Panel):
                 best_wire = w
         return best_wire
 
+    def _wire_end_at(self, px: int, py: int):
+        """Return (wire, 'h1'|'h2') if (px,py) is near a wire endpoint, else None."""
+        HIT_R = HOLE_R + 8
+        best_d = HIT_R
+        best = None
+        for w in self.board.wires:
+            for attr in ('h1', 'h2'):
+                xy = self.layout.hole_xy(getattr(w, attr))
+                if xy is None:
+                    continue
+                d = math.hypot(px - xy[0], py - xy[1])
+                if d < best_d:
+                    best_d = d
+                    best = (w, attr)
+        return best
+
     def _probe_label_at(self, px: int, py: int) -> Optional[str]:
         """Return the name of the placed probe whose icon contains (px, py)."""
         body_w, body_h, tip_h = 28, 12, 5
@@ -2649,6 +2721,8 @@ class BreadboardCanvas(wx.Panel):
         if self._pin_drag_ref is not None:
             self._draw_pin_drag_preview(dc)
         self._draw_wires(dc)
+        if self._wire_end_drag_wire is not None:
+            self._draw_wire_end_drag_preview(dc)
         if self.show_binding_posts:
             self._draw_terminals(dc)
         self._draw_probes(dc)
@@ -2885,17 +2959,51 @@ class BreadboardCanvas(wx.Panel):
             ry = lay.section_rail_y(rail, section)
             color = rail_colors[rail]
 
-            # Draw one stripe per group of 5 holes
-            n_groups = (rl + 4) // 5
-            for group in range(n_groups):
-                first = group * 5 + 1
-                last  = min(group * 5 + 5, rl)
-                x_left  = lay.rail_x(first) - PITCH // 2
-                x_right = lay.rail_x(last)  + PITCH // 2
-                stripe = wx.Rect(x_left, ry - strip_h // 2, x_right - x_left, strip_h)
-                dc.SetBrush(wx.Brush(color))
-                dc.SetPen(wx.Pen(color, 0))
-                dc.DrawRoundedRectangle(stripe, 3)
+            # Connected segments (respects electrical split)
+            if lay.rail_split and rl > RAIL_SPLIT:
+                segments = [(1, RAIL_SPLIT), (RAIL_SPLIT + 1, rl)]
+            else:
+                segments = [(1, rl)]
+
+            if self.rail_style == 'bbrd_classic':
+                # One rounded rect per group of 5 holes
+                n_groups = (rl + 4) // 5
+                for group in range(n_groups):
+                    first = group * 5 + 1
+                    last  = min(group * 5 + 5, rl)
+                    x_left  = lay.rail_x(first) - PITCH // 2
+                    x_right = lay.rail_x(last)  + PITCH // 2
+                    stripe = wx.Rect(x_left, ry - strip_h // 2, x_right - x_left, strip_h)
+                    dc.SetBrush(wx.Brush(color))
+                    dc.SetPen(wx.Pen(color, 0))
+                    dc.DrawRoundedRectangle(stripe, 3)
+
+            elif self.rail_style == 'bbrd_modern':
+                # One large outline-only rounded rect per connected segment
+                modern_h = RAIL_H
+                for first, last in segments:
+                    x_left  = lay.rail_x(first) - PITCH // 2
+                    x_right = lay.rail_x(last)  + PITCH // 2
+                    stripe = wx.Rect(x_left, ry - modern_h // 2, x_right - x_left, modern_h)
+                    dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                    dc.SetPen(wx.Pen(color, 2))
+                    dc.DrawRoundedRectangle(stripe, 5)
+
+            elif self.rail_style == 'solid_line':
+                # Thin line on the playing-field side of each rail (no line between rails)
+                # plus rails: line faces the tie strips; minus rails: line faces outward
+                line_h = 3
+                if rail in ('top_minus', 'bot_plus'):
+                    line_y = ry - RAIL_H // 2
+                else:
+                    line_y = ry + RAIL_H // 2 - line_h
+                for first, last in segments:
+                    x_left  = lay.rail_x(first) - PITCH // 2
+                    x_right = lay.rail_x(last)  + PITCH // 2
+                    stripe = wx.Rect(x_left, line_y, x_right - x_left, line_h)
+                    dc.SetBrush(wx.Brush(color))
+                    dc.SetPen(wx.Pen(color, 0))
+                    dc.DrawRectangle(stripe)
 
             # Holes
             for idx in range(1, rl + 1):
@@ -2981,6 +3089,17 @@ class BreadboardCanvas(wx.Panel):
                 dc.SetBrush(_transparent_brush())
                 dc.SetPen(wx.Pen(wx.Colour('#e8c020'), 2))
                 dc.DrawCircle(xy[0], xy[1], HOLE_R + 4)
+
+    def _draw_wire_end_drag_preview(self, dc: wx.DC) -> None:
+        """Gold ring on the snap target while dragging a wire endpoint."""
+        target = self._wire_end_drag_hole
+        if target is None:
+            return
+        xy = self.layout.hole_xy(target)
+        if xy:
+            dc.SetBrush(_transparent_brush())
+            dc.SetPen(wx.Pen(wx.Colour('#e8c020'), 2))
+            dc.DrawCircle(xy[0], xy[1], HOLE_R + 4)
 
     def _commit_pin_drag(self) -> None:
         """Apply the pin drag result to the placed component."""

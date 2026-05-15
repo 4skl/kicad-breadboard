@@ -6,7 +6,8 @@ Installation
 Symlink or copy the `plugins/breadboard/` directory into KiCad's scripting
 plugins folder:
 
-  ~/.local/share/kicad/9.0/scripting/plugins/breadboard/
+  ~/.local/share/kicad/9.0/scripting/plugins/breadboard/   (KiCad 9)
+  ~/.local/share/kicad/10.0/scripting/plugins/breadboard/  (KiCad 10)
 
 Then in KiCad: Tools > External Plugins > Refresh Plugins, then
 Tools > External Plugins > Breadboard Builder.

@@ -1343,6 +1343,8 @@ class BreadboardWindow(wx.Frame):
             self.canvas.show_branding = p.show_branding
         if p.branding_image != old.branding_image:
             self.canvas.branding_image = p.branding_image
+        if p.rail_style != old.rail_style:
+            self.canvas.rail_style = p.rail_style
 
         if p.export_format != old.export_format:
             icon_name = ('export_svg_24.png' if p.export_format == 'svg'
@@ -1361,6 +1363,7 @@ class BreadboardWindow(wx.Frame):
         self.canvas.baseboard_color    = p.baseboard_color
         self.canvas.show_branding      = p.show_branding
         self.canvas.branding_image     = p.branding_image
+        self.canvas.rail_style         = p.rail_style
         self.canvas.layout = CanvasLayout(p.board_layout, p.binding_post_side,
                                           p.show_branding, p.rail_split,
                                           p.num_terminals)
@@ -2523,6 +2526,14 @@ class PreferencesDialog(wx.Dialog):
         self._cb_rail_split.SetValue(prefs.rail_split)
         sizer.Add(self._cb_rail_split, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
 
+        _style_map = ['bbrd_classic', 'bbrd_modern', 'solid_line', 'none']
+        style_row, self._rb_rail_style = radio_row(
+            'Power rail style:',
+            ['bbrd classic', 'bbrd modern', 'solid line', 'no markings'],
+            _style_map.index(prefs.rail_style) if prefs.rail_style in _style_map else 0,
+        )
+        sizer.Add(style_row, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
+
         self._cb_binding = wx.CheckBox(self, label='Show binding posts on board')
         self._cb_binding.SetValue(prefs.show_binding_posts)
         sizer.Add(self._cb_binding, 0, wx.LEFT | wx.TOP | wx.RIGHT, 10)
@@ -2624,6 +2635,7 @@ class PreferencesDialog(wx.Dialog):
         _layout_map = ['mini', 'half', 'full', 'double', 'triple', 'double_rails']
         _side_map   = ['left', 'right', 'top_left', 'top_center', 'top_right',
                        'bottom_left', 'bottom_center', 'bottom_right']
+        _style_map  = ['bbrd_classic', 'bbrd_modern', 'solid_line', 'none']
 
         def _sel(buttons) -> int:
             return next(i for i, b in enumerate(buttons) if b.GetValue())
@@ -2645,4 +2657,5 @@ class PreferencesDialog(wx.Dialog):
             show_branding=self._cb_branding.IsChecked(),
             branding_image=self._tc_brand_img.GetValue(),
             rail_split=self._cb_rail_split.IsChecked(),
+            rail_style=_style_map[_sel(self._rb_rail_style)],
         )
