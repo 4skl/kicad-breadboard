@@ -296,19 +296,25 @@ TO92_PINOUT_VARIANTS: Dict[str, List[Tuple[str, Dict[int, PinOffset]]]] = {
     'JFET_N': [
         ('S-G-D', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),  # BF245, 2N5459 …
         ('D-G-S', {3: PinOffset(0), 2: PinOffset(1), 1: PinOffset(2)}),  # 2N5457 …
+        ('G-S-D', {2: PinOffset(0), 1: PinOffset(1), 3: PinOffset(2)}),
+        ('G-D-S', {2: PinOffset(0), 3: PinOffset(1), 1: PinOffset(2)}),
     ],
     'JFET_P': [
         ('S-G-D', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),
         ('D-G-S', {3: PinOffset(0), 2: PinOffset(1), 1: PinOffset(2)}),
+        ('G-S-D', {2: PinOffset(0), 1: PinOffset(1), 3: PinOffset(2)}),
+        ('G-D-S', {2: PinOffset(0), 3: PinOffset(1), 1: PinOffset(2)}),
     ],
     # MOSFET pinouts: pin 1=G, 2=S, 3=D (KiCad Transistor_FET convention: 2N7002, AO3401A…)
     'NMOS': [
         ('G-S-D', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),  # 2N7002 …
+        ('G-D-S', {1: PinOffset(0), 3: PinOffset(1), 2: PinOffset(2)}),
         ('S-G-D', {2: PinOffset(0), 1: PinOffset(1), 3: PinOffset(2)}),
         ('D-G-S', {3: PinOffset(0), 1: PinOffset(1), 2: PinOffset(2)}),
     ],
     'PMOS': [
         ('G-S-D', {1: PinOffset(0), 2: PinOffset(1), 3: PinOffset(2)}),  # AO3401A …
+        ('G-D-S', {1: PinOffset(0), 3: PinOffset(1), 2: PinOffset(2)}),
         ('S-G-D', {2: PinOffset(0), 1: PinOffset(1), 3: PinOffset(2)}),
         ('D-G-S', {3: PinOffset(0), 1: PinOffset(1), 2: PinOffset(2)}),
     ],
