@@ -1038,10 +1038,6 @@ class BreadboardCanvas(wx.Panel):
         self._drag_label_start_mouse: Tuple[int, int] = (0, 0)
         self._drag_label_start_offset: Tuple[int, int] = (0, 0)
 
-        self._transient_thumb_bounds: Dict[str, Tuple[int,int,int,int]] = {}  # ch → (bx,by,W,H)
-        self._thumb_drag_ch: Optional[str] = None       # CH being drag-initiated from thumbnail
-        self._thumb_drag_start: Tuple[float,float] = (0.0, 0.0)  # board coords at mousedown
-
         self._rpi_long_labels: bool = False   # toggle for RPi alt-function pin names
         self._dip_fn_labels:   bool = False   # toggle for DIP IC pin-function labels
 
@@ -1051,7 +1047,6 @@ class BreadboardCanvas(wx.Panel):
         self.on_history_change: Optional[callable] = None  # called(can_undo, can_redo)
         self.on_restore: Optional[callable] = None  # called after undo/redo for full UI refresh
         self.on_terminal_right_click: Optional[callable] = None  # called(term_name, screen_pos)
-        self.on_transient_dclick: Optional[callable] = None      # called(ch_name)
 
         # Simulation overlay
         self._sim_result = None   # SimResult or None
@@ -1565,7 +1560,6 @@ class BreadboardCanvas(wx.Panel):
 
     def clear_simulation(self) -> None:
         self._sim_result = None
-        self._transient_thumb_bounds = {}
         self.Refresh()
 
     def _led_forward_voltage(self, ref: str) -> Optional[float]:
@@ -1873,18 +1867,6 @@ class BreadboardCanvas(wx.Panel):
             return
 
         if self.mode == MODE_SELECT:
-            # Check waveform thumbnails first (transient mode)
-            thumb_ch = self._transient_thumb_at(px, py)
-            if thumb_ch:
-                self._selected_probe = thumb_ch
-                self._selected_ref = None
-                self._selected_wire = None
-                self._thumb_drag_ch = thumb_ch
-                self._thumb_drag_start = (px, py)
-                self.SetFocus()
-                self.Refresh()
-                return
-
             label_name = self._probe_label_at(px, py)
             if label_name:
                 self._dragging_probe_label = label_name
@@ -1999,10 +1981,6 @@ class BreadboardCanvas(wx.Panel):
     def _on_left_dclick(self, evt: wx.MouseEvent) -> None:
         px, py = self._board_pos(*evt.GetPosition())
         if self.mode == MODE_SELECT:
-            thumb_ch = self._transient_thumb_at(px, py)
-            if thumb_ch and self.on_transient_dclick:
-                self.on_transient_dclick(thumb_ch)
-                return
             wire = self._wire_at(px, py)
             if wire and wire.mid_point:
                 self.push_undo()
@@ -2096,8 +2074,6 @@ class BreadboardCanvas(wx.Panel):
             self.set_mode(MODE_SELECT)
             self.Refresh()
             return
-        if self._thumb_drag_ch:
-            self._thumb_drag_ch = None
         if self._dragging_probe_label:
             self._dragging_probe_label = None
             self.Refresh()
@@ -2269,14 +2245,6 @@ class BreadboardCanvas(wx.Panel):
             self.Refresh()
             return
         px, py = self._board_pos(*evt.GetPosition())
-
-        if self._thumb_drag_ch and evt.LeftIsDown():
-            sx, sy = self._thumb_drag_start
-            if abs(px - sx) > 5 or abs(py - sy) > 5:
-                ch = self._thumb_drag_ch
-                self._thumb_drag_ch = None
-                self.begin_probe_drag(ch)
-            return
 
         if self._dragging_probe_label:
             if not evt.LeftIsDown():
@@ -2588,13 +2556,6 @@ class BreadboardCanvas(wx.Panel):
             if (body_left <= px <= body_left + body_w and
                     fcy <= py <= fcy + body_h + tip_h):
                 return name
-        return None
-
-    def _transient_thumb_at(self, px: float, py: float) -> Optional[str]:
-        """Return the CH name whose waveform thumbnail contains (px, py), or None."""
-        for ch_name, (bx, by, w, h) in self._transient_thumb_bounds.items():
-            if bx <= px <= bx + w and by <= py <= by + h:
-                return ch_name
         return None
 
     def _ann_at(self, px: float, py: float, tol: float = 8.0) -> Optional[int]:
@@ -5672,9 +5633,7 @@ class BreadboardCanvas(wx.Panel):
     def _draw_sim_overlay(self, dc: wx.DC) -> None:
         if not self.show_voltage_labels or self._sim_result is None:
             return
-        if getattr(self._sim_result, 'transient_traces', None):
-            self._draw_transient_overlay(dc)
-        elif getattr(self._sim_result, 'net_voltages', None):
+        if getattr(self._sim_result, 'net_voltages', None):
             self._draw_voltage_labels(dc)
 
     def _draw_voltage_labels(self, dc: wx.DC) -> None:
@@ -5719,72 +5678,6 @@ class BreadboardCanvas(wx.Panel):
             dc.DrawRoundedRectangle(bx, by, tw + 4, th + 2, 2)
             dc.SetTextForeground('#e0e0ff')
             dc.DrawText(label, bx + 2, by + 1)
-
-    def _draw_transient_overlay(self, dc: wx.DC) -> None:
-        """Draw a small waveform thumbnail next to each placed CH probe (transient results)."""
-        traces = self._sim_result.transient_traces
-        W, H, PAD = 80, 26, 3   # thumbnail size in board pixels
-
-        self._transient_thumb_bounds = {}
-
-        for ch_name in ('CH1', 'CH2', 'CH3', 'CH4'):
-            hole = self.board.get_probe_hole(ch_name)
-            if hole is None:
-                continue
-            net_name = self.board.get_probe_net(ch_name)
-            if not net_name or net_name not in traces:
-                continue
-            tr = traces[net_name]
-            if len(tr.times) < 2:
-                continue
-
-            xy = self.layout.hole_xy(hole)
-            if xy is None:
-                continue
-            hx, hy = int(xy[0]), int(xy[1])
-
-            # Anchor: start from the probe flag position, extend right
-            fcx, fcy = self._probe_flag_pos(ch_name, hx, hy)
-            bx = fcx + 14          # just right of the flag
-            by = fcy               # aligned with flag top
-
-            self._transient_thumb_bounds[ch_name] = (bx, by, W, H)
-
-            color = wx.Colour(PROBE_META[ch_name]['color'])
-
-            # Background box — thicker border when selected
-            selected = self._selected_probe == ch_name
-            dc.SetBrush(wx.Brush(wx.Colour(15, 15, 28)))
-            dc.SetPen(wx.Pen(color, 2 if selected else 1))
-            dc.DrawRectangle(bx, by, W, H)
-            if selected:
-                dc.SetPen(wx.Pen(wx.Colour(255, 255, 255, 80), 1))
-                dc.DrawRectangle(bx + 1, by + 1, W - 2, H - 2)
-
-            # Waveform line
-            vals = tr.values
-            vmin, vmax = min(vals), max(vals)
-            v_range = vmax - vmin if vmax != vmin else 1.0
-            inner_w = W - PAD * 2
-            inner_h = H - PAD * 2
-
-            n = len(vals)
-            step = max(1, n // inner_w)
-            pts = []
-            for i in range(0, n, step):
-                sx = bx + PAD + inner_w * i // n
-                sy = by + PAD + inner_h - int(inner_h * (vals[i] - vmin) / v_range)
-                pts.append(wx.Point(sx, sy))
-
-            dc.SetPen(wx.Pen(color, 1))
-            if len(pts) > 1:
-                dc.DrawLines(pts)
-
-            # Net name label bottom-left
-            dc.SetFont(wx.Font(5, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                               wx.FONTWEIGHT_NORMAL))
-            dc.SetTextForeground(wx.Colour(160, 160, 180))
-            dc.DrawText(net_name[:12], bx + PAD, by + H - PAD - 7)
 
     def _draw_net_labels(self, dc: wx.DC) -> None:
         """Draw a legend box in the bottom-right corner listing signal nets.

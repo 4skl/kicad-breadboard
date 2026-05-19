@@ -593,7 +593,6 @@ class BreadboardWindow(wx.Frame):
         self.canvas.on_history_change = self._on_history_change
         self.canvas.on_restore = self._on_restore
         self.canvas.on_terminal_right_click = self._on_terminal_right_click
-        self.canvas.on_transient_dclick = self._on_transient_thumb_dclick
 
         self.SetStatusBar(wx.StatusBar(self))
         self.GetStatusBar().SetFieldsCount(2)
@@ -760,6 +759,7 @@ class BreadboardWindow(wx.Frame):
 
         tb.EnableTool(ID_UNDO, False)
         tb.EnableTool(ID_REDO, False)
+        tb.EnableTool(ID_EESCHEMA, False)
 
         self.toolbar = tb
 
@@ -912,9 +912,18 @@ class BreadboardWindow(wx.Frame):
             )
             return
 
+        # Pass the .kicad_pro project file so eeschema opens within project
+        # context and KiCad's IPC single-instance socket can raise an already-
+        # running window (works on both X11 and Wayland).  Fall back to the
+        # .kicad_sch if no project file exists alongside it.
+        pro = sch.with_suffix('.kicad_pro')
+        target = pro if pro.exists() else sch
+        exe = shutil.which('eeschema') or 'eeschema'
+
         if sys.platform.startswith('linux'):
-            # X11 only: wmctrl can raise an already-open Eeschema window.
-            if shutil.which('wmctrl') and 'WAYLAND_DISPLAY' not in os.environ:
+            # Try wmctrl regardless of display server — it works on X11 and
+            # XWayland, and fails gracefully (rc != 0) for native Wayland windows.
+            if shutil.which('wmctrl'):
                 rc = subprocess.call(
                     ['wmctrl', '-x', '-a', 'eeschema'],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -922,13 +931,12 @@ class BreadboardWindow(wx.Frame):
                 if rc == 0:
                     return
 
-        # Launch eeschema directly — never xdg-open (file associations may be
-        # wrong, e.g. OnlyOffice claiming .kicad_sch).  KiCad's own IPC
-        # single-instance socket raises an already-running Eeschema window;
-        # if none is running, a new one opens.
-        exe = shutil.which('eeschema') or 'eeschema'
+        # On X11 without wmctrl, and on Wayland, KiCad's own IPC single-instance
+        # socket handles focus: if eeschema is already running it raises that window;
+        # otherwise a new instance opens.  Passing the .kicad_pro file is required
+        # for the IPC check to match the correct project instance.
         try:
-            subprocess.Popen([exe, str(sch)])
+            subprocess.Popen([exe, str(target)])
         except FileNotFoundError:
             wx.MessageBox(
                 f'eeschema not found on PATH.\nSchematic: {sch}',
@@ -1721,21 +1729,17 @@ class BreadboardWindow(wx.Frame):
         self.canvas.clear_all_scope_probes()
         for i, net_name in enumerate(self._waveform_frame.channel_net_names):
             if net_name:
-                hole = self._find_probe_hole_for_net(net_name)
+                ch_name = f'CH{i + 1}'
+                # Prefer the instrument-panel probe hole for this channel.
+                hole = self.board.get_probe_hole(ch_name)
+                if hole is None:
+                    hole = self._find_probe_hole_for_net(net_name)
                 if hole is not None:
                     self.canvas.set_scope_probe(
                         i, _CH_COLORS[i % len(_CH_COLORS)],
-                        f'CH{i + 1}', hole,
+                        ch_name, hole,
                     )
         self.canvas.Refresh()
-
-    def _on_transient_thumb_dclick(self, ch_name: str) -> None:
-        """Double-click on a waveform thumbnail — show that net in the waveform viewer."""
-        if self._waveform_frame and self._waveform_frame.IsShown():
-            net_name = self.board.get_probe_net(ch_name)
-            if net_name:
-                self._waveform_frame.toggle_net(net_name)
-                self._waveform_frame.Raise()
 
     def _on_waveform_probe_toggle(self, active: bool) -> None:
         """Called by WaveformFrame when the Probe button is toggled."""
@@ -1754,10 +1758,15 @@ class BreadboardWindow(wx.Frame):
         self._waveform_frame.toggle_net(net_name)
         if ch_idx is not None and hole is not None:
             from .waveform import _CH_COLORS
+            ch_name = f'CH{ch_idx + 1}'
             self.canvas.set_scope_probe(
                 ch_idx, _CH_COLORS[ch_idx % len(_CH_COLORS)],
-                f'CH{ch_idx + 1}', hole,
+                ch_name, hole,
             )
+            self.board.place_probe(ch_name, hole)
+            self.board.assign_probe_net(ch_name, net_name)
+            self._refresh_probe_buttons()
+            self._refresh_probe_choices()
 
     def _find_probe_hole_for_net(self, net_name: str):
         """Return any placed-component hole connected to net_name."""
@@ -1928,7 +1937,10 @@ class BreadboardWindow(wx.Frame):
         self._refresh_probe_choices()
         if self._sim_pane:
             self._sim_pane.refresh_probes(self.board)
-        self.canvas.Refresh()
+        if name.startswith('CH') and self._waveform_frame and self._waveform_frame.IsShown():
+            self._refresh_waveform_probe_markers()
+        else:
+            self.canvas.Refresh()
 
     def _on_probe_choice(self, probe_name: str, _evt) -> None:
         if self._refreshing_choices:
