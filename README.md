@@ -3,8 +3,21 @@
 A KiCad 9 / 10 plugin for introductory analog electronics courses at the University of Antwerp. Draw your schematic in Eeschema, then wire it up on a virtual breadboard, validate it against the schematic, and run simple SPICE checks from the breadboard view.
 
 Current release name: **Whole Wheat**.
+<img width="1903" height="1028" alt="Screenshot from 2026-05-12 16-35-15" src="https://github.com/user-attachments/assets/7d0a3ede-aceb-434c-a190-176f87505a63" />
+<img width="1903" height="1028" alt="Screenshot from 2026-05-12 16-35-00" src="https://github.com/user-attachments/assets/86789f64-c4c8-4637-9bec-9b7a30d2c88d" />
 
-![breadboard](images/breadboard.png)
+
+
+## Whole Wheat highlights
+
+- Graphical overhaul with refreshed toolbar/menu icons, improved component rendering, and clearer side panels
+- Drawing annotations: add lines, rectangles, circles, text, and text boxes directly on the breadboard
+- SPICE simulation from the breadboard view, including DC operating point checks and KiScope transient waveforms
+- Instrument probes for function generator, oscilloscope channels, and PSU connections
+- Net highlighting from board holes or the net list overlay, plus improved validation markers for opens and shorts
+- Bendable jumper wires with selectable or auto-cycled wire colours
+- More configurable boards: split rails, binding-post placement/count, baseboard branding, and saved preferences
+- Broader component support, including generic DIP ICs, switches, LEDs with selectable colours, Teensy 4.1, and Raspberry Pi-style 40-pin headers
 
 **In the press:**
 - [Hackaday — *This KiCad Plugin Enables Breadboarding*](https://hackaday.com/2026/04/23/this-kicad-plugin-enables-breadboarding/)
@@ -64,10 +77,6 @@ Click **Validate** to check your build against the schematic. Open nets and shor
 
 Use **Simulate** for DC operating point analysis, or open **KiScope** for transient waveforms when the schematic contains a VSIN source.
 
-> **Image placeholder:** add `images/simulation-pane.png` showing the simulation pane with inferred DC source voltages.
->
-> **Image placeholder:** add `images/kiscope.png` showing the KiScope CRT-style scope window.
-
 ---
 
 ## Features
@@ -80,7 +89,8 @@ Use **Simulate** for DC operating point analysis, or open **KiScope** for transi
 - TO-92 transistors (BJT, JFET, MOSFET) show the current pinout order (e.g. C-B-E or G-S-D) on their card; click `>` to cycle variants before placing
 - Film capacitors render as flat rectangles with the value printed on the body (e.g. C5 100nF); electrolytic capacitors render as top-down circles with a polarity stripe
 - Diodes and Zener diodes render as compact axial bodies with a cathode band; long pin spacing extends the leads rather than stretching the body
-- Draw jumper wires between any two holes (tie strip, rail, or binding post)
+- LEDs can be cycled through red, green, yellow, and blue before or after placement
+- Draw bendable jumper wires between any two holes (tie strip, rail, or binding post); wire colour can auto-cycle or be fixed from the toolbar
 - Validate the board against the schematic: highlights open nets (?) and shorts (⚡)
 - Highlight schematic nets from the board or from the net list overlay; in highlight mode the overlay includes a **MARK** column with a radio-style target for each net
 - Add drawing annotations directly on the breadboard: lines, rectangles, circles, text, and text boxes; annotations can be selected, moved, resized, edited, deleted, saved, and loaded
@@ -90,9 +100,7 @@ Use **Simulate** for DC operating point analysis, or open **KiScope** for transi
 - Instrument probes: place function-generator, oscilloscope (1–4 channels), and PSU connection points on the board; drag their labels freely for better visibility
 - SPICE DC operating point simulation (`.op`) from the breadboard view; assigned source terminals are pre-filled from schematic voltage sources where possible
 - Transient simulation for VSIN-based schematics, with waveform thumbnails on the board and a dedicated **KiScope** oscilloscope window
-- Preferences dialog (`File → Preferences…`) controls instruments, display, board layout, and export format; settings can be saved as defaults and restored on startup
-
-> **Image placeholder:** add `images/net-highlight-mark.png` showing the net list overlay with the MARK column.
+- Preferences dialog (`File → Preferences…`) controls instruments, display, board layout, binding posts, split rails, and export format; settings can be saved as defaults
 
 ---
 
@@ -120,26 +128,24 @@ When the schematic contains one or more VSIN sources, the simulation pane shows 
 - CLEAR / RESET to disconnect all scope probes
 - waveform thumbnails next to placed CH probes on the board
 
-> **Image placeholder:** add `images/kiscope-probing.png` showing KiScope next to a breadboard with CH probe markers.
-
 ---
 
 ## Supported components
 
 If your schematic uses the standard KiCad libraries, the plugin picks up your components automatically — no manual configuration needed.
 
-**Passives & discretes** — resistors (with colour bands), capacitors (film and electrolytic), inductors, diodes, Zener diodes, LEDs, and potentiometers from the `Device:` library are all recognised.
+**Passives & discretes** — resistors (with colour bands), capacitors (film and electrolytic), inductors, diodes, Zener diodes, LEDs, potentiometers, and common SPST/SPDT/SP3T switches are recognised.
 
 **Transistors** — every BJT, JFET, and MOSFET in the standard `Device:`, `Transistor_BJT:`, and `Transistor_FET:` libraries is supported, whether you use a generic symbol (`Device:NPN`) or a specific part number (`Transistor_BJT:BC547`). Detection is based on the symbol name and the component description KiCad exports, so any part the library describes as *"NPN Transistor"* or *"N-Channel MOSFET"* will appear in the tray automatically.
 
 **ICs** — any U-prefix component with an even pin count is placed as a DIP IC. The following op-amps additionally show named pin labels: TL081 (DIP-8), RC4558 (DIP-8), TL084 (DIP-14), and OPAMP / KiCad Simulation_SPICE (DIP-6, labelled "SIM").
 
-**Modules** — Arduino Nano (+ Every, ESP32, RP2040 Connect, …), Arduino Uno R3, and Raspberry Pi (40-pin GPIO header).
+**Modules** — Arduino Nano (+ Every, ESP32, RP2040 Connect, …), Arduino Uno R3, Teensy 4.1, Raspberry Pi Pico, and Raspberry Pi-style 40-pin GPIO headers.
 
 <details>
 <summary>Pinout selection for TO-92 transistors</summary>
 
-The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **E-B-C** for a BJT, **G-S-D** or **S-G-D** for a MOSFET). Click **`>`** to cycle through variants before placing.
+The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **E-B-C** for a BJT, **G-S-D**, **G-D-S**, or **S-G-D** for a FET). Click **`>`** to cycle through variants before placing.
 
 **Always verify the pinout against your component's datasheet.**
 
@@ -147,8 +153,8 @@ The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **
 |---|---|---|
 | NPN BJT | C-B-E | 2N3904, 2N2222 → E-B-C |
 | PNP BJT | C-B-E | 2N3906 → E-B-C |
-| N-ch JFET | S-G-D | 2N5457 → D-G-S |
-| N-ch MOSFET | G-S-D | Parts where pin 1 = Drain (e.g. BS108) → D-G-S |
+| N-ch JFET | S-G-D | 2N5457 → D-G-S; other parts may need G-S-D or G-D-S |
+| N-ch MOSFET | G-S-D | Parts where pin 1 = Drain (e.g. BS108) → D-G-S; other parts may need G-D-S |
 | P-ch MOSFET | G-S-D | Check datasheet for your specific part |
 | BS170 | S-G-D | — (fixed, single pinout) |
 
@@ -164,12 +170,15 @@ The tray card for each transistor shows its current pinout (e.g. **C-B-E** or **
 | Button | Action |
 |---|---|
 | Open netlist | Load a `.net` file manually |
+| Save session | Save placements and wires to `.kicad_bbrd` |
 | Update from schematic | Re-export netlist from `.kicad_sch` via `kicad-cli` and reload *(requires KiCad project; not available in standalone mode)* |
+| Schematic | Open the schematic in Eeschema |
 | Export image | Save the current board view as a PNG or SVG (format set in Preferences) |
 | Preferences | Open the Preferences dialog |
 | Undo / Redo | Undo or redo board edits |
+| Zoom | Zoom in, zoom out, or fit the board in view |
 | Select | Select, move, resize, or edit placed items |
-| Wire | Draw a jumper wire |
+| Wire | Draw a jumper wire; use the colour picker to auto-cycle or fix wire colour |
 | Delete | Delete components, wires, probes, or annotations |
 | Net highlight | Highlight a schematic net by clicking a hole or the MARK column in the net list |
 | Drawing tools | Add line, rectangle, circle, text, or text-box annotations |
@@ -236,8 +245,10 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 
 | Setting | Description |
 |---|---|
-| Size / layout | `Mini` (170 holes, no rails) · `Half` (400 holes) · `Full` (830 holes) · `Double` (2× full stacked) · `Triple` (3× full + vertical power rails left side) · `Double Rails` (2× full + vertical power rails both sides) |
-| Binding posts side | Position of the GND / V1 / V2 / V3 binding posts: `Left` (default), `Right`, `Top`, or `Bottom` |
+| Size / layout | `Mini` (170 holes, no rails) · `Half` (400 holes) · `Full` (830 holes) · `Double` (2× full stacked) · `Triple` (3× full + vertical rails) · `Double Rails` (2× full + side rails) |
+| Split power rails | Electrically disconnect each power rail in the middle |
+| Binding posts side | Position of the binding posts: `Left`, `Right`, top left/centre/right, or bottom left/centre/right |
+| Number of binding posts | Show 2, 3, or 4 posts, where the layout has room |
 | Show baseboard | Draw a coloured panel behind the breadboard(s) |
 | Baseboard colour | Fill colour of the baseboard |
 | Include branding | Display a logo image alongside the binding posts (on the outer side, away from the board) |
@@ -251,7 +262,7 @@ Open **File → Preferences…** to configure the plugin. Settings take effect i
 
 ### Binding posts
 
-Four binding posts (GND, V1, V2, V3) on the board can be assigned to schematic nets via the dropdowns or by right-clicking the post. GND is automatically assigned to net `0` (SPICE-style) or `GND` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
+Binding posts (GND, V1, V2, and optionally V3) can be assigned to schematic nets via the dropdowns or by right-clicking the post. GND is automatically assigned to net `0` (SPICE-style) or `GND` when a netlist is loaded. The validator treats an assigned binding post as an electrical endpoint on that net.
 
 ### Instruments
 
@@ -288,8 +299,6 @@ The right-side drawing toolbar can add:
 | Text box | Drag a box, then enter wrapped text |
 
 Annotations are saved in `.kicad_bbrd` session files. In Select mode, click an annotation to select it, drag it to move it, drag handles to resize it, double-click to edit properties, and press Delete or Backspace to remove it.
-
-> **Image placeholder:** add `images/annotations.png` showing a board with line, rectangle, and text annotations.
 
 </details>
 
