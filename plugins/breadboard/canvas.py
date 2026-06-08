@@ -2469,8 +2469,12 @@ class BreadboardCanvas(wx.Panel):
             xs = [xy[0] for xy in holes_xy]
             ys = [xy[1] for xy in holes_xy]
             if comp_def and comp_def.is_module:
-                # Use generous padding to cover the full board body, not just GPIO pins
-                pad_x, pad_y = 90, 120
+                if comp_def.type_id == 'Raspberry_Pi_4':
+                    # Massive padding needed for the full-size RPi board
+                    pad_x, pad_y = 90, 120
+                else:
+                    # Pico, Nano, and Uno have pins close to their board edges
+                    pad_x, pad_y = 10, 10
             elif comp_def and comp_def.pin_count >= 3 and not comp_def.is_dip:
                 # TO-92 dome extends r_body=12px beyond the pin row
                 pad_x, pad_y = 6, 14
